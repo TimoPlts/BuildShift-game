@@ -185,5 +185,5 @@ For each development stage record:
 - **Production preview:** `pnpm build` (success; WASM inlined into the main chunk, only the known non-blocking chunk-size warning) then `pnpm --filter @buildshift/web preview` loaded with one canvas, the overlay, and **zero errors** — confirming the inlined WASM initialises in the Rollup bundle.
 - **Server regression:** `pnpm --filter @buildshift/game-server typecheck` and `build` both passed (the server is untouched by Stage 1D but verified per spec).
 - **Local verification:** `pnpm typecheck` (all 5 projects), `pnpm build`, and `pnpm test` (17/17) all passed.
-- **GitHub Actions:** Pending (to be recorded after the run).
+- **GitHub Actions:** Green. CI #15 (run 35865249713) for commit `378a81f` succeeded in 47s with every step passing: Checkout, Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test. The only annotations are the known non-blocking Node 20 deprecation notice and the Ubuntu 26 migration notice.
 - **Still unresolved:** Live, felt gameplay (collision/slide, gravity, jump, no double-jump) must be confirmed by a human in a real browser, because the automation environment refuses pointer lock. Camera collision, sprint/crouch/slide, and Stage 1E remain intentionally deferred.
