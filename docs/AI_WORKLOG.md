@@ -120,5 +120,5 @@ For each development stage record:
 - **Production preview:** The built web preview rendered the player, keyboard movement changed the frame, release stabilized it, orbit remained functional, and no console or module-resolution errors occurred.
 - **Server regression:** Both `pnpm dev:server` and compiled `pnpm --filter @buildshift/game-server start` reached the unchanged placeholder startup and reported protocol `0.1.0`.
 - **Local verification:** `pnpm typecheck`, `pnpm build`, and `pnpm test` passed. Vite retains the known non-blocking Babylon chunk-size warning (1.35 MB main chunk, 342.42 kB gzip).
-- **GitHub Actions:** Pending the Stage 1B push.
+- **GitHub Actions:** Run 35849447712 passed Checkout, Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test for commit `ca26dd2`.
 - **Still unresolved:** No Stage 1B functional issue is known. Physics, collision, gravity, jumping, player-facing orientation, the real third-person camera, networking, and authoritative fixed-step movement remain intentionally deferred to their later stages.
