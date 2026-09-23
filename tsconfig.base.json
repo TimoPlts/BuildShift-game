@@ -3,6 +3,12 @@
     "target": "ES2022",
     "module": "ESNext",
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@buildshift/game-config": ["packages/game-config/src/index.ts"],
+      "@buildshift/protocol": ["packages/protocol/src/index.ts"],
+      "@buildshift/simulation": ["packages/simulation/src/index.ts"]
+    },
     "lib": ["ES2022"],
     "strict": true,
     "noImplicitAny": true,
