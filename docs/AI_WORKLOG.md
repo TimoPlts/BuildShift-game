@@ -82,3 +82,23 @@ For each development stage record:
 - **Compiled server runtime result:** `pnpm --filter @buildshift/game-server start` passed under native Node using compiled JavaScript and package `dist` exports.
 - **GitHub Actions result:** Run 35844446087 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test.
 - **Still unresolved:** No functional Stage 0C issue remains. The existing GitHub advisory about v4 actions' deprecated Node 20 action runtime remains non-blocking.
+
+---
+
+## 2026-09-23 — Stage 1A — Babylon.js Scene Foundation
+
+- **Babylon package installed:** `@babylonjs/core@9.27.1` as a production dependency of `apps/web` only. No GUI, inspector, loaders, materials library, or physics package was added.
+- **Major files created/changed:** Added `apps/web/src/game/GameCanvas.tsx`, `apps/web/src/game/GameRuntime.ts`, and `apps/web/src/game/scene/createFoundationScene.ts`; updated the web app shell, viewport CSS, HTML favicon declaration, web package manifest, and pnpm lockfile.
+- **Runtime architecture:** React only mounts the canvas and creates/disposes `GameRuntime`. The runtime exclusively owns the Babylon `Engine`, `Scene`, render callback, resize listener, and disposal lifecycle. Babylon objects are not stored in React state.
+- **Temporary camera:** An `ArcRotateCamera` provides development-only orbit and wheel zoom; it is explicitly marked for replacement by the later real game camera.
+- **Engine/render-loop lifecycle:** The engine uses antialiasing and Babylon's `runRenderLoop`. Runtime start and disposal are idempotent; disposal removes the window listener, stops the exact render callback, disposes the scene, and disposes the engine.
+- **Resize handling:** A live browser resize changed both canvas client and render dimensions from 1422x804 to 1024x640 without reload or scroll overflow.
+- **StrictMode verification:** Development browser inspection found one canvas and exactly one active resize listener owned by `GameRuntime` after React's development remount. Orbit interaction changed the rendered frame and the browser reported no console/runtime errors.
+- **Typecheck:** Passed for all workspace projects.
+- **Build:** Passed for all workspace projects. Vite reports a non-blocking warning for the 1.35 MB Babylon-containing main chunk (342.46 kB gzip).
+- **Tests:** Passed; 1 test file and 2 existing tests passed. No artificial Babylon rendering test was added.
+- **Development browser smoke test:** `pnpm dev` rendered the full-viewport scene with lit ground, a center box, an orange platform, and a tall reference box. Orbit camera controls and live resize passed.
+- **Production preview smoke test:** `pnpm --filter @buildshift/web preview` rendered the same scene successfully from the production build.
+- **Server regression smoke test:** `pnpm dev:server` reached the unchanged placeholder startup and reported protocol version `0.1.0`.
+- **GitHub Actions result:** Run 35846878143 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test.
+- **Still unresolved:** No functional Stage 1A issue remains. The Vite chunk-size warning should be reassessed when real asset/loading boundaries exist; no premature code splitting was added in this foundation stage.
