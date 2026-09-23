@@ -188,6 +188,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@babylonjs/core':
+        specifier: ^9.27.1
+        version: 9.27.1
       '@buildshift/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
@@ -320,6 +323,9 @@ packages:
   '@babel/types@7.29.8':
     resolution: {integrity: sha512-Vj1jF3cPfxg7OAfoI7QnVKLoILlm2JF9pnVHrX8qx7AHMiYWT+NDAA7jChlNgRS4WTLc/fD1lXLmPixluj+3Gg==}
     engines: {node: '>=6.9.0'}
+
+  '@babylonjs/core@9.27.1':
+    resolution: {integrity: sha512-bcHeB7YNrYRiD+pEhZjEfzm8tT/N4dC8oYhlENFVa9fnP/XiHEbmt7h2U6Es/vs8x/Aju+9vgpcmq2qnLv+3Hw==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1236,6 +1242,8 @@ snapshots:
     dependencies:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
+
+  '@babylonjs/core@9.27.1': {}
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true
