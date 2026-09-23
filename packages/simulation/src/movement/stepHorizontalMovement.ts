@@ -1,7 +1,7 @@
 import type {
   HorizontalMovementConfig,
-  MovementInput,
   Position2D,
+  WorldMovementInput,
 } from "./types.js";
 
 /**
@@ -10,7 +10,7 @@ import type {
  */
 export function stepHorizontalMovement(
   position: Readonly<Position2D>,
-  input: Readonly<MovementInput>,
+  input: Readonly<WorldMovementInput>,
   deltaSeconds: number,
   config: Readonly<HorizontalMovementConfig>,
 ): Position2D {

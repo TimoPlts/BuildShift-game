@@ -11,11 +11,13 @@
  */
 import { GAME_CONFIG_VERSION } from "@buildshift/game-config";
 
+export { movementInputToWorld } from "./movement/movementInputToWorld.js";
 export { stepHorizontalMovement } from "./movement/stepHorizontalMovement.js";
 export type {
   HorizontalMovementConfig,
-  MovementInput,
+  LocalMovementInput,
   Position2D,
+  WorldMovementInput,
 } from "./movement/types.js";
 
 /**
