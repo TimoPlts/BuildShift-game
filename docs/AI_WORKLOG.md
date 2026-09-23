@@ -102,3 +102,23 @@ For each development stage record:
 - **Server regression smoke test:** `pnpm dev:server` reached the unchanged placeholder startup and reported protocol version `0.1.0`.
 - **GitHub Actions result:** Run 35846878143 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test.
 - **Still unresolved:** No functional Stage 1A issue remains. The Vite chunk-size warning should be reassessed when real asset/loading boundaries exist; no premature code splitting was added in this foundation stage.
+
+---
+
+## 2026-09-23 — Stage 1B — Local Player & Deterministic Movement
+
+- **Files created:** Added `packages/game-config/src/movement.ts`, shared movement types and stepping under `packages/simulation/src/movement/`, browser input tracking in `apps/web/src/game/input/InputManager.ts`, and the local Babylon controller in `apps/web/src/game/player/PlayerController.ts`.
+- **Files changed:** Updated the game-config and simulation public exports/tests, web runtime, web workspace dependencies and Vite source aliases, the small development overlay, `pnpm-lock.yaml`, and this worklog.
+- **Movement architecture:** WASD intent flows from the browser-only `InputManager` into the platform-independent `stepHorizontalMovement`, then `PlayerController` applies the returned X/Z position to its Babylon mesh. The convention is world-relative `+X = right` and `-Z = forward`.
+- **Input architecture:** `InputManager` owns held-key state and all `keydown`, `keyup`, `blur`, and visibility listeners; no React state or controller-owned keyboard listeners are used. Disposal removes every listener and clears held state.
+- **Shared simulation function:** `stepHorizontalMovement(position, input, deltaSeconds, config)` is pure, avoids argument mutation, normalizes inputs longer than one unit, and has no browser or Babylon dependency.
+- **Game config:** `PLAYER_MOVEMENT.moveSpeed` is `6` metres per second in `@buildshift/game-config`; no future movement values were introduced.
+- **Delta handling:** `GameRuntime` converts Babylon milliseconds to seconds and clamps each local frame step to `0.1` seconds before updating the controller, then renders the scene.
+- **Focus-loss handling:** Window blur and document hiding clear held movement keys; browser verification confirmed movement stopped at the exact sampled position after blur.
+- **Unit tests:** Added no-input, known forward displacement, diagonal normalization, and equivalent-total-time coverage. The suite passes with 1 file and 6 tests.
+- **Browser verification:** Development Chrome showed one visible green 1.8 m capsule with its feet on the ground. W/A/S/D and diagonal movement passed measured X/Z checks; release and blur stopped drift; resize matched 1024×640 client/render dimensions; orbit controls still changed the frame; one player, one canvas, and one active keydown/keyup listener remained after StrictMode remount; no browser errors occurred.
+- **Production preview:** The built web preview rendered the player, keyboard movement changed the frame, release stabilized it, orbit remained functional, and no console or module-resolution errors occurred.
+- **Server regression:** Both `pnpm dev:server` and compiled `pnpm --filter @buildshift/game-server start` reached the unchanged placeholder startup and reported protocol `0.1.0`.
+- **Local verification:** `pnpm typecheck`, `pnpm build`, and `pnpm test` passed. Vite retains the known non-blocking Babylon chunk-size warning (1.35 MB main chunk, 342.42 kB gzip).
+- **GitHub Actions:** Pending the Stage 1B push.
+- **Still unresolved:** No Stage 1B functional issue is known. Physics, collision, gravity, jumping, player-facing orientation, the real third-person camera, networking, and authoritative fixed-step movement remain intentionally deferred to their later stages.

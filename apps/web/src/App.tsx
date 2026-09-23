@@ -7,7 +7,7 @@ export function App() {
       <GameCanvas />
       <aside className="foundation-overlay" aria-label="Development scene status">
         <strong>BuildShift</strong>
-        <p>Babylon scene foundation</p>
+        <p>Local movement foundation · WASD</p>
         <small>Protocol {PROTOCOL_VERSION}</small>
       </aside>
     </main>

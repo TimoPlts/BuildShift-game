@@ -12,7 +12,15 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
+      "@buildshift/game-config": path.resolve(
+        here,
+        "../../packages/game-config/src/index.ts",
+      ),
       "@buildshift/protocol": path.resolve(here, "../../packages/protocol/src/index.ts"),
+      "@buildshift/simulation": path.resolve(
+        here,
+        "../../packages/simulation/src/index.ts",
+      ),
     },
   },
   server: {
