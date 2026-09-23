@@ -1,4 +1,3 @@
-import { ArcRotateCamera } from "@babylonjs/core/Cameras/arcRotateCamera";
 import type { Engine } from "@babylonjs/core/Engines/engine";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
@@ -7,28 +6,17 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { Scene } from "@babylonjs/core/scene";
 
-/** Creates the temporary Stage 1A scene used to verify the rendering foundation. */
+/**
+ * Creates the foundation scene: ground, lighting, and temporary arena
+ * geometry. The scene factory no longer owns any camera — the gameplay
+ * camera is created by `ThirdPersonCameraController`, which makes it the
+ * scene's active camera (exactly one active gameplay camera).
+ */
 export function createFoundationScene(
   engine: Engine,
-  canvas: HTMLCanvasElement,
 ): Scene {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.055, 0.07, 0.1, 1);
-
-  // Temporary development camera. Stage 1C will replace this with the game camera.
-  const camera = new ArcRotateCamera(
-    "foundation-camera",
-    -Math.PI / 3,
-    Math.PI / 3,
-    22,
-    new Vector3(0, 1.5, 0),
-    scene,
-  );
-  camera.lowerRadiusLimit = 8;
-  camera.upperRadiusLimit = 36;
-  camera.wheelDeltaPercentage = 0.01;
-  camera.attachControl(canvas, true);
-  scene.activeCamera = camera;
 
   const light = new HemisphericLight(
     "foundation-light",

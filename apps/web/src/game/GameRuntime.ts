@@ -1,16 +1,29 @@
 import { Engine } from "@babylonjs/core/Engines/engine";
 import type { Scene } from "@babylonjs/core/scene";
+import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { PlayerController } from "./player/PlayerController";
 import { createFoundationScene } from "./scene/createFoundationScene";
 
 const MAX_FRAME_DELTA_SECONDS = 0.1;
 
-/** Owns the Babylon engine, scene, render loop, and browser lifecycle hooks. */
+/**
+ * Owns the Babylon engine, scene, render loop, and browser lifecycle hooks.
+ *
+ * Per-frame update order (avoids a one-frame lag between movement and
+ * camera follow):
+ *
+ * 1. consume input (keyboard state + accumulated mouse delta)
+ * 2. apply mouse look to the camera yaw/pitch
+ * 3. update the player using the current camera yaw
+ * 4. update the camera position from the new player position
+ * 5. render the scene
+ */
 export class GameRuntime {
   private readonly engine: Engine;
   private readonly scene: Scene;
   private readonly inputManager: InputManager;
+  private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
@@ -21,10 +34,19 @@ export class GameRuntime {
     this.engine = new Engine(canvas, true);
 
     try {
-      this.scene = createFoundationScene(this.engine, canvas);
-      this.inputManager = new InputManager();
+      this.scene = createFoundationScene(this.engine);
+      this.inputManager = new InputManager(canvas);
       try {
-        this.playerController = new PlayerController(this.scene, this.inputManager);
+        this.cameraController = new ThirdPersonCameraController(this.scene);
+        try {
+          this.playerController = new PlayerController(
+            this.scene,
+            this.inputManager,
+          );
+        } catch (error) {
+          this.cameraController.dispose();
+          throw error;
+        }
       } catch (error) {
         this.inputManager.dispose();
         this.scene.dispose();
@@ -42,7 +64,15 @@ export class GameRuntime {
           Math.max(this.engine.getDeltaTime() / 1000, 0),
           MAX_FRAME_DELTA_SECONDS,
         );
-        this.playerController.update(deltaSeconds);
+
+        const lookDelta = this.inputManager.consumeLookDelta();
+        this.cameraController.applyLook(lookDelta.x, lookDelta.y);
+
+        const cameraYaw = this.cameraController.getYaw();
+        this.playerController.update(deltaSeconds, cameraYaw);
+
+        this.cameraController.update(this.playerController.getPosition());
+
         this.scene.render();
       }
     };
@@ -78,6 +108,7 @@ export class GameRuntime {
     }
 
     this.playerController.dispose();
+    this.cameraController.dispose();
     this.inputManager.dispose();
     this.scene.dispose();
     this.engine.dispose();
