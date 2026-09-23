@@ -50,3 +50,17 @@ For each development stage record:
 - **Local commands verified:** `pnpm install`, `pnpm typecheck`, `pnpm build`, and `pnpm test` passed. On Windows, `pnpm.cmd` was used because PowerShell script execution blocks the `pnpm.ps1` shim; build and test required running outside the filesystem sandbox so Vite/esbuild could read the repository path.
 - **GitHub Actions result:** Run 35841197185 passed Checkout, Setup pnpm, Setup Node.js, and Install dependencies, then reached Typecheck.
 - **Still unresolved:** Typecheck failed with `Cannot find module '@buildshift/game-config' or its corresponding type declarations.` Build and Test were skipped. Workspace resolution was not investigated or changed in Stage 0A.
+
+---
+
+## 2026-09-23 — Stage 0B — Clean workspace package resolution
+
+- **Root cause:** pnpm correctly linked workspace dependencies to their package roots, but `main`, `types`, and `exports` exposed only generated `dist` files. TypeScript, Vite, and `tsx` therefore could not resolve workspace entry points before a build.
+- **Why local verification previously passed:** The working checkout already contained generated `dist/index.js` and `dist/index.d.ts` files, masking the clean-checkout failure.
+- **Resolution strategy:** Added root TypeScript paths to workspace source entry points for development and typechecking, added a Vite alias for the web app's declared protocol dependency, and retained `dist` package exports for production. The simulation and server now use separate build tsconfigs that disable source paths while emitting, allowing pnpm's topological build to consume dependency output deliberately.
+- **Files changed:** `tsconfig.base.json`, `apps/web/vite.config.ts`, `apps/game-server/package.json`, `apps/game-server/tsconfig.json`, `apps/game-server/tsconfig.build.json`, `packages/simulation/package.json`, `packages/simulation/tsconfig.json`, and `packages/simulation/tsconfig.build.json`.
+- **Clean-checkout commands tested:** In a fresh clone with no `node_modules` or `dist`, `pnpm install`, `pnpm typecheck`, `pnpm build`, and `pnpm test` all passed. Typecheck created no `dist` output; 2 tests passed.
+- **Web dev smoke test:** After removing all generated `dist` output again, `pnpm dev` started Vite and transformed `@buildshift/protocol` from `packages/protocol/src/index.ts` successfully.
+- **Server dev smoke test:** From the same no-`dist` state, `pnpm dev:server` reached the placeholder startup and reported protocol version `0.1.0`.
+- **GitHub Actions result:** Run 35843130055 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test. Stage 0 foundation CI is green.
+- **Still unresolved:** No functional Stage 0B issue remains. GitHub reports an advisory that the v4 checkout/setup actions target the deprecated Node 20 action runtime and are currently forced to Node 24; this did not affect the successful run.
