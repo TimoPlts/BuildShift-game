@@ -1,0 +1,8 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Dependencies allowed to run install-time build scripts (e.g. native binaries).
+# pnpm blocks postinstall scripts by default; esbuild needs it for Vite/Vitest.
+allowBuilds:
+  esbuild: true

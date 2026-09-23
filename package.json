@@ -1,0 +1,21 @@
+{
+  "name": "buildshift",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BuildShift — competitive multiplayer browser building shooter (monorepo root).",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "packageManager": "pnpm@12.5.1",
+  "scripts": {
+    "dev": "pnpm --filter @buildshift/web dev",
+    "dev:server": "pnpm --filter @buildshift/game-server dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "vitest run --passWithNoTests"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.0"
+  }
+}

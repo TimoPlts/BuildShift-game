@@ -1,0 +1,24 @@
+{
+  "name": "@buildshift/simulation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@buildshift/game-config": "workspace:*"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4"
+  }
+}
