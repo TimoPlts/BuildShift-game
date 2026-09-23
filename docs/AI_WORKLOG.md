@@ -64,3 +64,21 @@ For each development stage record:
 - **Server dev smoke test:** From the same no-`dist` state, `pnpm dev:server` reached the placeholder startup and reported protocol version `0.1.0`.
 - **GitHub Actions result:** Run 35843130055 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test. Stage 0 foundation CI is green.
 - **Still unresolved:** No functional Stage 0B issue remains. GitHub reports an advisory that the v4 checkout/setup actions target the deprecated Node 20 action runtime and are currently forced to Node 24; this did not affect the successful run.
+
+---
+
+## 2026-09-23 — Stage 0C — Node ESM & production runtime sanity check
+
+- **What was inspected:** Root, web, server, and shared-package TypeScript configs; package `type`, `main`, `types`, and `exports`; all source imports; clean production output for the server, protocol, simulation, and game-config; native Node startup through the workspace package links.
+- **Bundler-resolution finding:** Existing output was valid and the compiled server already started successfully, but `bundler` posed a real future server risk. A disposable extensionless relative-import probe compiled unchanged and then failed in native Node with `ERR_MODULE_NOT_FOUND`; `NodeNext` rejected it during compilation with TS2835.
+- **Configuration changes:** Added `tsconfig.node.json` with `module` and `moduleResolution` set to `NodeNext`. The game server and all three platform-independent shared packages extend it; the Vite web app remains on the bundler-oriented base config. Documented the `.js` relative-import convention for native ESM targets in `docs/TECHNICAL_ARCHITECTURE.md`.
+- **Production emitted-import findings:** The compiled server imports `@buildshift/protocol`, and simulation imports `@buildshift/game-config`. Both are valid bare workspace package specifiers resolved through each package's generated `dist` exports; production uses no TypeScript paths, Vite aliases, `tsx`, or source-only resolution.
+- **Clean install result:** Passed from a fresh clone with no `node_modules` or `dist`.
+- **Typecheck result:** Passed for all workspace projects under the split bundler/NodeNext configuration.
+- **Build result:** Passed; all server/shared JavaScript and declarations were emitted successfully.
+- **Test result:** Passed; 1 test file and 2 tests passed.
+- **Web dev result:** Passed from a no-`dist` state; Vite resolved protocol source successfully.
+- **Server dev result:** Passed from a no-`dist` state; `tsx` reached placeholder startup and reported protocol version `0.1.0`.
+- **Compiled server runtime result:** `pnpm --filter @buildshift/game-server start` passed under native Node using compiled JavaScript and package `dist` exports.
+- **GitHub Actions result:** Run 35844446087 passed Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test.
+- **Still unresolved:** No functional Stage 0C issue remains. The existing GitHub advisory about v4 actions' deprecated Node 20 action runtime remains non-blocking.
