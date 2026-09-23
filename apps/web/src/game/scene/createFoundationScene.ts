@@ -5,16 +5,19 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { Scene } from "@babylonjs/core/scene";
+import { ARENA, type ArenaObject } from "./arena";
 
 /**
- * Creates the foundation scene: ground, lighting, and temporary arena
- * geometry. The scene factory no longer owns any camera — the gameplay
- * camera is created by `ThirdPersonCameraController`, which makes it the
- * scene's active camera (exactly one active gameplay camera).
+ * Creates the foundation scene: lighting plus the arena geometry.
+ *
+ * From Stage 1D on every visible object is built from the single-source
+ * `ARENA` table (shared with the physics layer), so the meshes and the
+ * colliders can never drift apart: each mesh is a box of
+ * `2 * halfExtents` centred at `position`. The scene factory no longer owns
+ * any camera — the gameplay camera is created by
+ * `ThirdPersonCameraController`, which makes it the scene's active camera.
  */
-export function createFoundationScene(
-  engine: Engine,
-): Scene {
+export function createFoundationScene(engine: Engine): Scene {
   const scene = new Scene(engine);
   scene.clearColor = new Color4(0.055, 0.07, 0.1, 1);
 
@@ -26,42 +29,46 @@ export function createFoundationScene(
   light.intensity = 0.9;
   light.groundColor = new Color3(0.08, 0.1, 0.14);
 
-  const groundMaterial = new StandardMaterial("ground-material", scene);
-  groundMaterial.diffuseColor = new Color3(0.18, 0.23, 0.3);
-  groundMaterial.specularColor = new Color3(0.04, 0.05, 0.07);
-
-  const accentMaterial = new StandardMaterial("accent-material", scene);
-  accentMaterial.diffuseColor = new Color3(0.12, 0.55, 0.78);
-
-  const warmMaterial = new StandardMaterial("warm-material", scene);
-  warmMaterial.diffuseColor = new Color3(0.92, 0.48, 0.18);
-
-  const ground = MeshBuilder.CreateGround(
-    "foundation-ground",
-    { width: 30, height: 30 },
-    scene,
-  );
-  ground.material = groundMaterial;
-
-  const centerBox = MeshBuilder.CreateBox("center-box", { size: 2.5 }, scene);
-  centerBox.position = new Vector3(0, 1.25, 0);
-  centerBox.material = accentMaterial;
-
-  const platform = MeshBuilder.CreateBox(
-    "reference-platform",
-    { width: 7, height: 0.5, depth: 4 },
-    scene,
-  );
-  platform.position = new Vector3(-5, 0.25, 4);
-  platform.material = warmMaterial;
-
-  const tallBox = MeshBuilder.CreateBox(
-    "reference-tower",
-    { width: 1.5, height: 5, depth: 1.5 },
-    scene,
-  );
-  tallBox.position = new Vector3(5, 2.5, -3);
-  tallBox.material = accentMaterial;
+  for (const object of ARENA) {
+    buildArenaObject(scene, object);
+  }
 
   return scene;
+}
+
+function buildArenaObject(scene: Scene, object: ArenaObject): void {
+  const material = getMaterial(scene, object.material);
+  const [px, py, pz] = object.collider.position;
+  const [hx, hy, hz] = object.collider.halfExtents;
+
+  const mesh = MeshBuilder.CreateBox(
+    object.id,
+    { width: hx * 2, height: hy * 2, depth: hz * 2 },
+    scene,
+  );
+  mesh.position = new Vector3(px, py, pz);
+  mesh.material = material;
+}
+
+/** Creates (or reuses) the shared material for an arena material kind. */
+function getMaterial(scene: Scene, kind: ArenaObject["material"]): StandardMaterial {
+  const existing = scene.getMaterialByName(`${kind}-material`);
+  if (existing instanceof StandardMaterial) {
+    return existing;
+  }
+
+  const material = new StandardMaterial(`${kind}-material`, scene);
+  switch (kind) {
+    case "ground":
+      material.diffuseColor = new Color3(0.18, 0.23, 0.3);
+      material.specularColor = new Color3(0.04, 0.05, 0.07);
+      break;
+    case "accent":
+      material.diffuseColor = new Color3(0.12, 0.55, 0.78);
+      break;
+    case "warm":
+      material.diffuseColor = new Color3(0.92, 0.48, 0.18);
+      break;
+  }
+  return material;
 }

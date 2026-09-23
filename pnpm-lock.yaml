@@ -200,6 +200,9 @@ importers:
       '@buildshift/simulation':
         specifier: workspace:*
         version: link:../../packages/simulation
+      '@dimforge/rapier3d-compat':
+        specifier: ^0.20.0
+        version: 0.20.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -332,6 +335,9 @@ packages:
 
   '@babylonjs/core@9.27.1':
     resolution: {integrity: sha512-bcHeB7YNrYRiD+pEhZjEfzm8tT/N4dC8oYhlENFVa9fnP/XiHEbmt7h2U6Es/vs8x/Aju+9vgpcmq2qnLv+3Hw==}
+
+  '@dimforge/rapier3d-compat@0.20.0':
+    resolution: {integrity: sha512-X4W9pJBdGRX5CO3c/gUNjBFEFG2fn4nYxp9k8STdBDaLa0/w5XTW2ArpayS+9jGFojTi3uFSOWAElCd4rkpekA==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1250,6 +1256,8 @@ snapshots:
       '@babel/helper-validator-identifier': 7.29.7
 
   '@babylonjs/core@9.27.1': {}
+
+  '@dimforge/rapier3d-compat@0.20.0': {}
 
   '@esbuild/aix-ppc64@0.21.5':
     optional: true

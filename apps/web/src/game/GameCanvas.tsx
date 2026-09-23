@@ -18,8 +18,23 @@ export function GameCanvas() {
       return;
     }
 
-    const runtime = new GameRuntime(canvas);
-    runtime.start();
+    // StrictMode in dev mounts effects twice; we guard with a local "active"
+    // flag so a stale (first) mount that never resolves can't leak resources.
+    let active = true;
+    let runtime: GameRuntime | undefined;
+
+    GameRuntime.create(canvas)
+      .then((r) => {
+        if (!active) {
+          r.dispose();
+          return;
+        }
+        runtime = r;
+        r.start();
+      })
+      .catch((error) => {
+        console.error("Failed to start the game runtime:", error);
+      });
 
     const handlePointerLockChange = () => {
       setPointerLocked(document.pointerLockElement === canvas);
@@ -28,8 +43,9 @@ export function GameCanvas() {
     document.addEventListener("pointerlockchange", handlePointerLockChange);
 
     return () => {
+      active = false;
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
-      runtime.dispose();
+      runtime?.dispose();
     };
   }, []);
 
@@ -44,7 +60,9 @@ export function GameCanvas() {
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
-          <p>WASD to move • Mouse to look • Esc to release</p>
+          <p>
+            WASD to move • Mouse to look • Space to jump • Esc to release
+          </p>
         </div>
       )}
     </>

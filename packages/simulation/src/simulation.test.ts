@@ -4,8 +4,13 @@ import {
   gameConfigVersion,
   movementInputToWorld,
   stepHorizontalMovement,
+  stepVerticalMovement,
 } from "./index.js";
-import { GAME_CONFIG_VERSION, PLAYER_MOVEMENT } from "@buildshift/game-config";
+import {
+  GAME_CONFIG_VERSION,
+  PLAYER_MOVEMENT,
+  PLAYER_PHYSICS,
+} from "@buildshift/game-config";
 
 describe("simulation scaffold", () => {
   it("exposes a simulation version", () => {
@@ -134,5 +139,88 @@ describe("movementInputToWorld", () => {
     expect(Math.hypot(result.x, result.z)).toBeCloseTo(
       PLAYER_MOVEMENT.moveSpeed,
     );
+  });
+});
+
+describe("stepVerticalMovement", () => {
+  it("integrates gravity into the velocity", () => {
+    // No jump, airborne: pure gravity accumulation from rest.
+    const result = stepVerticalMovement(
+      0,
+      false,
+      false,
+      1,
+      PLAYER_PHYSICS,
+    );
+
+    expect(result).toBeCloseTo(PLAYER_PHYSICS.gravity * 1);
+  });
+
+  it("starts a grounded jump at the jump speed", () => {
+    // dt = 0.1 keeps the post-jump velocity (9 - 2.5 = 6.5) positive, so the
+    // grounded downward clamp does not kick in and the jump launch is visible.
+    const dt = 0.1;
+    const result = stepVerticalMovement(
+      0,
+      true,
+      true,
+      dt,
+      PLAYER_PHYSICS,
+    );
+
+    expect(result).toBeCloseTo(PLAYER_PHYSICS.jumpSpeed + PLAYER_PHYSICS.gravity * dt);
+  });
+
+  it("rejects a jump while airborne", () => {
+    // Aerial request leaves the velocity as pure gravity integration —
+    // identical to a request that was never made.
+    const airborne = stepVerticalMovement(
+      2,
+      true,
+      false,
+      0.5,
+      PLAYER_PHYSICS,
+    );
+    const noRequest = stepVerticalMovement(
+      2,
+      false,
+      false,
+      0.5,
+      PLAYER_PHYSICS,
+    );
+
+    expect(airborne).toBeCloseTo(noRequest);
+    expect(airborne).toBeCloseTo(2 + PLAYER_PHYSICS.gravity * 0.5);
+  });
+
+  it("clamps downward velocity to zero while grounded", () => {
+    // A grounded character never accumulates velocity into the floor, so
+    // standing still stays at exactly zero.
+    const result = stepVerticalMovement(
+      -3,
+      false,
+      true,
+      1,
+      PLAYER_PHYSICS,
+    );
+
+    expect(result).toBe(0);
+  });
+
+  it("produces the same velocity change for equivalent elapsed time", () => {
+    const oneStep = stepVerticalMovement(0, false, false, 1, PLAYER_PHYSICS);
+
+    let velocity = 0;
+    for (let step = 0; step < 10; step += 1) {
+      velocity = stepVerticalMovement(
+        velocity,
+        false,
+        false,
+        0.1,
+        PLAYER_PHYSICS,
+      );
+    }
+
+    expect(velocity).toBeCloseTo(oneStep);
   });
 });

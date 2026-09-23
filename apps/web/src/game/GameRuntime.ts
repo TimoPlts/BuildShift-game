@@ -3,9 +3,17 @@ import type { Scene } from "@babylonjs/core/scene";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { PlayerController } from "./player/PlayerController";
+import { FIXED_DT } from "./physics/PhysicsWorld";
 import { createFoundationScene } from "./scene/createFoundationScene";
 
+/** Hard cap on a single frame's delta (s) — protects against stalled tabs. */
 const MAX_FRAME_DELTA_SECONDS = 0.1;
+/**
+ * Hard cap on fixed steps per frame (the "spiral of death" guard). After this
+ * many catch-up steps in one frame we drop the remaining accumulated time so
+ * a long hitch never freezes the render loop.
+ */
+const MAX_FIXED_STEPS_PER_FRAME = 8;
 
 /**
  * Owns the Babylon engine, scene, render loop, and browser lifecycle hooks.
@@ -27,52 +35,102 @@ export class GameRuntime {
   private readonly playerController: PlayerController;
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
+  /** Time accumulator (seconds) for the fixed physics step. */
+  private accumulator = 0;
   private started = false;
   private disposed = false;
 
-  public constructor(canvas: HTMLCanvasElement) {
-    this.engine = new Engine(canvas, true);
-
+  /**
+   * Creates a ready-to-run runtime. This is async because the player's physics
+   * world must finish loading the Rapier WASM (compat build) before the
+   * character can be constructed. On any failure the partially-built Babylon
+   * objects are disposed before the error is rethrown.
+   */
+  public static async create(canvas: HTMLCanvasElement): Promise<GameRuntime> {
+    const engine = new Engine(canvas, true);
     try {
-      this.scene = createFoundationScene(this.engine);
-      this.inputManager = new InputManager(canvas);
+      const scene = createFoundationScene(engine);
+      const inputManager = new InputManager(canvas);
+      let cameraController: ThirdPersonCameraController | undefined;
       try {
-        this.cameraController = new ThirdPersonCameraController(this.scene);
-        try {
-          this.playerController = new PlayerController(
-            this.scene,
-            this.inputManager,
-          );
-        } catch (error) {
-          this.cameraController.dispose();
-          throw error;
-        }
+        cameraController = new ThirdPersonCameraController(scene);
+        const playerController = await PlayerController.create(
+          scene,
+          inputManager,
+        );
+        return new GameRuntime(
+          engine,
+          scene,
+          inputManager,
+          cameraController,
+          playerController,
+        );
       } catch (error) {
-        this.inputManager.dispose();
-        this.scene.dispose();
+        cameraController?.dispose();
+        inputManager.dispose();
+        scene.dispose();
         throw error;
       }
     } catch (error) {
-      this.engine.dispose();
+      engine.dispose();
       throw error;
     }
+  }
+
+  private constructor(
+    engine: Engine,
+    scene: Scene,
+    inputManager: InputManager,
+    cameraController: ThirdPersonCameraController,
+    playerController: PlayerController,
+  ) {
+    this.engine = engine;
+    this.scene = scene;
+    this.inputManager = inputManager;
+    this.cameraController = cameraController;
+    this.playerController = playerController;
 
     this.renderFrame = () => {
       if (!this.scene.isDisposed) {
-        // Temporary stalled-tab protection; authoritative fixed stepping comes later.
         const deltaSeconds = Math.min(
           Math.max(this.engine.getDeltaTime() / 1000, 0),
           MAX_FRAME_DELTA_SECONDS,
         );
 
+        // 1. Camera look (consumed once per frame, independent of physics).
         const lookDelta = this.inputManager.consumeLookDelta();
         this.cameraController.applyLook(lookDelta.x, lookDelta.y);
-
         const cameraYaw = this.cameraController.getYaw();
-        this.playerController.update(deltaSeconds, cameraYaw);
 
-        this.cameraController.update(this.playerController.getPosition());
+        // 2. Jump is an edge: consumed once per frame, then applied to the
+        //    fixed steps. Grounded-gating in PlayerController guarantees a
+        //    single jump even though the same flag reaches every step in the
+        //    frame (after the first jump the player is no longer grounded).
+        const jumpRequested = this.inputManager.consumeJumpRequested();
 
+        // 3. Fixed-step physics: advance the character by whole 60 Hz steps,
+        //    decoupling physics from the variable render rate for deterministic
+        //    collision / gravity / jump behaviour.
+        this.accumulator += deltaSeconds;
+        let steps = 0;
+        while (
+          this.accumulator >= FIXED_DT &&
+          steps < MAX_FIXED_STEPS_PER_FRAME
+        ) {
+          this.playerController.update(FIXED_DT, cameraYaw, jumpRequested);
+          this.accumulator -= FIXED_DT;
+          steps += 1;
+        }
+        if (steps >= MAX_FIXED_STEPS_PER_FRAME) {
+          // Spiral-of-death guard: drop the un-simulated remainder so a long
+          // hitch can't stall the render loop.
+          this.accumulator = 0;
+        }
+
+        // 4. Camera follows the character's feet (centre - half height).
+        this.cameraController.update(this.playerController.getFeetPosition());
+
+        // 5. Render.
         this.scene.render();
       }
     };

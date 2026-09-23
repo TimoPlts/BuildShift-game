@@ -18,3 +18,11 @@ export interface Position2D {
 export interface HorizontalMovementConfig {
   moveSpeed: number;
 }
+
+/** Shared gravity / jump tuning for vertical movement. */
+export interface VerticalMovementConfig {
+  /** Gravity acceleration in m/s² (negative = downward). */
+  gravity: number;
+  /** Initial upward velocity applied on a grounded jump, in m/s. */
+  jumpSpeed: number;
+}

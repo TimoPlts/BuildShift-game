@@ -1,6 +1,7 @@
 import type { LocalMovementInput } from "@buildshift/simulation";
 
 const MOVEMENT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
+const JUMP_CODE = "Space";
 
 /** Accumulated pointer-lock mouse movement in pixels since the last frame. */
 export interface LookDelta {
@@ -24,6 +25,8 @@ export interface LookDelta {
 export class InputManager {
   private readonly heldCodes = new Set<string>();
   private readonly lookDelta = { x: 0, y: 0 };
+  /** Latched the most recent jump key-down edge; consumed per update tick. */
+  private jumpRequested = false;
   private pointerLocked = false;
   private disposed = false;
 
@@ -74,6 +77,17 @@ export class InputManager {
     }
 
     return delta;
+  }
+
+  /**
+   * Returns whether a jump was requested since the previous call, then clears
+   * the latch. The runtime consumes this once per update tick so a single
+   * Space press produces at most one jump even if the key is still held.
+   */
+  public consumeJumpRequested(): boolean {
+    const wasRequested = this.jumpRequested;
+    this.jumpRequested = false;
+    return wasRequested;
   }
 
   /**
@@ -130,6 +144,12 @@ export class InputManager {
     if (MOVEMENT_CODES.has(event.code)) {
       this.heldCodes.add(event.code);
     }
+    // Jump is an edge (a single key-down), latched only while locked so a
+    // stale jump can never fire after unlock. `repeat` key-downs are ignored
+    // so holding Space does not produce continuous jumps.
+    if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
+      this.jumpRequested = true;
+    }
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
@@ -163,6 +183,9 @@ export class InputManager {
     this.heldCodes.clear();
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
+    // Drop any in-flight jump so an old key-down can't trigger a jump after
+    // the pointer is released (blur / Esc / hidden tab).
+    this.jumpRequested = false;
   };
 }
 

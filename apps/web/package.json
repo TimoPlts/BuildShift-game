@@ -14,6 +14,7 @@
     "@buildshift/game-config": "workspace:*",
     "@buildshift/protocol": "workspace:*",
     "@buildshift/simulation": "workspace:*",
+    "@dimforge/rapier3d-compat": "^0.20.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
