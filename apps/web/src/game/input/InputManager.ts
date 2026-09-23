@@ -95,8 +95,15 @@ export class InputManager {
    * requests for a short time after a release; the resulting rejection is
    * harmless and swallowed. Escape always releases pointer lock through
    * normal browser behaviour.
+   *
+   * Defined as an arrow-function class field (not a prototype method) so that
+   * when it is registered as the canvas `click` listener, `this` stays lexically
+   * bound to the InputManager. A normal method would lose `this` when invoked
+   * by the DOM as a bare event handler, and the pointer-lock click would fail.
+   * Being a single stable field also means `removeEventListener` in `dispose()`
+   * receives the exact same function reference that was added.
    */
-  public requestPointerLock(): void {
+  private readonly requestPointerLock = (): void => {
     if (this.disposed || this.pointerLocked) {
       return;
     }
@@ -116,7 +123,7 @@ export class InputManager {
       // Older engines invoke requestPointerLock synchronously and throw on
       // throttle; nothing to do until the next user gesture.
     }
-  }
+  };
 
   public dispose(): void {
     if (this.disposed) {
