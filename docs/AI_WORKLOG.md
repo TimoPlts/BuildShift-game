@@ -146,5 +146,5 @@ For each development stage record:
 - **Production preview:** `pnpm build` then `pnpm --filter @buildshift/web preview` served the production build; the page loaded with one canvas, the overlay, no module-resolution errors, and no console errors; the Pointer Lock API was present. Vite retains the known non-blocking Babylon chunk-size warning.
 - **Server regression:** Both `pnpm dev:server` (`tsx watch`) and compiled `pnpm --filter @buildshift/game-server start` (`node dist/index.js`) reached the unchanged placeholder startup and reported protocol `0.1.0`.
 - **Local verification:** `pnpm typecheck`, `pnpm build`, and `pnpm test` all passed.
-- **GitHub Actions:** Result pending push of this commit (recorded after CI runs).
+- **GitHub Actions:** Green. The `build` run for commit `271c559` succeeded in 40s with every step passing: Checkout, Setup pnpm, Setup Node.js, Install dependencies, Typecheck, Build, and Test. The single warning/notice are the known non-blocking Babylon chunk-size warning and the Node 20 deprecation notice.
 - **Still unresolved:** Manual real-browser click-to-play / mouse-look / pitch-clamp / player-follow interaction is verified only to the extent automatable (math covered by unit tests; scene, no-console-errors, and Pointer-Lock-API presence confirmed). Camera collision and all Stage 1D+ systems remain intentionally deferred.
