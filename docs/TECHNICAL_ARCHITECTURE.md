@@ -2195,6 +2195,7 @@ Default rules:
 - No Babylon imports inside shared simulation logic
 - No React imports inside game server
 - No client-authoritative damage/scoring
+- Native ESM targets (`apps/game-server` and shared packages) use the Node-compatible TypeScript configuration. Relative imports in their TypeScript source include the emitted `.js` extension (for example, `./module.js`); the Vite web app keeps bundler resolution.
 
 ---
 
