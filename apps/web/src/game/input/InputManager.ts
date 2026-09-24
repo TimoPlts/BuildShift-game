@@ -25,9 +25,20 @@ export interface LookDelta {
 export class InputManager {
   private readonly heldCodes = new Set<string>();
   private readonly lookDelta = { x: 0, y: 0 };
-  /** Latched the most recent jump key-down edge; consumed per update tick. */
-  private jumpRequested = false;
+  /**
+   * Latched the most recent jump key-down edge, pending the next fixed
+   * simulation step. It is intentionally *not* cleared per render frame — only
+   * when a fixed step polls it (see {@link pollJumpPressed}) or when input is
+   * cleared — so a press can never be consumed before a simulation step runs.
+   */
+  private jumpPressed = false;
   private pointerLocked = false;
+  /**
+   * Latched true whenever {@link clearInput} ran (unlock / blur / hidden /
+   * dispose) since the last frame, so the runtime can drop the controller's
+   * buffered jump / coyote state on exactly the same triggers.
+   */
+  private inputCleared = false;
   private disposed = false;
 
   public constructor(private readonly canvas: HTMLCanvasElement) {
@@ -80,14 +91,34 @@ export class InputManager {
   }
 
   /**
-   * Returns whether a jump was requested since the previous call, then clears
-   * the latch. The runtime consumes this once per update tick so a single
-   * Space press produces at most one jump even if the key is still held.
+   * Returns whether a jump key-down edge is pending, and clears the latch.
+   *
+   * This is polled **once per fixed simulation step** (inside the runtime's
+   * fixed-step loop), never per render frame. Polling per step — rather than
+   * consuming the edge before the accumulator advances — is what guarantees a
+   * press can never be consumed at render-frame time with no step actually
+   * running, which was the source of silently-lost jumps. Once polled by a
+   * step the press is handed to the shared {@link JumpController}, which
+   * buffers/coyote-times it and decides the launch; the browser-level latch
+   * here only captures the raw edge.
    */
-  public consumeJumpRequested(): boolean {
-    const wasRequested = this.jumpRequested;
-    this.jumpRequested = false;
-    return wasRequested;
+  public pollJumpPressed(): boolean {
+    const wasPressed = this.jumpPressed;
+    this.jumpPressed = false;
+    return wasPressed;
+  }
+
+  /**
+   * Returns whether raw input was cleared since the previous call, then
+   * resets the signal. The runtime calls this once per render frame and, when
+   * true, drops the player's buffered jump / coyote state so a stale buffered
+   * press can never fire after the pointer is released, the window blurs, or
+   * the tab hides.
+   */
+  public consumeInputCleared(): boolean {
+    const cleared = this.inputCleared;
+    this.inputCleared = false;
+    return cleared;
   }
 
   /**
@@ -153,9 +184,10 @@ export class InputManager {
     }
     // Jump is an edge (a single key-down), latched only while locked so a
     // stale jump can never fire after unlock. `repeat` key-downs are ignored
-    // so holding Space does not produce continuous jumps.
+    // so holding Space does not produce continuous jumps. The latch is read
+    // per fixed simulation step (see pollJumpPressed), not per render frame.
     if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
-      this.jumpRequested = true;
+      this.jumpPressed = true;
     }
   };
 
@@ -190,9 +222,14 @@ export class InputManager {
     this.heldCodes.clear();
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
-    // Drop any in-flight jump so an old key-down can't trigger a jump after
-    // the pointer is released (blur / Esc / hidden tab).
-    this.jumpRequested = false;
+    // Drop any pending jump so an old key-down can't trigger a jump after the
+    // pointer is released (blur / Esc / hidden tab). The controller's buffered
+    // jump / coyote state is reset separately by the player (it has no access
+    // to the input layer).
+    this.jumpPressed = false;
+    // Signal the runtime to drop the controller's buffered jump / coyote state
+    // on exactly these triggers, so a stale buffered press can't fire later.
+    this.inputCleared = true;
   };
 }
 

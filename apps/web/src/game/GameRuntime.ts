@@ -102,22 +102,29 @@ export class GameRuntime {
         this.cameraController.applyLook(lookDelta.x, lookDelta.y);
         const cameraYaw = this.cameraController.getYaw();
 
-        // 2. Jump is an edge: consumed once per frame, then applied to the
-        //    fixed steps. Grounded-gating in PlayerController guarantees a
-        //    single jump even though the same flag reaches every step in the
-        //    frame (after the first jump the player is no longer grounded).
-        const jumpRequested = this.inputManager.consumeJumpRequested();
+        // 2. If raw input was cleared this frame (pointer lock released,
+        //    window blurred, tab hidden, or disposed), drop the controller's
+        //    buffered jump / coyote state so a stale buffered press can never
+        //    fire on a later grounded step.
+        if (this.inputManager.consumeInputCleared()) {
+          this.playerController.resetJumpState();
+        }
 
         // 3. Fixed-step physics: advance the character by whole 60 Hz steps,
         //    decoupling physics from the variable render rate for deterministic
-        //    collision / gravity / jump behaviour.
+        //    collision / gravity / jump behaviour. The jump key edge is polled
+        //    *inside* each step (by PlayerController), not here at render time,
+        //    so a press can never be consumed before a simulation step runs.
+        //    The shared JumpController guarantees a single launch per press
+        //    (buffer + coyote), so no double jump is possible even if the
+        //    accumulator advances several steps in one frame.
         this.accumulator += deltaSeconds;
         let steps = 0;
         while (
           this.accumulator >= FIXED_DT &&
           steps < MAX_FIXED_STEPS_PER_FRAME
         ) {
-          this.playerController.update(FIXED_DT, cameraYaw, jumpRequested);
+          this.playerController.update(FIXED_DT, cameraYaw);
           this.accumulator -= FIXED_DT;
           steps += 1;
         }

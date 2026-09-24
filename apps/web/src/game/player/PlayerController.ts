@@ -1,5 +1,10 @@
-import { PLAYER_MOVEMENT, PLAYER_PHYSICS } from "@buildshift/game-config";
 import {
+  JUMP_INPUT_TIMING,
+  PLAYER_MOVEMENT,
+  PLAYER_PHYSICS,
+} from "@buildshift/game-config";
+import {
+  JumpController,
   movementInputToWorld,
   stepVerticalMovement,
 } from "@buildshift/simulation";
@@ -30,9 +35,17 @@ const PLAYER_HEIGHT = 1.8;
  * character body's resulting translation onto the mesh.
  *
  * Movement is camera-relative: raw WASD is rotated by the camera yaw into a
- * desired world X/Z displacement; vertical velocity is integrated (gravity)
- * with jumping only allowed while grounded. Orientation: the player always
- * faces the camera look direction (player yaw = camera yaw).
+ * desired world X/Z displacement; vertical velocity is integrated (gravity).
+ *
+ * Jump timing (buffer + coyote) is owned by the shared, platform-independent
+ * {@link JumpController} so the same deterministic rule the client uses for
+ * prediction will be reusable by the authoritative server. The controller is
+ * advanced only by fixed steps (never per render frame), so it is
+ * frame-rate safe and the jump edge is polled *inside* the fixed-step loop —
+ * guaranteeing a press always reaches a step and can't be lost.
+ *
+ * Orientation: the player always faces the camera look direction (player yaw
+ * = camera yaw).
  */
 export class PlayerController {
   private readonly mesh: AbstractMesh;
@@ -40,6 +53,8 @@ export class PlayerController {
   private readonly forwardMarker: AbstractMesh;
   private readonly physics: PhysicsWorld;
   private readonly input: InputManager;
+  /** Owns the jump-buffer / coyote-time timing and the launch decision. */
+  private readonly jumpController: JumpController;
   /** Vertical (world-Y) velocity in m/s, carried between fixed steps. */
   private verticalVelocity = 0;
   /** Grounded from the previous fixed step — used for jump eligibility. */
@@ -66,6 +81,7 @@ export class PlayerController {
   ) {
     this.input = input;
     this.physics = physics;
+    this.jumpController = new JumpController(JUMP_INPUT_TIMING);
 
     this.material = new StandardMaterial("local-player-material", scene);
     this.material.diffuseColor = new Color3(0.25, 0.9, 0.48);
@@ -106,17 +122,15 @@ export class PlayerController {
    * to the physics world, which resolves it against the arena colliders. The
    * mesh is then mirrored to the character body's resulting translation.
    *
-   * `jumpRequested` is a consumed edge (a single Space press). It is passed in
-   * — rather than consumed here — so the runtime can consume the input edge
-   * once per render frame even though this may be called several times per
-   * frame by the fixed-step accumulator. `cameraYawRadians` uses the shared
-   * convention: yaw 0 faces -Z, positive yaw rotates toward +X.
+   * The jump key edge is **polled here, per fixed step** (not per render
+   * frame) and handed to the shared {@link JumpController}, which applies
+   * jump-buffer + coyote-time and decides whether a jump launches on this
+   * step. Polling inside the step is what guarantees a press can never be
+   * consumed without a simulation step actually running.
+   * `cameraYawRadians` uses the shared convention: yaw 0 faces -Z, positive
+   * yaw rotates toward +X.
    */
-  public update(
-    deltaSeconds: number,
-    cameraYawRadians: number,
-    jumpRequested: boolean,
-  ): void {
+  public update(deltaSeconds: number, cameraYawRadians: number): void {
     // --- Horizontal: camera-relative desired world displacement ----------
     const localInput = this.input.getMovementInput();
     const worldInput = movementInputToWorld(localInput, cameraYawRadians);
@@ -126,7 +140,16 @@ export class PlayerController {
     const dx = worldInput.x * normalization * distance;
     const dz = worldInput.z * normalization * distance;
 
-    // --- Vertical: integrate gravity, jump only while grounded ----------
+    // --- Jump timing: buffer + coyote, decide the launch for this step ----
+    // Poll the raw edge now (per step) and let the shared controller decide.
+    const jumpPressed = this.input.pollJumpPressed();
+    const jumpRequested = this.jumpController.step(
+      deltaSeconds,
+      this.lastGrounded,
+      jumpPressed,
+    );
+
+    // --- Vertical: integrate gravity; launch at jump speed when requested -
     const nextVelocity = stepVerticalMovement(
       this.verticalVelocity,
       jumpRequested,
@@ -148,6 +171,15 @@ export class PlayerController {
     // Face the camera look direction (Babylon Y rotation: 0 = -Z, positive
     // rotates toward +X — the same convention as the movement math).
     this.mesh.rotation.y = cameraYawRadians;
+  }
+
+  /**
+   * Clears the buffered jump / coyote timing. The runtime calls this when
+   * input is cleared (pointer lock released, window blurred, or tab hidden)
+   * so a stale buffered press can never fire on a later grounded step.
+   */
+  public resetJumpState(): void {
+    this.jumpController.reset();
   }
 
   /** Capsule *centre* position (the physics body translation), as a Vector3. */
