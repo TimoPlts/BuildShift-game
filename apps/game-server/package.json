@@ -11,9 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@buildshift/protocol": "workspace:*"
+    "@buildshift/protocol": "workspace:*",
+    "@colyseus/core": "^0.18.16",
+    "@colyseus/ws-transport": "^0.18.3",
+    "express": "^4.22.3"
   },
   "devDependencies": {
+    "@colyseus/sdk": "^0.18.4",
     "@types/node": "^22.5.0",
     "tsx": "^4.19.0",
     "typescript": "^5.5.4"
