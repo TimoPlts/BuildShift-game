@@ -109,23 +109,32 @@ async function teardownRoom(room: ClientRoom | null): Promise<void> {
 }
 
 /**
- * Race `promise` against a deadline. Resolves when `promise` settles (or
- * rejects with its error), or with `undefined` when the deadline elapses
- * first — so callers can never be held hostage by a hanging teardown.
+ * Race `promise` against a deadline.
+ *
+ * Resolves/rejects when `promise` settles. If the deadline elapses first, the
+ * promise REJECTS with a descriptive error so a genuine teardown/shutdown
+ * timeout FAILS the suite instead of silently passing. (A timeout during
+ * `afterAll` therefore surfaces as a test failure, never as a swallowed
+ * `undefined`.) The explicit connection-close in `teardownRoom` keeps the
+ * teardown fast and deterministic, so this guard is a safety net, not the
+ * normal path.
  */
 async function withDeadline<T>(
   promise: Promise<T>,
   timeoutMs: number,
   label: string,
-): Promise<T | undefined> {
+): Promise<T> {
   let timer: NodeJS.Timeout | undefined;
   try {
     return await Promise.race([
       promise,
-      new Promise<undefined>((resolve) => {
+      new Promise<never>((_, reject) => {
         timer = setTimeout(() => {
-          console.warn(`[buildshift:2b2] ${label} timed out; giving up on it`);
-          resolve(undefined);
+          reject(
+            new Error(
+              `[buildshift:2b2] teardown timeout: "${label}" did not finish within ${timeoutMs}ms`,
+            ),
+          );
         }, timeoutMs);
       }),
     ]);
@@ -157,11 +166,13 @@ describe("Stage 2B2 stateful foundation room + input handling", () => {
   }, 20_000);
 
   afterAll(async () => {
-    // Tear down any rooms we still hold. Each phase is deadline-guarded so a
-    // slow/hanging step under parallel load can never blow the hook's 20s
-    // budget: the behavioural assertions already ran, teardown is best-effort.
-    // Worst-case total: 3 + 3 + 8 = 14s, leaving headroom under the hook's
-    // 20s budget even under parallel-load timer skew.
+    // Tear down any rooms we still hold. Each phase runs under a deadline that
+    // REJECTS (fails the suite) if it does not finish in time — a teardown or
+    // shutdown hang must surface as a failure, never a silent pass. `teardownRoom`
+    // closes the SDK connections explicitly, which is what makes the teardown
+    // fast and deterministic, so these are safety nets. Worst-case total:
+    // 3 + 3 + 8 = 14s, leaving headroom under the hook's 20s budget even under
+    // parallel-load timer skew.
     await withDeadline(teardownRoom(secondRoom), 3_000, "teardownRoom(second)");
     await withDeadline(teardownRoom(room), 3_000, "teardownRoom(primary)");
     await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
@@ -175,10 +186,13 @@ describe("Stage 2B2 stateful foundation room + input handling", () => {
   it("creates the player at the neutral bootstrap spawn on join", async () => {
     const p = playerFromState(room.state, room.sessionId);
     expect(p).toBeDefined();
-    // Neutral bootstrap spawn (documented, non-gameplay).
-    expect(p.x).toBe(0);
-    expect(p.y).toBe(0);
-    expect(p.z).toBe(0);
+    // Neutral bootstrap spawn (documented, non-gameplay) — read via the
+    // NESTED `position` ref so the test proves the nested shape survives
+    // real Colyseus serialization/patching on the wire.
+    expect(p.position).toBeDefined();
+    expect(p.position.x).toBe(0);
+    expect(p.position.y).toBe(0);
+    expect(p.position.z).toBe(0);
     // No input processed yet.
     expect(p.acknowledgedSequence).toBe(-1);
     // Initial yaw.
@@ -206,10 +220,11 @@ describe("Stage 2B2 stateful foundation room + input handling", () => {
     const p = playerFromState(room.state, room.sessionId);
     expect(p.acknowledgedSequence).toBe(0);
     expect(p.yaw).toBeCloseTo(1.23, 6);
-    // Movement is acknowledged but not integrated yet (Stage 2C).
-    expect(p.x).toBe(0);
-    expect(p.y).toBe(0);
-    expect(p.z).toBe(0);
+    // Movement is acknowledged but not integrated yet (Stage 2C) — the nested
+    // position is still the neutral bootstrap spawn.
+    expect(p.position.x).toBe(0);
+    expect(p.position.y).toBe(0);
+    expect(p.position.z).toBe(0);
   });
 
   it("advances acknowledgedSequence for a strictly-higher sequence", async () => {

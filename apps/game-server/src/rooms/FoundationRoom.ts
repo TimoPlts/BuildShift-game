@@ -152,9 +152,11 @@ export class FoundationRoom extends Room {
     }
     const player = new PlayerState();
     player.playerId = client.sessionId;
-    player.x = NEUTRAL_SPAWN.x;
-    player.y = NEUTRAL_SPAWN.y;
-    player.z = NEUTRAL_SPAWN.z;
+    // `position` is a nested `t.ref` that is auto-instantiated per player
+    // (zero-arg `PositionState`); we only set the capsule-centre coordinates.
+    player.position.x = NEUTRAL_SPAWN.x;
+    player.position.y = NEUTRAL_SPAWN.y;
+    player.position.z = NEUTRAL_SPAWN.z;
     player.yaw = 0;
     player.acknowledgedSequence = NO_SEQUENCE_ACKNOWLEDGED;
     this.players.set(client.sessionId, player);

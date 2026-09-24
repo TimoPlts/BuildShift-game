@@ -9,7 +9,7 @@
  *  - each entry carries the minimal data the accepted Stage 2B1 contract
  *    (`AuthoritativePlayerState`, `@buildshift/protocol`) describes:
  *      * `playerId`           — stable id (the `sessionId`),
- *      * `x` / `y` / `z`      — world position in **metres**, origin at the
+ *      * `position.{x,y,z}`   — world position in **metres**, origin at the
  *                               world floor, Y-up, **capsule CENTRE** semantic
  *                               (see `PlayerPositionSemantic`),
  *      * `yaw`                — horizontal facing in **radians** (0 faces -Z,
@@ -17,12 +17,12 @@
  *      * `acknowledgedSequence` — highest input sequence the server has
  *                               authoritatively processed (`-1` = none yet).
  *
- * Wire-shape note: the protocol *contract* expresses position as a nested
- * `position: { x, y, z }` object. This wire schema keeps the coordinate
- * scalars FLAT (Colyseus serializes scalar fields directly), which is the
- * lighter, canonical form for the wire. `toAuthoritativePlayerState` below
- * performs the explicit mapping back to the contract shape so the two can
- * never silently drift.
+ * Wire-shape note: the synchronized player state DIRECTLY mirrors the shared
+ * protocol contract. `position` is a nested `t.ref` schema, so browser clients
+ * (which receive the real Colyseus wire state, not a server-side mapper) see
+ * `player.position.{x,y,z}` — the same shape as `AuthoritativePlayerState`.
+ * There is therefore no server-only remapping helper; the wire and the
+ * contract share one shape by construction.
  *
  * Deliberately minimal: no health, energy, weapons, ammo, building, teams,
  * rank, velocity, or pitch. Those belong to later game-mode stages.
@@ -33,8 +33,6 @@
  * repo's current `tsconfig.base.json` as-is.
  */
 import { schema, t, MapSchema } from "@colyseus/schema";
-
-import type { AuthoritativePlayerState } from "@buildshift/protocol";
 
 /**
  * Neutral, non-gameplay spawn used for bootstrap transport state.
@@ -54,18 +52,43 @@ export const NEUTRAL_SPAWN = { x: 0, y: 0, z: 0 } as const;
 export const NO_SEQUENCE_ACKNOWLEDGED = -1;
 
 /**
- * Per-player authoritative state synced to clients (Stage 2B2 minimal).
+ * Nested world position (metres, capsule-centre, Y-up) for a synchronized
+ * player.
+ *
+ * Expressed as its own schema so the coordinate trio is a first-class,
+ * individually-synchronized `t.ref`. Because this schema defines no
+ * `initialize(...args)` (zero-arg), `t.ref` auto-instantiates a fresh
+ * `PositionState` for each owning player (verified against the installed
+ * `@colyseus/schema` v5 `RefHasDefault` rule) — no `.default()` is required.
  */
-export const PlayerState = schema(
+export const PositionState = schema(
   {
-    /** Stable player/session id (the Colyseus client `sessionId`). */
-    playerId: t.string(),
     /** World X, metres, capsule-centre semantic. */
     x: t.number(),
     /** World Y, metres (up), capsule-centre semantic. */
     y: t.number(),
     /** World Z, metres, capsule-centre semantic. */
     z: t.number(),
+  },
+  "PositionState",
+);
+
+/**
+ * Per-player authoritative state synced to clients (Stage 2B2 minimal).
+ *
+ * The field set intentionally mirrors the shared protocol contract
+ * (`AuthoritativePlayerState`): `playerId`, nested `position`, `yaw`,
+ * `acknowledgedSequence`.
+ */
+export const PlayerState = schema(
+  {
+    /** Stable player/session id (the Colyseus client `sessionId`). */
+    playerId: t.string(),
+    /**
+     * World position (metres, capsule-centre). A nested ref that is
+     * auto-instantiated per player; clients read `position.{x,y,z}`.
+     */
+    position: t.ref(PositionState),
     /** Horizontal facing, radians (0 faces -Z, positive toward +X). */
     yaw: t.number(),
     /** Highest input sequence processed authoritatively; -1 = none yet. */
@@ -86,33 +109,11 @@ export const FoundationRoomState = schema(
   "FoundationRoomState",
 );
 
+export type PositionStateInstance = InstanceType<typeof PositionState>;
 export type PlayerStateInstance = InstanceType<typeof PlayerState>;
 export type FoundationRoomStateInstance = InstanceType<
   typeof FoundationRoomState
 >;
-
-/**
- * Explicitly map a server-side `PlayerState` instance to the shared protocol
- * contract shape (`AuthoritativePlayerState`).
- *
- * The position coordinate semantic is **capsule-centre** (Y-up, metres), per
- * the `PlayerPositionSemantic` contract constant. This mapping is the single
- * place where the flat wire fields are re-assembled into the contract's
- * nested `position` object, so a future contract/wire shape mismatch is
- * caught at this boundary instead of leaking through call sites.
- */
-export function toAuthoritativePlayerState(
-  p: PlayerStateInstance,
-): AuthoritativePlayerState {
-  // The position coordinates carry the contract's capsule-centre semantic
-  // (Y-up, metres); see `PlayerPositionSemantic` in `@buildshift/protocol`.
-  return {
-    playerId: p.playerId,
-    position: { x: p.x, y: p.y, z: p.z },
-    yaw: p.yaw,
-    acknowledgedSequence: p.acknowledgedSequence,
-  };
-}
 
 /**
  * Convenience alias so call sites that only need the `MapSchema` of players
