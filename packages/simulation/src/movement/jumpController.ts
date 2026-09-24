@@ -70,8 +70,13 @@ export class JumpController {
     const pressValid = this.jumpBufferRemaining > 0;
 
     if (jumpEligible && pressValid) {
-      // Consume the buffer so the same press can only ever launch once.
+      // Consume the buffer so the same press can only ever launch once, and
+      // invalidate the coyote window so a fresh press while airborne (still
+      // inside the coyote time that was granted while grounded) cannot launch
+      // a second jump. Coyote is only meant to cover *walking/falling off a
+      // ledge*, not to enable an extra jump right after a normal grounded jump.
       this.jumpBufferRemaining = 0;
+      this.coyoteRemaining = 0;
       return true;
     }
 

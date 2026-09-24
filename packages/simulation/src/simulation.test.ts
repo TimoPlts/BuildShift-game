@@ -309,6 +309,28 @@ describe("JumpController", () => {
     expect(launches.filter(Boolean).length).toBe(1);
   });
 
+  it("does not launch an airborne second jump from a fresh press within the coyote window", () => {
+    // Regression: a grounded jump must invalidate coyote eligibility so that a
+    // *new* press while airborne — still inside the coyote time that was
+    // granted while grounded — cannot launch a second jump. Coyote is only
+    // meant to cover walking/falling off a ledge, not an extra jump.
+    const jc = new JumpController(config);
+
+    // 1) grounded press -> normal grounded launch.
+    expect(jc.step(dt, true, true)).toBe(true);
+
+    // 2) next step the player is airborne, still well inside the 0.1 s coyote
+    //    window that was refreshed while grounded on the previous step.
+    // 3) a NEW jump press arrives in that airborne step.
+    // 4) it MUST NOT launch (coyote was consumed by the launch above).
+    expect(jc.step(dt, false, true)).toBe(false);
+
+    // A third airborne step with no press also stays silent, and the
+    // controller still permits a fresh grounded press to launch later.
+    expect(jc.step(dt, false, false)).toBe(false);
+    expect(jc.step(dt, true, true)).toBe(true);
+  });
+
   it("resets buffered and coyote state", () => {
     const jc = new JumpController(config);
     jc.step(dt, true, true); // launch, consuming the buffer
