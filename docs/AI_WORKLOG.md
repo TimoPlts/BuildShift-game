@@ -268,3 +268,16 @@ For each development stage record:
 - **Compiled runtime:** `pnpm --filter @buildshift/game-server start` booted the compiled `dist/index.js`, reported protocol `0.1.0`, bound successfully to a dynamically selected port, and reported the `foundation` room ready. Termination released the port; the tested `shutdownServer()` path resolves and leaves no Stage 2A listener behind.
 - **Validation:** `pnpm install`, workspace and server-specific typechecks/builds, the production web build, `pnpm test`, and `git diff --check` all pass. The web build retains only its known non-blocking Babylon/Rapier chunk-size warning.
 - **Remaining Stage 2B scope:** Define shared player/input/state contracts and authoritative multiplayer movement in a later stage. Stage 2A intentionally leaves the room stateless and the browser client disconnected.
+
+---
+
+## 2026-09-24 — Stage 2B1 — First Multiplayer Protocol Contract
+
+- **Scope:** Added the first concrete, dependency-independent multiplayer contract in `@buildshift/protocol`; no server/client networking, Colyseus state handling, authoritative movement, prediction, or reconciliation was implemented.
+- **Input contract:** `PlayerInputFrame` carries `sequence`, local movement axes (`moveX`, `moveZ`), look angles (`lookYaw`, `lookPitch`), and the strict boolean `jump` intent edge. The frame deliberately contains no tick-rate/cadence field. Structural validation requires a non-negative safe-integer sequence, movement values within `[-1, 1]`, finite look values, and pitch within `[-π, π]`.
+- **Authoritative state contract:** `AuthoritativePlayerState` carries `playerId`, `position`, `yaw`, and `acknowledgedSequence`. Authoritative `position` is explicitly the Rapier capsule centre/body translation; feet remain derived presentation/physics data and no collider offset is duplicated into the wire contract.
+- **Shared identifiers/version:** Added `ROOMS.FOUNDATION = "foundation"`, `EVENTS.PLAYER_INPUT = "player:input"`, and bumped `PROTOCOL_VERSION` to `0.2.0`.
+- **Validation boundary:** The protocol validates wire shape, primitive types, numeric finiteness, and structural ranges only. Sequence monotonicity, rate limiting, plausibility, anti-cheat, and all game rules remain server responsibilities for later stages.
+- **Integration documentation fix:** Corrected the stale `PlayerController.getFeetPosition()` comment so it no longer claims feet should be synchronized; behavior and collider constants are unchanged.
+- **Tests and validation:** Added 29 protocol tests covering version/constants, valid frames, sequence safety, ranges, non-finite values, angle bounds, strict jump typing, and malformed inputs. The full suite passes 61/61 tests: 29 protocol, 27 Stage 1E simulation, and five Stage 2A server/config tests. Workspace and protocol-specific typechecks/builds pass, as do the web/server builds and `git diff --check`.
+- **Remaining Stage 2B2 scope:** Wire these shared contracts into actual Colyseus room state and input handling. The Stage 2A room remains stateless and the web client remains disconnected in Stage 2B1.

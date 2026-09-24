@@ -194,8 +194,8 @@ export class PlayerController {
   /**
    * Capsule *feet* position (centre lowered by half the collider height), as a
    * Vector3. This is the value the camera should track (see the camera's
-   * "feet + target height" contract) and the value that should be synced to
-   * the future server.
+   * "feet + target height" contract). It is derived presentation / physics
+   * data; the authoritative network position is the capsule centre.
    */
   public getFeetPosition(): Vector3 {
     return new Vector3(
