@@ -69,12 +69,12 @@ function getMaterial(scene: Scene, kind: ArenaObject["material"]): StandardMater
       material.specularColor = new Color3(0.04, 0.05, 0.07);
       break;
     case "accent":
+      material.diffuseColor = new Color3(0.12, 0.55, 0.78);
+      break;
     case "neutral":
       // Muted grey-blue used by the Stage 1E test obstacles so they read as
       // "test furniture" rather than the accent/warm reference geometry.
       material.diffuseColor = new Color3(0.42, 0.47, 0.55);
-      break;
-      material.diffuseColor = new Color3(0.12, 0.55, 0.78);
       break;
     case "warm":
       material.diffuseColor = new Color3(0.92, 0.48, 0.18);
