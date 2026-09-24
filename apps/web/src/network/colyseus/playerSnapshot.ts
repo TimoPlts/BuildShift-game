@@ -6,8 +6,14 @@
  * Colyseus or Babylon, so it can be unit-tested directly (see
  * `playerSnapshot.test.ts`). The server implements `state.players` as a
  * Colyseus `Map` schema keyed by player id; from the SDK that arrives as a
- * `Map`-like value, but this helper also tolerates plain objects and arrays so
- * a shape drift never crashes the client.
+ * `Map`-like value, but this helper also tolerates plain objects so a shape
+ * drift never crashes the client.
+ *
+ * Every PLAYER ENTRY is validated against the accepted
+ * {@link AuthoritativePlayerState} contract exactly. We deliberately do NOT
+ * synthesise a `playerId` or fall back to historical/obsolete wire shapes —
+ * a non-conforming entry is treated as invalid and skipped so schema drift
+ * stays visible instead of being silently corrected client-side.
  *
  * The snapshot mirrors the shared `AuthoritativePlayerState` contract
  * (`@buildshift/protocol`) field-for-field and carries **no extra fields**.
@@ -58,15 +64,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Returns the value when it is a finite number, otherwise `undefined`. Used to
- * pick the first present, valid coordinate across the nested- and
- * flat-position wire shapes.
- */
-function readFiniteNumber(value: unknown): number | undefined {
-  return typeof value === "number" && Number.isFinite(value)
-    ? value
-    : undefined;
+/** True when the value is a finite number (rejects NaN/Infinity/non-numbers). */
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
 }
 
 /**
@@ -85,45 +85,58 @@ function isMapLike(value: unknown): value is Iterable<unknown> {
   );
 }
 
-/** Validate one player entry; returns `null` when it is structurally invalid. */
+/**
+ * Validate one player entry against the accepted {@link AuthoritativePlayerState}
+ * contract; returns `null` when it does not conform.
+ *
+ * @param key the map key this entry was stored under. The server guarantees
+ *        `state.players` key === `player.playerId` === client `sessionId`, so
+ *        the wire `playerId` MUST equal the key. A mismatch is schema drift and
+ *        the entry is rejected rather than silently repaired.
+ */
 function readPlayerEntry(key: string, raw: unknown): ClientPlayerSnapshot | null {
   if (!isRecord(raw)) {
     return null;
   }
 
-  // playerId: must be a non-empty string. When absent/unreadable we fall back
-  // to the map key (the server keys `state.players` by player id, so this is
-  // the authoritative identity), but the wire `playerId` wins when present.
-  const wirePlayerId = raw.playerId;
-  const playerId =
-    typeof wirePlayerId === "string" && wirePlayerId.length > 0
-      ? wirePlayerId
-      : key;
-
-  // Position: the shared contract describes a nested `position: { x, y, z }`
-  // (`AuthoritativePlayerState`), but the Stage 2B2 server wire flattens it to
-  // top-level `x` / `y` / `z` on the `PlayerState` schema. Accept whichever is
-  // present (nested wins when both are) so the client tolerates both shapes.
-  const nestedPosition = isRecord(raw.position) ? raw.position : undefined;
-  const x =
-    readFiniteNumber(nestedPosition?.x) ?? readFiniteNumber(raw.x);
-  const y =
-    readFiniteNumber(nestedPosition?.y) ?? readFiniteNumber(raw.y);
-  const z =
-    readFiniteNumber(nestedPosition?.z) ?? readFiniteNumber(raw.z);
-  if (x === undefined || y === undefined || z === undefined) {
+  // playerId: a non-empty string that matches the map key exactly. We do NOT
+  // synthesise a missing/invalid `playerId` from the key — that would hide
+  // contract drift. A mismatch (or a non-string/empty value) is invalid.
+  const playerId = raw.playerId;
+  if (typeof playerId !== "string" || playerId.length === 0) {
+    return null;
+  }
+  if (playerId !== key) {
     return null;
   }
 
+  // position: must be a nested object with finite x/y/z (the accepted
+  // contract shape). No flat x/y/z fallback.
+  const position = raw.position;
+  if (!isRecord(position)) {
+    return null;
+  }
+  const x = position.x;
+  const y = position.y;
+  const z = position.z;
+  if (!isFiniteNumber(x) || !isFiniteNumber(y) || !isFiniteNumber(z)) {
+    return null;
+  }
+
+  // yaw: finite number.
   const yaw = raw.yaw;
-  if (typeof yaw !== "number" || !Number.isFinite(yaw)) {
+  if (!isFiniteNumber(yaw)) {
     return null;
   }
 
+  // acknowledgedSequence: -1 = no input processed yet; otherwise a valid
+  // non-negative input sequence. So it must be a safe integer >= -1 (rejects
+  // -2, -50, fractions, NaN, Infinity, ...).
   const acknowledgedSequence = raw.acknowledgedSequence;
   if (
     typeof acknowledgedSequence !== "number" ||
-    !Number.isSafeInteger(acknowledgedSequence)
+    !Number.isSafeInteger(acknowledgedSequence) ||
+    acknowledgedSequence < -1
   ) {
     return null;
   }
@@ -144,7 +157,8 @@ function readPlayerEntry(key: string, raw: unknown): ClientPlayerSnapshot | null
  * malformed or partially-populated state can never crash the client — the
  * remaining valid players still render in the status UI.
  *
- * @param raw the raw `room.state.players` value (a map, an array, or `undefined`).
+ * @param raw the raw `room.state.players` value (a map-like iterable or a
+ *        plain keyed object, or `undefined`).
  * @returns a plain `Record<string, ClientPlayerSnapshot>` (empty when `raw` has
  *          no valid entries).
  */
@@ -156,37 +170,29 @@ export function mapPlayersToSnapshot(raw: RawPlayersState): PlayerSnapshotMap {
   }
 
   // A Colyseus `Map` schema (or a native `Map`) yields `[key, value]` pairs
-  // when iterated.
+  // when iterated. Each pair's key is the player/session id.
   if (isMapLike(raw)) {
     for (const item of raw) {
       // A map-like iterable yields `[key, value]` pairs. Be defensive about
-      // the shape (a malformed value yields nothing).
+      // the shape (a malformed pair yields nothing).
       if (Array.isArray(item) && item.length >= 2) {
-        const mapped = readPlayerEntry(String(item[0]), item[1]);
+        const key = String(item[0]);
+        const mapped = readPlayerEntry(key, item[1]);
         if (mapped) {
-          result[mapped.playerId] = mapped;
+          result[key] = mapped;
         }
       }
     }
     return result;
   }
 
-  // Defensive: if the state ever arrives as an array, index by entry id.
-  if (Array.isArray(raw)) {
-    for (const entry of raw) {
-      const mapped = readPlayerEntry("0", entry);
-      if (mapped) {
-        result[mapped.playerId] = mapped;
-      }
-    }
-    return result;
-  }
-
+  // A plain keyed object (used by pure unit tests; the real wire shape is the
+  // map-like form above).
   if (isRecord(raw)) {
     for (const key of Object.keys(raw)) {
       const mapped = readPlayerEntry(key, raw[key]);
       if (mapped) {
-        result[mapped.playerId] = mapped;
+        result[key] = mapped;
       }
     }
   }

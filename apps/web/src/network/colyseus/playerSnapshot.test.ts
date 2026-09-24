@@ -55,35 +55,34 @@ describe("mapPlayersToSnapshot", () => {
     });
   });
 
-  it("maps a flat-wire players entry (x/y/z on the entry, not nested position)", () => {
-    // The Stage 2B2 server `PlayerState` schema flattens the position to
-    // top-level `x` / `y` / `z` rather than the contract's nested `position`.
+  it("rejects an entry with a flat (obsolete) position instead of nested position", () => {
+    // The accepted contract nests the position; the old flat x/y/z wire shape
+    // no longer exists and must NOT be silently accepted.
     const result = mapPlayersToSnapshot({
       p1: { playerId: "p1", x: 10, y: 20, z: 30, yaw: -0.2, acknowledgedSequence: -1 },
     });
-    expect(result).toEqual({
-      p1: {
-        playerId: "p1",
-        position: { x: 10, y: 20, z: 30 },
-        yaw: -0.2,
-        acknowledgedSequence: -1,
-      },
-    });
+    expect(result).toEqual({});
   });
 
-  it("prefers a nested position when both nested and flat coordinates are present", () => {
-    const result = mapPlayersToSnapshot({
-      p1: {
-        playerId: "p1",
-        position: { x: 1, y: 2, z: 3 },
-        x: 100,
-        y: 200,
-        z: 300,
-        yaw: 0.5,
-        acknowledgedSequence: 7,
-      },
-    });
-    expect(result.p1?.position).toEqual({ x: 1, y: 2, z: 3 });
+  it("requires a nested position object with finite x/y/z", () => {
+    // Missing position entirely.
+    expect(
+      mapPlayersToSnapshot({
+        p1: { playerId: "p1", yaw: 0, acknowledgedSequence: -1 },
+      }),
+    ).toEqual({});
+    // Non-finite coordinate.
+    expect(
+      mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", position: { x: Number.NaN, y: 0, z: 0 } }),
+      }),
+    ).toEqual({});
+    // position present but not an object.
+    expect(
+      mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", position: 42 }),
+      }),
+    ).toEqual({});
   });
 
   it("maps a native Map players root", () => {
@@ -107,24 +106,24 @@ describe("mapPlayersToSnapshot", () => {
     expect(result.p1.position).toEqual({ x: 1, y: 2, z: 3 });
   });
 
-  it("falls back to the map key when an entry omits / has a bad playerId", () => {
+  it("does not synthesise a missing / empty playerId", () => {
+    // No playerId on the wire → invalid (NOT filled in from the key).
     const result = mapPlayersToSnapshot({
-      // No playerId on the wire → fall back to the key "fallback".
       fallback: validPlayer({ playerId: undefined }),
-      // Empty-string playerId → fall back to the key.
       other: validPlayer({ playerId: "" }),
+      notString: validPlayer({ playerId: 7 }),
     });
-    expect(result.fallback.playerId).toBe("fallback");
-    expect(result.other.playerId).toBe("other");
-    expect(Object.keys(result)).toHaveLength(2);
+    expect(result).toEqual({});
   });
 
-  it("prefers the wire playerId over the key when both are present", () => {
+  it("rejects an entry whose playerId does not match its map key", () => {
+    // schema drift: wire playerId differs from the stored key → skip.
     const result = mapPlayersToSnapshot({
       someKey: validPlayer({ playerId: "realId" }),
+      good: validPlayer({ playerId: "good" }),
     });
-    expect(Object.keys(result)).toEqual(["realId"]);
-    expect(result.realId.playerId).toBe("realId");
+    expect(Object.keys(result)).toEqual(["good"]);
+    expect(result.good.playerId).toBe("good");
   });
 
   it("skips structurally invalid entries without throwing", () => {
@@ -148,6 +147,64 @@ describe("mapPlayersToSnapshot", () => {
 
   it("returns an empty object for an all-invalid root", () => {
     expect(mapPlayersToSnapshot({ junk: 42, other: null })).toEqual({});
+  });
+
+  describe("acknowledgedSequence validation", () => {
+    it("accepts -1 (no input processed yet)", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", acknowledgedSequence: -1 }),
+      });
+      expect(result.p1?.acknowledgedSequence).toBe(-1);
+    });
+
+    it("accepts 0 and positive safe integers", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", acknowledgedSequence: 0 }),
+        p2: validPlayer({ playerId: "p2", acknowledgedSequence: 42 }),
+      });
+      expect(result.p1?.acknowledgedSequence).toBe(0);
+      expect(result.p2?.acknowledgedSequence).toBe(42);
+    });
+
+    it("rejects -2 (below the -1 sentinel)", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", acknowledgedSequence: -2 }),
+      });
+      expect(result).toEqual({});
+    });
+
+    it("rejects -50 (far below the -1 sentinel)", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", acknowledgedSequence: -50 }),
+      });
+      expect(result).toEqual({});
+    });
+
+    it("rejects fractional values", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({ playerId: "p1", acknowledgedSequence: 2.5 }),
+      });
+      expect(result).toEqual({});
+    });
+
+    it("rejects NaN / Infinity / non-number", () => {
+      const result = mapPlayersToSnapshot({
+        a: validPlayer({ playerId: "a", acknowledgedSequence: Number.NaN }),
+        b: validPlayer({ playerId: "b", acknowledgedSequence: Number.POSITIVE_INFINITY }),
+        c: validPlayer({ playerId: "c", acknowledgedSequence: "7" }),
+      });
+      expect(result).toEqual({});
+    });
+
+    it("rejects values beyond Number.MAX_SAFE_INTEGER", () => {
+      const result = mapPlayersToSnapshot({
+        p1: validPlayer({
+          playerId: "p1",
+          acknowledgedSequence: Number.MAX_SAFE_INTEGER + 1,
+        }),
+      });
+      expect(result).toEqual({});
+    });
   });
 });
 
