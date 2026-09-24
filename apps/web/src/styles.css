@@ -134,3 +134,86 @@ body {
   border-radius: 0.3rem;
   background: rgb(255 255 255 / 8%);
 }
+
+/* Stage 2B2: small dev network status readout (bottom-left). */
+.network-status {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  display: grid;
+  gap: 0.4rem;
+  max-width: 20rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 18 / 72%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  font-size: 0.8rem;
+}
+
+.network-status__header {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.network-status__title {
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.network-status__status {
+  color: #aeb9ca;
+  text-transform: capitalize;
+}
+
+.network-status__dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: #6b7280;
+}
+
+.network-status__dot--connecting {
+  background: #f5b642;
+}
+
+.network-status__dot--connected {
+  background: #34d399;
+}
+
+.network-status__dot--disconnected {
+  background: #f0616d;
+}
+
+.network-status__list {
+  margin: 0;
+  display: grid;
+  gap: 0.15rem;
+}
+
+.network-status__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.network-status__row dt {
+  color: #aeb9ca;
+}
+
+.network-status__row dd {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.network-status__error {
+  margin: 0;
+  color: #f0616d;
+  font-size: 0.75rem;
+  overflow-wrap: anywhere;
+}
