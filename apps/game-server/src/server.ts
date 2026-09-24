@@ -11,13 +11,19 @@
  *    (useful when booting on port 0 to get a free port);
  *  - `shutdownServer` which delegates to `Server.gracefullyShutdown()`.
  *
+ * Stage 2B2 notes: the room NAME is sourced from the shared protocol contract
+ * (`ROOMS.FOUNDATION`) and the registered room is the minimal STATEFUL
+ * `FoundationRoom` (see `rooms/FoundationRoom.ts` + `state/foundationState.ts`).
+ *
  * Deliberately NOT implemented here (later stages): authentication,
  * reconnection policy, room capacity, database/persistence, and any
- * protocol/state/input contracts (see docs/TECHNICAL_ARCHITECTURE.md §6).
+ * authoritative gameplay (see docs/TECHNICAL_ARCHITECTURE.md §6).
  */
 import { Server, type ServerOptions } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import type { AddressInfo } from "node:net";
+
+import { ROOMS, type RoomType } from "@buildshift/protocol";
 
 import { FoundationRoom } from "./rooms/FoundationRoom.js";
 
@@ -27,8 +33,12 @@ export type GameServer = Server;
  * The room type registered by this foundation server. A single, neutral
  * "foundation" room is used to prove the lifecycle without tying the
  * transport to any concrete game mode.
+ *
+ * Stage 2B2: the room NAME is now sourced from the shared protocol contract
+ * (`ROOMS.FOUNDATION`, `@buildshift/protocol`) instead of a local literal, so
+ * the client and server can never drift on the room identifier.
  */
-export const FOUNDATION_ROOM = "foundation" as const;
+export const FOUNDATION_ROOM: RoomType = ROOMS.FOUNDATION;
 
 /**
  * Create a Colyseus server configured with the WebSocket transport and the
