@@ -26,8 +26,11 @@ export interface AuthoritativePlayerState {
   /**
    * Authoritative world position, in **metres**, origin at the world floor
    * (Y = up). **Coordinate semantic: the capsule CENTRE** — the physics body
-   * translation. See {@link PlayerPositionSemantic} and the note in
-   * `docs/TECHNICAL_ARCHITECTURE.md` §19.
+   * translation. See {@link PlayerPositionSemantic}. (The player collision
+   * shape itself — a capsule — is defined in
+   * `docs/TECHNICAL_ARCHITECTURE.md` §19, which is the origin of the word
+   * "capsule" here, but that section does not itself define the network
+   * semantic.)
    */
   position: {
     x: number;
@@ -62,18 +65,22 @@ export interface AuthoritativePlayerState {
  *    returns exactly that. The authoritative server reproduces this value
  *    directly, with no derivation.
  * 2. It is unambiguous and independent of the collider dimension. The feet
- *    position is a *derived* presentation value (centre − `CHARACTER_HEIGHT_OVER_2`,
- *    see `PlayerController.getFeetPosition()`); a derived value is a weaker
- *    thing to make the wire contract than the source-of-truth value.
+ *    position is a *derived* presentation / physics value, not a source of
+ *    truth; a derived value is a weaker thing to make the wire contract than
+ *    the source-of-truth value.
  * 3. A single convention keeps the shared `@buildshift/simulation` movement
  *    step (which operates on the body centre) directly reusable by both the
  *    prediction client and the authoritative server.
  *
- * Consumers that need feet (e.g. the camera's "feet + target height" contract)
- * derive them from the centre using the shared character-height constant.
+ * Feet are a **derived** presentation / physics value. This protocol contract
+ * deliberately does NOT hardcode any centre→feet offset (a collider
+ * half-height) into the wire, because that dimension is a physics/collider
+ * concern that is already defined elsewhere and could drift if duplicated
+ * here. A consumer that needs feet (e.g. the camera's "feet + target height"
+ * presentation contract) derives them from the centre using the appropriate
+ * shared collider configuration. This package intentionally has no dependency
+ * on `@buildshift/game-config` or `@buildshift/simulation`.
  */
 export const PlayerPositionSemantic = {
   kind: "capsule-center",
-  /** Metres from the capsule centre down to the feet (collider half-height). */
-  centreToFeetOffset: 0.9,
 } as const;

@@ -1,12 +1,21 @@
 /**
- * PlayerInputFrame — the authoritative *movement intent* a client reports for
- * one simulation tick.
+ * PlayerInputFrame — a single **sequenced authoritative input sample** that a
+ * client reports.
  *
  * This is player **intent**, never a claimed position or velocity
  * (docs/TECHNICAL_ARCHITECTURE.md §10, §13): the server is the only authority
  * on world position and velocity. The client predicts locally using the same
  * `@buildshift/simulation` step the server uses, but it never tells the server
  * "I am here".
+ *
+ * Timing / cadence: a `PlayerInputFrame` is one *authoritative input sample* —
+ * it is **not** one frame per physics substep. The architecture distinguishes
+ * the authoritative input/simulation tick (initially 30 Hz) from the physics
+ * substeps (2) and the resulting effective physics stepping (60 Hz). Which
+ * simulation tick a frame belongs to, and how many physics substeps consume a
+ * given input, is decided by the networking/simulation layer; that cadence is
+ * deliberately **not** encoded in the wire type. There are no tick-rate fields
+ * on this frame.
  *
  * Wire shape: compact primitives only, so a frame is directly serialisable by
  * Colyseus and sendable over the network with no conversion.
@@ -26,16 +35,18 @@
  *   requested a jump, `false` otherwise. The server's jump-buffer / coyote
  *   logic (`@buildshift/simulation` `JumpController`) consumes this edge; the
  *   client never claims the jump resolved.
- * - `sequence` is a monotonically increasing, **non-negative integer**
- *   identity used for reconciliation (docs §14). The client assigns 0, 1, 2,
- *   ...; the server acknowledges the highest `sequence` it has
- *   authoritatively processed (see `AuthoritativePlayerState`).
+ * - `sequence` is a monotonically increasing, **non-negative safe integer**
+ *   identity used for reconciliation (docs §14). It must stay within
+ *   JavaScript's safe-integer range so distinct identities never lose numeric
+ *   precision. The client assigns 0, 1, 2, ...; the server acknowledges the
+ *   highest `sequence` it has authoritatively processed (see
+ *   `AuthoritativePlayerState`).
  *
  * Deliberately absent (not yet required by implemented gameplay): combat
  * (primary/secondary fire), build, edit, energy, health, ammo, sprint, crouch.
  */
 export interface PlayerInputFrame {
-  /** Monotonically increasing input identity (non-negative integer). */
+  /** Monotonically increasing input identity (non-negative safe integer). */
   sequence: number;
   /** Local movement, X axis, normalised to [-1, 1] (+X is right). */
   moveX: number;
@@ -58,7 +69,11 @@ export interface PlayerInputFrame {
  * to `apps/game-server/src/validation`.
  */
 export const PLAYER_INPUT_LIMITS = {
-  /** Lowest valid `sequence` value. */
+  /**
+   * Lowest valid `sequence` value. The upper bound is JavaScript's
+   * `Number.MAX_SAFE_INTEGER` (enforced by the validator via
+   * `Number.isSafeInteger`), so no arbitrary smaller ceiling is imposed.
+   */
   sequenceMin: 0,
   /** Inclusive lower bound for `moveX` / `moveZ`. */
   movementMin: -1,

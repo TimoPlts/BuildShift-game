@@ -45,7 +45,8 @@ function typeOf(value: unknown): string {
  *
  * Scope (protocol-level, structural only):
  * - the input is a plain object,
- * - `sequence` is a non-negative integer,
+ * - `sequence` is a non-negative **safe** integer (within JavaScript's
+ *   safe-integer range, so distinct identities never lose numeric precision),
  * - `moveX` / `moveZ` are finite numbers within `[-1, 1]`,
  * - `lookYaw` / `lookPitch` are finite numbers (radians); `lookPitch` is also
  *   bounded to `[-π, π]`,
@@ -67,16 +68,16 @@ export function validatePlayerInputFrame(
 
   const errors: string[] = [];
 
-  // --- sequence: non-negative integer --------------------------------------
+  // --- sequence: non-negative safe integer ---------------------------------
   const sequence = readNumber(input, "sequence");
   if (sequence === undefined) {
     errors.push(`sequence: expected a number, got ${typeOf(input.sequence)}`);
   } else if (
-    !Number.isInteger(sequence) ||
+    !Number.isSafeInteger(sequence) ||
     sequence < PLAYER_INPUT_LIMITS.sequenceMin
   ) {
     errors.push(
-      `sequence: must be an integer >= ${PLAYER_INPUT_LIMITS.sequenceMin}, got ${sequence}`,
+      `sequence: must be a safe integer >= ${PLAYER_INPUT_LIMITS.sequenceMin}, got ${sequence}`,
     );
   }
 

@@ -93,6 +93,24 @@ describe("validatePlayerInputFrame — sequence validation", () => {
   it("accepts the lowest valid sequence (0)", () => {
     expect(validatePlayerInputFrame(validFrame({ sequence: 0 })).ok).toBe(true);
   });
+
+  it("accepts Number.MAX_SAFE_INTEGER (upper safe-integer bound)", () => {
+    const result = validatePlayerInputFrame(validFrame({ sequence: Number.MAX_SAFE_INTEGER }));
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.value.sequence).toBe(Number.MAX_SAFE_INTEGER);
+    }
+  });
+
+  it("rejects Number.MAX_SAFE_INTEGER + 1 (outside the safe-integer range)", () => {
+    const result = validatePlayerInputFrame(validFrame({ sequence: Number.MAX_SAFE_INTEGER + 1 }));
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.errors.join(" ")).toContain("sequence");
+    }
+  });
 });
 
 describe("validatePlayerInputFrame — movement range", () => {
