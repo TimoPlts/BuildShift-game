@@ -227,3 +227,31 @@ For each development stage record:
 - **Fix (narrow):** In the launch branch of `JumpController.step`, alongside consuming the jump buffer, set `this.coyoteRemaining = 0`. This consumes the coyote eligibility the moment a jump launches, so a fresh airborne press cannot launch a second jump. Legitimate coyote (grounded → walk off ledge without jumping → press shortly after → launch) is unaffected, because no launch occurred to clear the window.
 - **Regression test added:** `JumpController` → "does not launch an airborne second jump from a fresh press within the coyote window": grounded press launches; the next (airborne) step receives a **new** press inside the still-present coyote window and must return `false`; a subsequent no-press airborne step stays silent; a later fresh grounded press still launches. All pre-existing buffer / coyote / single-launch / reset tests are kept and pass.
 - **Verification:** `pnpm typecheck` (all 5 projects), `pnpm build` (success; only the known non-blocking chunk-size warning), and `pnpm test` (**27/27** passed, up from 26) all passed on this branch.
+---
+
+## 2026-09-24 — Stage 1E — Physics Playground / Manual-QA Arena
+
+- **Scope:** Improved the local test arena for manually validating movement, collision, sliding, gravity, and jump behaviour before networking work begins. This is arena/playground/UI polish only — no controller, physics, input, or shared-package changes.
+- **Files changed:**
+  - `apps/web/src/game/scene/arena.ts` — added four Stage 1E obstacles to the single-source `ARENA` table and a new `"neutral"` material kind: (1) **slide corridor** — two 3 m-wide corridor walls (0.5 m thick, 3 m tall) running north at `x = ±2`, `z` from -1 to -9, for wall-slide / corridor-movement testing; (2) **low block** — 3×1×3 m block on the west side (top y = 1), a walk-in / jump-over / landing target; (3) **jump platform** — 4×2×4 m platform on the east side (top y = 2), a deliberate jump target. Spawn left unchanged at `(0, 0.9, 6)` — it sits in the open baseline area, clear of every new obstacle, so the start remains safe and sensible.
+  - `apps/web/src/game/scene/createFoundationScene.ts` — added the `neutral` material (muted grey-blue `rgb(0.42, 0.47, 0.55)`) so test obstacles read as "test furniture" distinct from the accent/warm reference geometry; updated the factory doc comment.
+  - `apps/web/src/game/GameCanvas.tsx` — replaced the single-line control hint in the click-to-play overlay with a small keycap-style list (W A S D move / Mouse look / Space jump / Esc unlock cursor) plus a one-line description of the arena purpose.
+  - `apps/web/src/styles.css` — added `.control-hints` / `kbd` styles for the overlay list.
+  - `apps/web/src/App.tsx` — overlay subtitle updated to "Physics playground (Stage 1E)".
+  - This worklog.
+- **Major implementation decisions:**
+  - **ARENA stays the single source of truth.** All new obstacles live only in the `ARENA` table; Babylon meshes and Rapier colliders are both generated from it, so visual geometry and colliders cannot drift apart. No dimensions were duplicated into the scene factory or physics layer, and no new magic numbers were scattered.
+  - **Jump-platform height is deliberate.** With `jumpSpeed 9` / `gravity -25`, the single-hop apex is ≈1.6 m, so the 2 m-tall jump platform cannot be reached directly from the ground — testers must use the 1 m reference platform or low block as a step. This makes it a real platform-to-platform jump validation target rather than a trivial hop, while the 1 m low block remains a one-hop target.
+  - **Corridor placement.** The corridor opens at `z = -1` (the center box's inner edge is at `z = -1.25`, so the box sits just inside the south mouth but does not block entry from the open area) and closes at the arena's north edge; walls are 3 m tall so the player cannot jump over them.
+  - **No gameplay logic touched.** `PlayerController`, `PhysicsWorld`, `InputManager`, `GameRuntime`, and `packages/*` are all unmodified. The character controller, ground snap (0.1 m), and auto-step-disabled configuration are unchanged, so existing collision/jump behaviour is preserved exactly.
+- **Validation performed:**
+  - `pnpm typecheck` — passed for all 5 workspace projects.
+  - `pnpm test` — passed; 1 file, 17/17 tests (all pre-existing; no new tests needed since no shared math changed).
+  - `pnpm build` — passed for all projects (Vite retains the known non-blocking Babylon/Rapier chunk-size warning).
+  - `pnpm dev` — started Vite from the `BuildShift-client` worktree; page loaded at `http://localhost:5173/`.
+  - Browser verification: the scene loads with one canvas, **zero console errors and zero page errors** after a full reload (WASM init + physics construction clean). Screenshot confirms the new grey corridor walls, the orange jump platform, the reference geometry, and the green player capsule all render; the updated click-to-play overlay (keycap control list) and the "Physics playground (Stage 1E)" badge are shown.
+- **Known limitations:**
+  - Live felt gameplay (actually sliding down the corridor, jumping onto the low block / step-up onto the jump platform, landing stability) still requires a human in a real browser: the automation environment refuses the Pointer Lock API, and `InputManager` intentionally gates all input on pointer lock (same documented behaviour as Stages 1C/1D).
+  - No camera collision, sprint/crouch/slide, or debug HUD was added (out of scope per Stage 1E brief).
+- **Integrator notes:** The arena table now has 8 objects (4 pre-existing + 4 Stage 1E). Any future level loader or shared arena serialization should read from `ARENA` / `PLAYER_SPAWN` in `apps/web/src/game/scene/arena.ts` — no other file hardcodes arena dimensions. The `"neutral"` material kind is now part of `ArenaObject["material"]`; adding further kinds requires a matching case in `getMaterial`.
+- **What remains unverified:** Manual real-browser click-to-play feel against the new obstacles (corridor slide, low-block jump-over, step-up onto the jump platform, landing stability).

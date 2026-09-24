@@ -7,7 +7,7 @@ export function App() {
       <GameCanvas />
       <aside className="foundation-overlay" aria-label="Development scene status">
         <strong>BuildShift</strong>
-        <p>Third-person camera prototype</p>
+        <p>Physics playground (Stage 1E)</p>
         <small>Protocol {PROTOCOL_VERSION}</small>
       </aside>
     </main>
