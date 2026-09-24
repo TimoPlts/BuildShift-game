@@ -3,13 +3,15 @@ import type { VerticalMovementConfig } from "./types.js";
 /**
  * Integrates vertical motion under gravity for a single fixed step.
  *
- * The input is the *previous* frame's grounded state (ground contact is
- * reported by the physics layer after the step, so it lags by one step). The
- * jump decision and the grounded downward-velocity clamp both use that lagged
- * value, which is the standard kinematic-character pattern.
+ * The jump *decision* is now made by the caller (see {@link JumpController}),
+ * which owns the jump-buffer / coyote-time timing. `jumpRequested` therefore
+ * means "a jump should launch on this step", not merely "a key was pressed".
+ * The `grounded` flag is the *previous* step's ground-contact state (reported
+ * by the physics layer after each step, so it lags by one step) and is used
+ * only for the grounded downward-velocity clamp.
  *
  * Rules:
- * - A grounded character that requests a jump starts the step at `jumpSpeed`.
+ * - When a jump launches this step, the velocity starts at `jumpSpeed`.
  * - Gravity is then integrated: `verticalVelocity += gravity * deltaSeconds`.
  * - A grounded character never accumulates downward velocity into the floor,
  *   so standing still reads as `verticalVelocity = 0`.
@@ -27,7 +29,7 @@ export function stepVerticalMovement(
 ): number {
   let velocity = verticalVelocity;
 
-  if (jumpRequested && grounded) {
+  if (jumpRequested) {
     velocity = config.jumpSpeed;
   }
 

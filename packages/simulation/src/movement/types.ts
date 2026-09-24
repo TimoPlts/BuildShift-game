@@ -26,3 +26,14 @@ export interface VerticalMovementConfig {
   /** Initial upward velocity applied on a grounded jump, in m/s. */
   jumpSpeed: number;
 }
+
+/**
+ * Tuning for jump-input timing (buffer + coyote), shared by client prediction
+ * and the authoritative server step.
+ */
+export interface JumpControllerConfig {
+  /** How long (s) after a jump press it is kept buffered for a grounded launch. */
+  jumpBufferTime: number;
+  /** How long (s) after losing ground a jump is still allowed (coyote window). */
+  coyoteTime: number;
+}

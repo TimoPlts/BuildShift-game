@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  JumpController,
   SIMULATION_VERSION,
   gameConfigVersion,
   movementInputToWorld,
@@ -8,6 +9,7 @@ import {
 } from "./index.js";
 import {
   GAME_CONFIG_VERSION,
+  JUMP_INPUT_TIMING,
   PLAYER_MOVEMENT,
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
@@ -156,7 +158,7 @@ describe("stepVerticalMovement", () => {
     expect(result).toBeCloseTo(PLAYER_PHYSICS.gravity * 1);
   });
 
-  it("starts a grounded jump at the jump speed", () => {
+  it("starts a jump at the jump speed when a launch is requested", () => {
     // dt = 0.1 keeps the post-jump velocity (9 - 2.5 = 6.5) positive, so the
     // grounded downward clamp does not kick in and the jump launch is visible.
     const dt = 0.1;
@@ -168,29 +170,23 @@ describe("stepVerticalMovement", () => {
       PLAYER_PHYSICS,
     );
 
-    expect(result).toBeCloseTo(PLAYER_PHYSICS.jumpSpeed + PLAYER_PHYSICS.gravity * dt);
+    expect(result).toBeCloseTo(
+      PLAYER_PHYSICS.jumpSpeed + PLAYER_PHYSICS.gravity * dt,
+    );
   });
 
-  it("rejects a jump while airborne", () => {
-    // Aerial request leaves the velocity as pure gravity integration —
-    // identical to a request that was never made.
-    const airborne = stepVerticalMovement(
-      2,
-      true,
-      false,
-      0.5,
-      PLAYER_PHYSICS,
-    );
-    const noRequest = stepVerticalMovement(
-      2,
-      false,
-      false,
-      0.5,
-      PLAYER_PHYSICS,
-    );
+  it("applies jump speed whenever a launch is requested (grounded flag no longer gates it)", () => {
+    // The launch *decision* is owned upstream by JumpController (buffer +
+    // coyote). Once decided, stepVerticalMovement simply applies jumpSpeed
+    // regardless of the lagged grounded flag — so an airborne launch request
+    // behaves exactly like a grounded one.
+    const airborneLaunch = stepVerticalMovement(0, true, false, 0.1, PLAYER_PHYSICS);
+    const groundedLaunch = stepVerticalMovement(0, true, true, 0.1, PLAYER_PHYSICS);
 
-    expect(airborne).toBeCloseTo(noRequest);
-    expect(airborne).toBeCloseTo(2 + PLAYER_PHYSICS.gravity * 0.5);
+    expect(airborneLaunch).toBeCloseTo(groundedLaunch);
+    expect(groundedLaunch).toBeCloseTo(
+      PLAYER_PHYSICS.jumpSpeed + PLAYER_PHYSICS.gravity * 0.1,
+    );
   });
 
   it("clamps downward velocity to zero while grounded", () => {
@@ -222,5 +218,134 @@ describe("stepVerticalMovement", () => {
     }
 
     expect(velocity).toBeCloseTo(oneStep);
+  });
+});
+
+describe("JumpController", () => {
+  // A modest, sub-frame-step buffer and coyote window so the tests exercise
+  // the windows' edges without needing long timelines.
+  const config = { jumpBufferTime: 0.12, coyoteTime: 0.1 };
+  const dt = 1 / 60;
+
+  it("launches immediately when grounded and a press arrives", () => {
+    const jc = new JumpController(config);
+
+    expect(jc.step(dt, true, true)).toBe(true);
+  });
+
+  it("does not launch when there is no buffered press", () => {
+    const jc = new JumpController(config);
+
+    expect(jc.step(dt, true, false)).toBe(false);
+  });
+
+  it("buffers a press so a later grounded step launches", () => {
+    const jc = new JumpController(config);
+
+    // Press while airborne — buffered, no launch yet.
+    expect(jc.step(dt, false, true)).toBe(false);
+    // Next step the character is grounded; the buffered press launches.
+    expect(jc.step(dt, true, false)).toBe(true);
+    // The press was consumed: no further launch without a new press.
+    expect(jc.step(dt, true, false)).toBe(false);
+  });
+
+  it("expires the buffered press after the buffer window", () => {
+    const jc = new JumpController(config);
+    // 20 steps * (1/60) ≈ 0.333 s, well past the 0.12 s buffer.
+    jc.step(dt, true, true); // consume the launch, leaving a fresh press slot
+    jc.step(dt, true, true); // one grounded press launches...
+    // Now press once while airborne, then stay airborne past the buffer.
+    const jc2 = new JumpController(config);
+    jc2.step(dt, false, true); // press while airborne (buffered)
+    for (let i = 0; i < 20; i += 1) {
+      jc2.step(dt, false, false);
+    }
+    // Now grounded, but the press expired — no launch.
+    expect(jc2.step(dt, true, false)).toBe(false);
+  });
+
+  it("grants a coyote-time jump after leaving the ground", () => {
+    const jc = new JumpController(config);
+    // Establish a grounded state to seed the coyote window.
+    jc.step(dt, true, false);
+    // Walk off the ledge (grounded -> false); coyote window starts decaying.
+    // A press within coyoteTime still launches.
+    expect(jc.step(dt, false, true)).toBe(true);
+  });
+
+  it("rejects a jump once the coyote window has expired", () => {
+    const jc = new JumpController(config);
+    jc.step(dt, true, false); // grounded, seed coyote
+    // Stay airborne long enough for the coyote window (0.1 s) to elapse.
+    // 8 steps * (1/60) ≈ 0.133 s > 0.1 s.
+    for (let i = 0; i < 8; i += 1) {
+      jc.step(dt, false, false);
+    }
+    // Now grounded again, but no fresh press -> nothing to launch. And a
+    // fresh press while grounded should launch (grounded, not coyote).
+    expect(jc.step(dt, true, true)).toBe(true);
+    // And a press while airborne with no coyote and no buffer must not launch.
+    const jc2 = new JumpController(config);
+    jc2.step(dt, true, false); // grounded
+    for (let i = 0; i < 8; i += 1) {
+      jc2.step(dt, false, false);
+    }
+    expect(jc2.step(dt, false, true)).toBe(false);
+  });
+
+  it("never double-jumps from a single press across multiple steps", () => {
+    const jc = new JumpController(config);
+    const launches: boolean[] = [];
+    // Press once while grounded; track launches over the following steps as
+    // the character goes airborne and back down.
+    launches.push(jc.step(dt, true, true)); // press + launch
+    for (let i = 0; i < 4; i += 1) {
+      launches.push(jc.step(dt, false, false));
+    }
+    launches.push(jc.step(dt, true, false)); // land, no new press
+
+    // Exactly one launch total.
+    expect(launches.filter(Boolean).length).toBe(1);
+  });
+
+  it("does not launch an airborne second jump from a fresh press within the coyote window", () => {
+    // Regression: a grounded jump must invalidate coyote eligibility so that a
+    // *new* press while airborne — still inside the coyote time that was
+    // granted while grounded — cannot launch a second jump. Coyote is only
+    // meant to cover walking/falling off a ledge, not an extra jump.
+    const jc = new JumpController(config);
+
+    // 1) grounded press -> normal grounded launch.
+    expect(jc.step(dt, true, true)).toBe(true);
+
+    // 2) next step the player is airborne, still well inside the 0.1 s coyote
+    //    window that was refreshed while grounded on the previous step.
+    // 3) a NEW jump press arrives in that airborne step.
+    // 4) it MUST NOT launch (coyote was consumed by the launch above).
+    expect(jc.step(dt, false, true)).toBe(false);
+
+    // A third airborne step with no press also stays silent, and the
+    // controller still permits a fresh grounded press to launch later.
+    expect(jc.step(dt, false, false)).toBe(false);
+    expect(jc.step(dt, true, true)).toBe(true);
+  });
+
+  it("resets buffered and coyote state", () => {
+    const jc = new JumpController(config);
+    jc.step(dt, true, true); // launch, consuming the buffer
+    jc.step(dt, true, true); // fresh grounded press -> launch
+    jc.reset();
+
+    // After reset, no buffered press remains, so a grounded step with no press
+    // must not launch.
+    expect(jc.step(dt, true, false)).toBe(false);
+  });
+
+  it("uses the shared JUMP_INPUT_TIMING config shape", () => {
+    // Guard against accidental divergence between the config and the controller.
+    const jc = new JumpController(JUMP_INPUT_TIMING);
+
+    expect(jc.step(JUMP_INPUT_TIMING.jumpBufferTime, true, true)).toBe(true);
   });
 });
