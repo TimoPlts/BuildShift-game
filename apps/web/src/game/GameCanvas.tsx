@@ -60,9 +60,21 @@ export function GameCanvas() {
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
-          <p>
-            WASD to move • Mouse to look • Space to jump • Esc to release
-          </p>
+          <ul className="control-hints" aria-label="Controls">
+            <li>
+              <kbd>W A S D</kbd> move
+            </li>
+            <li>
+              <kbd>Mouse</kbd> look
+            </li>
+            <li>
+              <kbd>Space</kbd> jump
+            </li>
+            <li>
+              <kbd>Esc</kbd> unlock cursor
+            </li>
+          </ul>
+          <p>Physics playground: test movement, sliding, gravity and jumps</p>
         </div>
       )}
     </>

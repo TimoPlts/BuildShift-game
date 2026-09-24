@@ -16,6 +16,11 @@ import { ARENA, type ArenaObject } from "./arena";
  * `2 * halfExtents` centred at `position`. The scene factory no longer owns
  * any camera — the gameplay camera is created by
  * `ThirdPersonCameraController`, which makes it the scene's active camera.
+ *
+ * Stage 1E adds a modest set of physics-playground obstacles (slide corridor,
+ * low block, jump platform) to the `ARENA` table; they are rendered exactly
+ * like the reference geometry because the table is the single source of
+ * truth for both visuals and colliders.
  */
 export function createFoundationScene(engine: Engine): Scene {
   const scene = new Scene(engine);
@@ -64,6 +69,11 @@ function getMaterial(scene: Scene, kind: ArenaObject["material"]): StandardMater
       material.specularColor = new Color3(0.04, 0.05, 0.07);
       break;
     case "accent":
+    case "neutral":
+      // Muted grey-blue used by the Stage 1E test obstacles so they read as
+      // "test furniture" rather than the accent/warm reference geometry.
+      material.diffuseColor = new Color3(0.42, 0.47, 0.55);
+      break;
       material.diffuseColor = new Color3(0.12, 0.55, 0.78);
       break;
     case "warm":
