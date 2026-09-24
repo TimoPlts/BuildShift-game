@@ -9,6 +9,7 @@
  */
 import { PROTOCOL_VERSION } from "@buildshift/protocol";
 
+import { resolvePort } from "./port.js";
 import {
   FOUNDATION_ROOM,
   createServer,
@@ -18,35 +19,6 @@ import {
 } from "./server.js";
 
 const LOG_PREFIX = "[buildshift:game-server]";
-const DEFAULT_PORT = 2567;
-
-/**
- * Resolve the port to listen on from the environment.
- *
- * Precedence: `GAME_SERVER_PORT` → `PORT` → `DEFAULT_PORT`.
- * An unset / empty / non-numeric value falls back to the next source, so a
- * partially misconfigured environment still boots on a known port.
- */
-function resolvePort(): number {
-  const candidates = [
-    process.env.GAME_SERVER_PORT,
-    process.env.PORT,
-    String(DEFAULT_PORT),
-  ];
-  for (const raw of candidates) {
-    if (raw === undefined || raw.trim() === "") {
-      continue;
-    }
-    const parsed = Number.parseInt(raw, 10);
-    if (Number.isInteger(parsed) && parsed > 0 && parsed <= 65535) {
-      return parsed;
-    }
-    console.warn(
-      `${LOG_PREFIX} ignoring invalid port value "${raw}" (expected 1-65535)`,
-    );
-  }
-  return DEFAULT_PORT;
-}
 
 let server: GameServer | null = null;
 let shuttingDown = false;

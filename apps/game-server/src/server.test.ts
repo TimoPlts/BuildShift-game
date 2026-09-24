@@ -21,6 +21,7 @@ import { describe, expect, it, beforeAll, afterAll } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { matchMaker, type IRoomCache } from "@colyseus/core";
 
+import { DEFAULT_PORT, resolvePort } from "./port.js";
 import { FOUNDATION_ROOM, startServer, shutdownServer } from "./server.js";
 import type { GameServer } from "./server.js";
 
@@ -42,6 +43,31 @@ async function findFoundationRoom(
   }
   return rooms[0];
 }
+
+describe("server port configuration", () => {
+  it("accepts only complete decimal integer strings in the TCP port range", () => {
+    expect(resolvePort({ GAME_SERVER_PORT: "1", PORT: "3000" })).toBe(1);
+    expect(resolvePort({ GAME_SERVER_PORT: " 65535 " })).toBe(65_535);
+    expect(resolvePort({ GAME_SERVER_PORT: "", PORT: "4000" })).toBe(4000);
+
+    for (const invalid of [
+      "2567abc",
+      "1.5",
+      "1e3",
+      "0",
+      "-1",
+      "65536",
+    ]) {
+      expect(resolvePort({ GAME_SERVER_PORT: invalid, PORT: "4100" })).toBe(
+        4100,
+      );
+    }
+
+    expect(resolvePort({ GAME_SERVER_PORT: "invalid", PORT: "also-invalid" })).toBe(
+      DEFAULT_PORT,
+    );
+  });
+});
 
 describe("Stage 2A Colyseus foundation", () => {
   let server: GameServer;
