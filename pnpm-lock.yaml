@@ -215,6 +215,9 @@ importers:
       '@buildshift/simulation':
         specifier: workspace:*
         version: link:../../packages/simulation
+      '@colyseus/sdk':
+        specifier: ^0.18.4
+        version: 0.18.4(@colyseus/core@0.18.16)(typescript@5.9.3)
       '@dimforge/rapier3d-compat':
         specifier: ^0.20.0
         version: 0.20.0
