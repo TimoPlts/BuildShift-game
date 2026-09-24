@@ -6,3 +6,6 @@ packages:
 # pnpm blocks postinstall scripts by default; esbuild needs it for Vite/Vitest.
 allowBuilds:
   esbuild: true
+  # Colyseus works through msgpackr's pure-JS implementation. Explicitly deny
+  # the optional native accelerator's install script.
+  msgpackr-extract: false
