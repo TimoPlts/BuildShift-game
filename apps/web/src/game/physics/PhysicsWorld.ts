@@ -6,8 +6,14 @@ import {
   World,
   init,
 } from "@dimforge/rapier3d-compat";
-import { PLAYER_PHYSICS } from "@buildshift/game-config";
-import { ARENA, PLAYER_SPAWN } from "../scene/arena";
+import {
+  ARENA_COLLIDERS,
+  PLAYER_CHARACTER_CONTROLLER,
+  PLAYER_COLLIDER,
+  PLAYER_PHYSICS,
+  PLAYER_SPAWN,
+  PHYSICS_TIMING,
+} from "@buildshift/game-config";
 
 /**
  * The `@dimforge/rapier3d-compat` build loads its WASM asynchronously and must
@@ -22,28 +28,10 @@ function ensureRapierReady(): Promise<void> {
   return rapierInitPromise;
 }
 
-/**
- * Total height of the character collider, matching the visible capsule.
- *
- * A Rapier capsule's total height is `2 * (halfHeight + radius)` (a cylinder of
- * half-length `halfHeight` with a hemispherical cap of `radius` on each end).
- * Solving `2 * (halfHeight + 0.35) = 1.8` gives `halfHeight = 0.55`, so the
- * physical capsule is exactly 1.8 m tall with the same radius as the mesh.
- */
-export const CHARACTER_RADIUS = 0.35;
-export const CHARACTER_HALF_HEIGHT = 0.55;
-/** Half the total collider height — used to convert body-centre to feet. */
-export const CHARACTER_HEIGHT_OVER_2 = 0.9;
-
-/**
- * The character-controller contact offset. A small non-zero gap keeps the
- * capsule from sitting exactly on a collider's face, which avoids precision /
- * contact jitter. 0.02 m is invisible but stable.
- */
-const CHARACTER_CONTROLLER_OFFSET = 0.02;
-
-/** Fixed physics timestep (seconds) — 60 Hz. */
-export const FIXED_DT = 1 / 60;
+// Character collider dimensions, controller tuning, and the fixed timestep all
+// come from the shared `@buildshift/game-config` package (`PLAYER_COLLIDER`,
+// `PLAYER_CHARACTER_CONTROLLER`, `PHYSICS_TIMING`) so the authoritative server
+// (Stage 2C1) uses the exact same values. No magic numbers live in this file.
 
 export interface Translation3 {
   x: number;
@@ -58,7 +46,7 @@ export interface Translation3 {
  *
  * It owns:
  * - the Rapier `World` (gravity, fixed timestep)
- * - the static arena colliders (built from the shared `ARENA` table)
+ * - the static arena colliders (built from the shared `ARENA_COLLIDERS` table)
  * - the kinematic character body + capsule collider + character controller
  * - physics cleanup
  *
@@ -87,13 +75,13 @@ export class PhysicsWorld {
 
   private constructor() {
     this.world = new World({ x: 0, y: PLAYER_PHYSICS.gravity, z: 0 });
-    this.world.timestep = FIXED_DT;
+    this.world.timestep = PHYSICS_TIMING.fixedStepDurationSeconds;
 
     // Static arena colliders — one fixed body per cuboid, collider parented to
     // it so the collider's transform is the arena object's transform.
-    for (const object of ARENA) {
+    for (const collider of ARENA_COLLIDERS) {
       const body = this.world.createRigidBody(RigidBodyDesc.fixed());
-      const { position, halfExtents } = object.collider;
+      const { position, halfExtents } = collider;
       const colliderDesc = ColliderDesc.cuboid(
         halfExtents[0],
         halfExtents[1],
@@ -118,8 +106,8 @@ export class PhysicsWorld {
     );
 
     const colliderDesc = ColliderDesc.capsule(
-      CHARACTER_HALF_HEIGHT,
-      CHARACTER_RADIUS,
+      PLAYER_COLLIDER.halfHeight,
+      PLAYER_COLLIDER.radius,
     );
     this.characterCollider = this.world.createCollider(
       colliderDesc,
@@ -129,15 +117,22 @@ export class PhysicsWorld {
     // Built-in kinematic character controller: handles wall collision, sliding
     // and ground contact for us instead of hand-rolled collision code.
     this.controller = this.world.createCharacterController(
-      CHARACTER_CONTROLLER_OFFSET,
+      PLAYER_CHARACTER_CONTROLLER.contactOffset,
     );
-    // Disable auto-step: the arena has no stairs to climb, and auto-step can
-    // fight jump correctness (see Stage 1D notes).
-    this.controller.disableAutostep();
+    // Auto-step is a shared gameplay tuning value. The arena has no stairs to
+    // climb and auto-step can fight jump correctness, so it is disabled
+    // (see Stage 1E notes). Note Rapier's `enableAutostep` requires
+    // (maxHeight, minWidth, includeDynamicBodies); when the shared tuning
+    // enables it later, those values must be supplied from config too.
+    if (!PLAYER_CHARACTER_CONTROLLER.autostepEnabled) {
+      this.controller.disableAutostep();
+    }
     // A small ground snap keeps the character stable over tiny height
-    // transitions without pulling a jumping character back down (0.1 m is well
-    // below the jump height).
-    this.controller.enableSnapToGround(0.1);
+    // transitions without pulling a jumping character back down (well below
+    // the jump height).
+    this.controller.enableSnapToGround(
+      PLAYER_CHARACTER_CONTROLLER.snapToGround,
+    );
   }
 
   /**

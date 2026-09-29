@@ -7,5 +7,14 @@
  */
 export { PLAYER_MOVEMENT } from "./movement.js";
 export { JUMP_INPUT_TIMING, PLAYER_PHYSICS } from "./physics.js";
+export {
+  PLAYER_COLLIDER,
+  PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_COLLIDER_TOTAL_HEIGHT,
+  PLAYER_CHARACTER_CONTROLLER,
+  PHYSICS_TIMING,
+} from "./character.js";
+export { ARENA_COLLIDERS, PLAYER_SPAWN } from "./arena.js";
+export type { ArenaCollider } from "./arena.js";
 
 export const GAME_CONFIG_VERSION = "0.1.0" as const;
