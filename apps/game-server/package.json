@@ -13,6 +13,7 @@
   "dependencies": {
     "@buildshift/protocol": "workspace:*",
     "@colyseus/core": "^0.18.16",
+    "@colyseus/schema": "^5.0.33",
     "@colyseus/ws-transport": "^0.18.3",
     "express": "^4.22.3"
   },
