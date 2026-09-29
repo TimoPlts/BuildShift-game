@@ -240,6 +240,49 @@ describe("FoundationNetwork", () => {
     warn.mockRestore();
   });
 
+  it("sends live samples with page-lifetime sequences", async () => {
+    const { room, sent } = createFakeRoom();
+    const network = new FoundationNetwork({
+      serverUrl: "ws://x",
+      joinRoom: () => Promise.resolve(room),
+    });
+    network.start();
+    await flush();
+
+    const sample = {
+      moveX: 1,
+      moveZ: -1,
+      lookYaw: 0.5,
+      lookPitch: -0.25,
+      jump: false,
+    };
+
+    expect(network.sendSequencedPlayerInput(sample)).toBe(0);
+    expect(network.sendSequencedPlayerInput(sample)).toBe(1);
+    expect(sent[0].payload).toEqual({ sequence: 0, ...sample });
+    expect(sent[1].payload).toEqual({ sequence: 1, ...sample });
+  });
+
+  it("does not consume a live sequence while disconnected", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { room, sent } = createFakeRoom();
+    const network = new FoundationNetwork({
+      serverUrl: "ws://x",
+      joinRoom: () => Promise.resolve(room),
+    });
+    const sample = {
+      moveX: 0,
+      moveZ: 0,
+      lookYaw: 0,
+      lookPitch: 0,
+      jump: true,
+    };
+
+    expect(network.sendSequencedPlayerInput(sample)).toBe(null);
+    expect(sent).toHaveLength(0);
+    warn.mockRestore();
+  });
+
   it("dispose() leaves the room, disposes the adapter, and stops emitting", async () => {
     const { room, leave, fireStateChange } = createFakeRoom();
     const network = new FoundationNetwork({

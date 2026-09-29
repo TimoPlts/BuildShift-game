@@ -4,6 +4,8 @@ import { PHYSICS_TIMING } from "@buildshift/game-config";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { PlayerController } from "./player/PlayerController";
+import { LiveInputSampler } from "./network/liveInputSampler";
+import { getFoundationNetwork } from "../network/networkInstance";
 import { createFoundationScene } from "./scene/createFoundationScene";
 
 /** Fixed physics timestep (s), from the shared config — 60 Hz. */
@@ -26,7 +28,7 @@ const MAX_FIXED_STEPS_PER_FRAME = 8;
  *
  * 1. consume input (keyboard state + accumulated mouse delta)
  * 2. apply mouse look to the camera yaw/pitch
- * 3. update the player using the current camera yaw
+ * 3. poll one jump edge, update local physics, and sample live network intent
  * 4. update the camera position from the new player position
  * 5. render the scene
  */
@@ -36,6 +38,8 @@ export class GameRuntime {
   private readonly inputManager: InputManager;
   private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
+  private readonly liveInputSampler = new LiveInputSampler(2);
+  private readonly foundationNetwork = getFoundationNetwork();
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
   /** Time accumulator (seconds) for the fixed physics step. */
@@ -111,13 +115,13 @@ export class GameRuntime {
         //    fire on a later grounded step.
         if (this.inputManager.consumeInputCleared()) {
           this.playerController.resetJumpState();
+          this.liveInputSampler.reset();
         }
 
         // 3. Fixed-step physics: advance the character by whole 60 Hz steps,
         //    decoupling physics from the variable render rate for deterministic
-        //    collision / gravity / jump behaviour. The jump key edge is polled
-        //    *inside* each step (by PlayerController), not here at render time,
-        //    so a press can never be consumed before a simulation step runs.
+        //    collision / gravity / jump behaviour. The raw jump edge is polled
+        //    once here and shared by local simulation and network sampling.
         //    The shared JumpController guarantees a single launch per press
         //    (buffer + coyote), so no double jump is possible even if the
         //    accumulator advances several steps in one frame.
@@ -127,7 +131,17 @@ export class GameRuntime {
           this.accumulator >= FIXED_DT &&
           steps < MAX_FIXED_STEPS_PER_FRAME
         ) {
-          this.playerController.update(FIXED_DT, cameraYaw);
+          const jumpPressed = this.inputManager.pollJumpPressed();
+          this.playerController.update(FIXED_DT, cameraYaw, jumpPressed);
+          const liveSample = this.liveInputSampler.observeFixedStep(
+            jumpPressed,
+            this.inputManager.getMovementInput(),
+            cameraYaw,
+            this.cameraController.getPitch(),
+          );
+          if (liveSample !== null) {
+            this.foundationNetwork.sendSequencedPlayerInput(liveSample);
+          }
           this.accumulator -= FIXED_DT;
           steps += 1;
         }
