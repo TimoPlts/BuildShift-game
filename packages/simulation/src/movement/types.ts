@@ -1,10 +1,10 @@
-/** Player-local input: +X is right and -Z is forward. */
+/** Player-local input: +X is camera-right and -Z is camera-forward. */
 export interface LocalMovementInput {
   x: number;
   z: number;
 }
 
-/** World-space movement intent: +X is right and -Z is forward at yaw zero. */
+/** Movement intent expressed on the fixed world X/Z axes. */
 export interface WorldMovementInput {
   x: number;
   z: number;
