@@ -62,6 +62,11 @@ export class ThirdPersonCameraController {
     return this.yaw;
   }
 
+  /** Current camera pitch in radians. */
+  public getPitch(): number {
+    return this.pitch;
+  }
+
   /**
    * Repositions the camera behind and above the player for the current
    * yaw/pitch. `feetPosition` is the player's ground anchor.
