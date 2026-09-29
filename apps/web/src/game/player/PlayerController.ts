@@ -3,12 +3,10 @@ import {
   PLAYER_COLLIDER,
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
   PLAYER_COLLIDER_TOTAL_HEIGHT,
-  PLAYER_MOVEMENT,
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
 import {
   JumpController,
-  movementInputToWorld,
   stepVerticalMovement,
 } from "@buildshift/simulation";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
@@ -17,8 +15,8 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
-import type { InputManager } from "../input/InputManager";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
+import { computePredictionTranslation } from "./predictionMovement";
 
 /**
  * The local (Stage 1) player: a visible capsule plus a small marker showing
@@ -38,19 +36,31 @@ import { PhysicsWorld } from "../physics/PhysicsWorld";
  * Jump timing (buffer + coyote) is owned by the shared, platform-independent
  * {@link JumpController} so the same deterministic rule the client uses for
  * prediction will be reusable by the authoritative server. The controller is
- * advanced only by fixed steps (never per render frame), so it is
- * frame-rate safe. The fixed-step runtime polls the raw jump edge once and
- * passes that same edge to this controller and the network sampler.
+ * advanced only by fixed substeps (never per render frame), so it is
+ * frame-rate safe. It is driven by an EXPLICIT prediction sample supplied by
+ * the fixed-step runtime — the controller itself never reads browser input.
  *
  * Orientation: the player always faces the camera look direction (player yaw
  * = camera yaw).
  */
+/**
+ * Explicit prediction input for one local physics substep. The runtime
+ * captures this from the live browser input once per prediction batch and
+ * reuses it for the batch's two substeps — the controller never polls the
+ * `InputManager` itself, which is what makes this step replayable.
+ */
+export interface PlayerPredictionInput {
+  moveX: number;
+  moveZ: number;
+  lookYaw: number;
+  jumpPressed: boolean;
+}
+
 export class PlayerController {
   private readonly mesh: AbstractMesh;
   private readonly material: StandardMaterial;
   private readonly forwardMarker: AbstractMesh;
   private readonly physics: PhysicsWorld;
-  private readonly input: InputManager;
   /** Owns the jump-buffer / coyote-time timing and the launch decision. */
   private readonly jumpController: JumpController;
   /** Vertical (world-Y) velocity in m/s, carried between fixed steps. */
@@ -64,20 +74,12 @@ export class PlayerController {
    * step for the compat WASM build) so the mesh can be spawned exactly where
    * the physics world says the character is (capsule centre = PLAYER_SPAWN).
    */
-  public static async create(
-    scene: Scene,
-    input: InputManager,
-  ): Promise<PlayerController> {
+  public static async create(scene: Scene): Promise<PlayerController> {
     const physics = await PhysicsWorld.create();
-    return new PlayerController(scene, input, physics);
+    return new PlayerController(scene, physics);
   }
 
-  private constructor(
-    scene: Scene,
-    input: InputManager,
-    physics: PhysicsWorld,
-  ) {
-    this.input = input;
+  private constructor(scene: Scene, physics: PhysicsWorld) {
     this.physics = physics;
     this.jumpController = new JumpController(JUMP_INPUT_TIMING);
 
@@ -118,37 +120,33 @@ export class PlayerController {
   }
 
   /**
-   * Advances the player by one fixed physics step (`deltaSeconds`).
+   * Advances the player by one fixed physics substep (`deltaSeconds`).
    *
-   * The camera-relative input is turned into a *desired* translation and fed
-   * to the physics world, which resolves it against the arena colliders. The
-   * mesh is then mirrored to the character body's resulting translation.
+   * The explicit prediction input is turned into a *desired* translation and
+   * fed to the physics world, which resolves it against the arena colliders.
+   * The mesh is then mirrored to the character body's resulting translation.
    *
-  * The fixed-step runtime supplies the already-polled jump edge. It is handed
-  * to the shared {@link JumpController}, which applies jump-buffer +
-  * coyote-time and decides whether a jump launches on this step.
-   * `cameraYawRadians` uses the shared convention: yaw 0 faces -Z, positive
-   * yaw rotates toward +X.
+   * The controller never reads browser input: it is driven by an EXPLICIT
+   * prediction sample (movement axes, facing yaw, and one jump edge) so the
+   * same step is replayable from historical samples (Stage 2C2B).
+   * `input.lookYaw` uses the shared convention: yaw 0 faces -Z, positive yaw
+   * rotates toward +X.
+   *
+   * Named `step` (not `update`) because it satisfies the {@link
+   * PredictionSimulation} boundary that the prediction loop drives per
+   * substep; it is never called per render frame.
    */
-  public update(
-    deltaSeconds: number,
-    cameraYawRadians: number,
-    jumpPressed: boolean,
-  ): void {
+  public step(deltaSeconds: number, input: PlayerPredictionInput): void {
     // --- Horizontal: camera-relative desired world displacement ----------
-    const localInput = this.input.getMovementInput();
-    const worldInput = movementInputToWorld(localInput, cameraYawRadians);
-    const inputLength = Math.hypot(worldInput.x, worldInput.z);
-    const normalization = inputLength > 1 ? 1 / inputLength : 1;
-    const distance = PLAYER_MOVEMENT.moveSpeed * deltaSeconds;
-    const dx = worldInput.x * normalization * distance;
-    const dz = worldInput.z * normalization * distance;
+    // Pure, shared-math translation from the EXPLICIT intent (the same math
+    // the authoritative server uses); see `computePredictionTranslation`.
+    const { x: dx, z: dz } = computePredictionTranslation(input, deltaSeconds);
 
     // --- Jump timing: buffer + coyote, decide the launch for this step ----
     const jumpRequested = this.jumpController.step(
       deltaSeconds,
       this.lastGrounded,
-      jumpPressed,
+      input.jumpPressed,
     );
 
     // --- Vertical: integrate gravity; launch at jump speed when requested -
@@ -172,7 +170,7 @@ export class PlayerController {
 
     // Face the camera look direction (Babylon Y rotation: 0 = -Z, positive
     // rotates toward +X — the same convention as the movement math).
-    this.mesh.rotation.y = cameraYawRadians;
+    this.mesh.rotation.y = input.lookYaw;
   }
 
   /**
