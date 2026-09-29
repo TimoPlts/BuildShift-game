@@ -283,6 +283,82 @@ describe("FoundationNetwork", () => {
     warn.mockRestore();
   });
 
+  it("does not consume a live sequence when a connected room's send() throws", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { room, sent } = createFakeRoom();
+    let failing = true;
+    room.send = (type, payload) => {
+      if (failing) {
+        throw new Error("socket write failed");
+      }
+      sent.push({ type, payload });
+    };
+    const network = new FoundationNetwork({
+      serverUrl: "ws://x",
+      joinRoom: () => Promise.resolve(room),
+    });
+    network.start();
+    await flush();
+    expect(network.getUiState().status).toBe("connected");
+
+    const sample = {
+      moveX: 0,
+      moveZ: 0,
+      lookYaw: 0,
+      lookPitch: 0,
+      jump: false,
+    };
+
+    // The send throws → the frame is not sent and the sequence is not consumed.
+    expect(network.sendSequencedPlayerInput(sample)).toBe(null);
+    expect(sent).toHaveLength(0);
+
+    // Recovery: once the room sends again, sequencing resumes from 0.
+    failing = false;
+    expect(network.sendSequencedPlayerInput(sample)).toBe(0);
+    expect(network.sendSequencedPlayerInput(sample)).toBe(1);
+    expect(sent[0].payload).toEqual({ sequence: 0, ...sample });
+    expect(sent[1].payload).toEqual({ sequence: 1, ...sample });
+    warn.mockRestore();
+  });
+
+  it("starts live sequencing from 0 for each genuinely new room/session", async () => {
+    const first = createFakeRoom({ roomId: "room-1", sessionId: "session-1" });
+    const second = createFakeRoom({ roomId: "room-2", sessionId: "session-2" });
+    const rooms = [first.room, second.room];
+    let joinCount = 0;
+    const sample = {
+      moveX: 0,
+      moveZ: 1,
+      lookYaw: 0,
+      lookPitch: 0,
+      jump: false,
+    };
+
+    // Session 1: sequence space is exhausted to 1.
+    const network1 = new FoundationNetwork({
+      serverUrl: "ws://x",
+      joinRoom: () => Promise.resolve(rooms[joinCount++ % rooms.length]),
+    });
+    network1.start();
+    await flush();
+    expect(network1.sendSequencedPlayerInput(sample)).toBe(0);
+    expect(network1.sendSequencedPlayerInput(sample)).toBe(1);
+    network1.dispose();
+
+    // A brand-new session joining a fresh room starts from sequence 0.
+    const network2 = new FoundationNetwork({
+      serverUrl: "ws://x",
+      joinRoom: () => Promise.resolve(rooms[1]),
+    });
+    network2.start();
+    await flush();
+    expect(network2.getUiState().roomId).toBe("room-2");
+    expect(network2.sendSequencedPlayerInput(sample)).toBe(0);
+    expect(second.sent[0].payload).toEqual({ sequence: 0, ...sample });
+    network2.dispose();
+  });
+
   it("dispose() leaves the room, disposes the adapter, and stops emitting", async () => {
     const { room, leave, fireStateChange } = createFakeRoom();
     const network = new FoundationNetwork({
