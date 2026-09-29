@@ -1,8 +1,9 @@
 /**
- * Stage 2B2 server-side room state — the minimal authoritative `players`
- * collection.
+ * Server-side room state — the authoritative `players` collection.
  *
- * This is the first `@colyseus/schema` state this project ships. It is a
+ * Introduced in Stage 2B2 as the minimal transport schema; Stage 2C1 makes the
+ * `position` and `acknowledgedSequence` fields authoritative (driven by the
+ * Rapier simulation and the input-queue acknowledgement respectively). It is a
  * deliberately minimal wire schema (see docs/TECHNICAL_ARCHITECTURE.md §6):
  *
  *  - one entry per connected player, keyed by the Colyseus client `sessionId`;
@@ -33,17 +34,6 @@
  * repo's current `tsconfig.base.json` as-is.
  */
 import { schema, t, MapSchema } from "@colyseus/schema";
-
-/**
- * Neutral, non-gameplay spawn used for bootstrap transport state.
- *
- * This is a documented placeholder, NOT an authoritative gameplay spawn.
- * Authoritative spawn/movement is out of scope for Stage 2B2 and arrives in a
- * later stage (Stage 2C). The origin is chosen so a freshly-joined player has
- * a well-defined, finite capsule-centre position before any movement input is
- * processed.
- */
-export const NEUTRAL_SPAWN = { x: 0, y: 0, z: 0 } as const;
 
 /**
  * Initial `acknowledgedSequence` for a player that has not processed any input

@@ -3,10 +3,12 @@
  *
  * Proves, end to end over the wire, that:
  *  1. the foundation room is now STATEFUL (client decodes a `players` map);
- *  2. on join, a player entry appears at the neutral bootstrap spawn with
+ *  2. on join, a player entry appears at the shared `PLAYER_SPAWN` with
  *     `acknowledgedSequence = -1` and `yaw = 0`;
  *  3. `EVENTS.PLAYER_INPUT` with a valid frame advances
- *     `acknowledgedSequence` and updates `yaw`;
+ *     `acknowledgedSequence` and updates `yaw` (Stage 2C1: movement is now
+ *     integrated authoritatively, so position may drift from spawn under
+ *     gravity — these assertions read the authoritative wire state);
  *  4. duplicate / lower / non-monotonic sequences are IGNORED
  *     (no state change);
  *  5. malformed payloads are IGNORED (no state change, no server crash);
@@ -28,6 +30,7 @@ import {
   ROOMS,
   type PlayerInputFrame,
 } from "@buildshift/protocol";
+import { PLAYER_SPAWN } from "@buildshift/game-config";
 
 import { FOUNDATION_ROOM, startServer, shutdownServer } from "./server.js";
 import type { GameServer } from "./server.js";
@@ -183,16 +186,16 @@ describe("Stage 2B2 stateful foundation room + input handling", () => {
     expect(FOUNDATION_ROOM).toBe(ROOMS.FOUNDATION);
   });
 
-  it("creates the player at the neutral bootstrap spawn on join", async () => {
+  it("creates the player at PLAYER_SPAWN on join", async () => {
     const p = playerFromState(room.state, room.sessionId);
     expect(p).toBeDefined();
-    // Neutral bootstrap spawn (documented, non-gameplay) — read via the
-    // NESTED `position` ref so the test proves the nested shape survives
-    // real Colyseus serialization/patching on the wire.
+    // The shared `PLAYER_SPAWN` (capsule centre) — read via the NESTED
+    // `position` ref so the test proves the nested shape survives real
+    // Colyseus serialization/patching on the wire.
     expect(p.position).toBeDefined();
-    expect(p.position.x).toBe(0);
-    expect(p.position.y).toBe(0);
-    expect(p.position.z).toBe(0);
+    expect(p.position.x).toBeCloseTo(PLAYER_SPAWN.x, 3);
+    expect(p.position.y).toBeCloseTo(PLAYER_SPAWN.y, 3);
+    expect(p.position.z).toBeCloseTo(PLAYER_SPAWN.z, 3);
     // No input processed yet.
     expect(p.acknowledgedSequence).toBe(-1);
     // Initial yaw.
@@ -220,11 +223,14 @@ describe("Stage 2B2 stateful foundation room + input handling", () => {
     const p = playerFromState(room.state, room.sessionId);
     expect(p.acknowledgedSequence).toBe(0);
     expect(p.yaw).toBeCloseTo(1.23, 6);
-    // Movement is acknowledged but not integrated yet (Stage 2C) — the nested
-    // position is still the neutral bootstrap spawn.
-    expect(p.position.x).toBe(0);
-    expect(p.position.y).toBe(0);
-    expect(p.position.z).toBe(0);
+    // Stage 2C1: movement IS integrated authoritatively now, so the position
+    // has been moved by the simulation (drift from spawn under the frame's
+    // move axes + gravity). We assert it is a well-formed finite position; the
+    // detailed movement/jump/collision behaviour is covered by the
+    // deterministic 2C1 simulation tests.
+    expect(Number.isFinite(p.position.x)).toBe(true);
+    expect(Number.isFinite(p.position.y)).toBe(true);
+    expect(Number.isFinite(p.position.z)).toBe(true);
   });
 
   it("advances acknowledgedSequence for a strictly-higher sequence", async () => {

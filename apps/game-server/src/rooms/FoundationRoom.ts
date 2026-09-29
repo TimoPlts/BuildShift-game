@@ -1,32 +1,35 @@
 /**
- * Stage 2B2 foundational room — now MINIMALLY STATEFUL.
+ * Stage 2C1 foundational room — now the first REAL AUTHORITATIVE MOVEMENT
+ * simulation.
  *
- * This is the single `foundation` room. Stage 2A made it stateless to prove
- * the Colyseus lifecycle; Stage 2B2 gives it the minimal authoritative
- * `players` state (see `state/foundationState.ts`) and wires the accepted
- * Stage 2B1 input contract (`EVENTS.PLAYER_INPUT` + `validatePlayerInputFrame`
- * from `@buildshift/protocol`) to real server-side handling.
+ * Stage 2B2 gave this room the minimal authoritative `players` state and a
+ * transport-level (immediate) input acknowledgement. Stage 2C1 turns it into a
+ * genuine authoritative movement server:
  *
- * What this room does (Stage 2B2 scope):
- *  - maintains `state.players` keyed by Colyseus client `sessionId`;
- *  - on join: creates the player entry at the documented neutral bootstrap
- *    spawn with `acknowledgedSequence = -1` (none processed) and `yaw = 0`;
- *  - on leave: removes the player entry;
- *  - on `EVENTS.PLAYER_INPUT`: validates the frame (protocol structural check,
- *    then a server semantic check) and, for a valid monotonic frame, advances
- *    `acknowledgedSequence` and updates `yaw`.
+ *  - the client sends ONLY intent (`EVENTS.PLAYER_INPUT` +
+ *    `PlayerInputFrame` from `@buildshift/protocol`) — never a position or
+ *    velocity;
+ *  - the server owns position, gravity, jump result, collisions, grounded
+ *    state, and acknowledgement, via a single Rapier world
+ *    (`ServerPhysicsWorld`) driven by the shared deterministic movement math
+ *    (`AuthoritativeMovement`, backed by `@buildshift/simulation`);
+ *  - input is QUEUED on receipt and validated/rejected (malformed, duplicate,
+ *    stale, non-monotonic); the authoritative 30 Hz tick consumes at most one
+ *    frame per player and advances the physics in two 60 Hz substeps;
+ *  - `acknowledgedSequence` is raised only to the sequence of the frame whose
+ *    movement has ACTUALLY been simulated — a queued frame is never
+ *    acknowledged before the simulation uses it.
  *
  * What this room deliberately does NOT do (later stages):
- *  - authoritative movement integration / physics (Rapier) — Stage 2C;
- *  - combat, building, teams, ranking, energy, etc. — game-mode stages.
+ *  - client reconciliation (the client still predicts/moves locally,
+ *    independently) — Stage 2C2;
+ *  - interpolation, combat, building, teams, match rules — later stages.
  *
- * In particular, movement input (`moveX`/`moveZ`) is ACKNOWLEDGED and
- * recorded as the accepted sequence, but it does NOT yet move the player —
- * position stays at the neutral spawn until authoritative movement lands in
- * Stage 2C. `yaw` (a rendering concern with no physics coupling) IS updated
- * immediately so the wire state is observably reactive to input.
+ * Authority contract (task §2): the server NEVER accepts a client position or
+ * velocity. `position.{x,y,z}` and `acknowledgedSequence` on the wire are
+ * derived exclusively from the authoritative Rapier body and the input queue.
  */
-import { Room, type Client } from "@colyseus/core";
+import { Room, type Client, type StepContext } from "@colyseus/core";
 
 import {
   EVENTS,
@@ -36,7 +39,6 @@ import {
 
 import {
   FoundationRoomState,
-  NEUTRAL_SPAWN,
   NO_SEQUENCE_ACKNOWLEDGED,
   PlayerState,
 } from "../state/foundationState.js";
@@ -44,6 +46,10 @@ import type {
   FoundationRoomStateInstance,
   PlayersMap,
 } from "../state/foundationState.js";
+import {
+  AuthoritativeMovement,
+  type TickInput,
+} from "../physics/authoritativeMovement.js";
 
 /**
  * Log prefix kept stable from Stage 2A so existing log-based assertions
@@ -51,17 +57,30 @@ import type {
  */
 const LOG = "[buildshift:foundation]";
 
+/**
+ * The authoritative simulation tick rate (Hz) and physics substeps per tick.
+ * The tick runs at 30 Hz; each tick advances the shared fixed physics step
+ * (`PHYSICS_TIMING.fixedStepDurationSeconds = 1/60`) twice, so the effective
+ * physics rate is 60 Hz. These are NOT magic tuning — they are the
+ * authoritative cadence from the architecture (task §4).
+ */
+const AUTHORITY_TICK_RATE = 30;
+const AUTHORITY_SUB_STEPS = 2;
+
 export class FoundationRoom extends Room {
   /**
-   * Room state instance. Because the base `Room` constructor installs an
-   * accessor for `state` (whose setter wires the schema serializer), this
-   * field initializer is what gets captured and serialized — a class field is
-   * the canonical Colyseus v0.18 pattern for a stateful room.
-   *
-   * Access via the typed `players` getter below; the raw `this.state` (base
-   * type `object`) is never used directly.
+   * Room state instance. The base `Room` constructor installs an accessor for
+   * `state` (whose setter wires the schema serializer), so this class field is
+   * what gets captured and serialized — the canonical Colyseus v0.18 pattern.
    */
   state = new FoundationRoomState();
+
+  /**
+   * The authoritative movement simulation (Rapier world + per-player runtime
+   * input state). Created in the async `onCreate`; the 30 Hz tick starts only
+   * after physics is ready.
+   */
+  private movement!: AuthoritativeMovement;
 
   /**
    * Typed access to the `players` collection on the room state.
@@ -71,22 +90,62 @@ export class FoundationRoom extends Room {
   }
 
   /**
-   * Invoked by the matchmaker once, after the room has been instantiated
-   * and before any client joins.
-   *
-   * Registers the wildcard message handler — in Colyseus v0.18 `onMessage`
-   * is a method that BINDS a handler (not an overridable lifecycle hook), so
-   * the wiring lives here.
+   * Invoked by the matchmaker once, after the room has been instantiated and
+   * before any client joins. The matchmaker AWAITs this, so we may initialise
+   * the (async WASM) physics before the authoritative tick begins.
    */
-  onCreate(): void {
+  async onCreate(): Promise<void> {
+    // Initialise the authoritative physics first (async WASM load); the
+    // simulation only starts once this resolves.
+    this.movement = await AuthoritativeMovement.create();
+
     console.log(`${LOG} room created (roomId=${this.roomId})`);
 
-    // Stage 2B2 defines exactly one inbound message type
+    // Stage 2C1 defines exactly one inbound message type
     // (`EVENTS.PLAYER_INPUT`); the wildcard lets the room grow further types
     // later without re-wiring.
     this.onMessage("*", (client, type, message) => {
       this.routeMessage(client, type, message);
     });
+
+    // Begin the authoritative 30 Hz simulation using Colyseus' fixed-timestep
+    // room mechanism (NOT a raw setInterval). Each tick consumes at most one
+    // queued input frame per player and runs two 60 Hz physics substeps.
+    this.setFixedTimestep(
+      (ctx) => this.authoritativeTick(ctx),
+      AUTHORITY_TICK_RATE,
+      { subSteps: AUTHORITY_SUB_STEPS },
+    );
+  }
+
+  /**
+   * One authoritative tick. Consumes input, advances the physics substeps,
+   * then publishes each player's authoritative position + yaw + ack to the
+   * room state (which Colyseus serializes and sends on its patch cadence).
+   */
+  private authoritativeTick(ctx: StepContext): void {
+    const tick: TickInput = { subSteps: ctx.subSteps, subDt: ctx.subDt };
+    this.movement.runTick(tick);
+    this.publishAuthoritativeState();
+  }
+
+  /**
+   * Copies the authoritative simulation's per-player state (position from the
+   * Rapier body, yaw, and processed-sequence ack) onto the synchronized room
+   * state. Pitch is intentionally NOT synced (server-runtime only).
+   */
+  private publishAuthoritativeState(): void {
+    for (const [sessionId, player] of this.players) {
+      const publishable = this.movement.getPublishable(sessionId);
+      if (!publishable) {
+        continue;
+      }
+      player.position.x = publishable.position.x;
+      player.position.y = publishable.position.y;
+      player.position.z = publishable.position.z;
+      player.yaw = publishable.yaw;
+      player.acknowledgedSequence = publishable.acknowledgedSequence;
+    }
   }
 
   /**
@@ -101,7 +160,7 @@ export class FoundationRoom extends Room {
       this.handlePlayerInput(client, message);
       return;
     }
-    // Unknown message type: no defined semantics in Stage 2B2 → ignore.
+    // Unknown message type: no defined semantics in Stage 2C1 → ignore.
     console.warn(
       `${LOG} ignoring unknown message type "${String(type)}" from sessionId=${client.sessionId}`,
     );
@@ -109,7 +168,8 @@ export class FoundationRoom extends Room {
 
   /**
    * Invoked on the server whenever a new client joins this room. Creates the
-   * player's authoritative entry (transport bootstrap only — see file header).
+   * player's authoritative entry at the shared `PLAYER_SPAWN` and its
+   * simulation runtime.
    */
   onJoin(client: Client): void {
     this.createPlayer(client);
@@ -119,75 +179,82 @@ export class FoundationRoom extends Room {
   }
 
   /**
-   * Invoked on the server whenever a client leaves this room. The client is
-   * already removed from `this.clients` before this hook runs.
+   * Invoked on the server whenever a client leaves this room. Removes the
+   * player's authoritative state and frees its physics + runtime input state.
    */
   onLeave(client: Client, code?: number): void {
-    if (this.players.has(client.sessionId)) {
-      this.players.delete(client.sessionId);
-    }
+    this.removePlayer(client.sessionId);
     console.log(
       `${LOG} client left (sessionId=${client.sessionId}, code=${code ?? "n/a"}, clients=${this.clients.length})`,
     );
   }
 
   /**
-   * Invoked on the server when the room is disposed (all clients have left
-   * and autoDispose kicks in, or the server is shutting down).
+   * Invoked on the server when the room is disposed (all clients have left and
+   * autoDispose kicks in, or the server is shutting down). Frees the physics
+   * world so no timers/resources leak.
    */
   onDispose(): void {
+    this.movement?.dispose();
     console.log(`${LOG} room disposed (roomId=${this.roomId})`);
   }
 
   /**
-   * Create and register the authoritative entry for a newly-joined client.
+   * Create and register the authoritative entry + simulation for a
+   * newly-joined client. Idempotent.
    *
-   * Idempotent: if an entry for this `sessionId` already exists it is left
-   * untouched (defensive against a double-join on the same session, which the
-   * transport should not produce, but which must not corrupt state).
+   * The player starts at the shared `PLAYER_SPAWN` (capsule centre), yaw 0,
+   * and `acknowledgedSequence = -1` (no input processed yet).
    */
   private createPlayer(client: Client): void {
     if (this.players.has(client.sessionId)) {
       return;
     }
+
+    this.movement.createPlayer(client.sessionId);
+
     const player = new PlayerState();
     player.playerId = client.sessionId;
-    // `position` is a nested `t.ref` that is auto-instantiated per player
-    // (zero-arg `PositionState`); we only set the capsule-centre coordinates.
-    player.position.x = NEUTRAL_SPAWN.x;
-    player.position.y = NEUTRAL_SPAWN.y;
-    player.position.z = NEUTRAL_SPAWN.z;
+
+    // Reflect the authoritative spawn position on the wire immediately (before
+    // the first tick), so a freshly-joined player has a correct capsule-centre
+    // position. The authoritative movement simulation keeps this value.
+    const spawn = this.movement.getPublishable(client.sessionId);
+    if (spawn) {
+      player.position.x = spawn.position.x;
+      player.position.y = spawn.position.y;
+      player.position.z = spawn.position.z;
+    }
     player.yaw = 0;
     player.acknowledgedSequence = NO_SEQUENCE_ACKNOWLEDGED;
     this.players.set(client.sessionId, player);
   }
 
   /**
-   * Stage 2B2 input handling for one `PLAYER_INPUT` frame.
+   * Removes a player's authoritative state and simulation (physics body +
+   * runtime input state). Idempotent.
+   */
+  private removePlayer(sessionId: string): void {
+    this.players.delete(sessionId);
+    this.movement?.removePlayer(sessionId);
+  }
+
+  /**
+   * Stage 2C1 input handling for one `PLAYER_INPUT` frame.
    *
-   * Two-stage validation, per the accepted contract:
-   *  1. PROTOCOL (structural): `validatePlayerInputFrame` — pure, never throws,
-   *     returns a `ProtocolValidation`. If malformed, we log and take NO state
-   *     mutation (no throw propagates to the transport).
-   *  2. SERVER (semantic): the frame's `sequence` must be STRICTLY GREATER than
-   *     the player's current `acknowledgedSequence`. Duplicate or
-   *     out-of-order (lower) sequences are ignored, not an error.
+   *  1. PROTOCOL (structural): `validatePlayerInputFrame` — pure, never
+   *     throws. If malformed, we log and store NOTHING (no throw propagates to
+   *     the transport), so a malformed frame's sequence can never be
+   *     re-submitted.
+   *  2. ENQUEUE: the validated frame is handed to the simulation's input
+   *     queue, which rejects duplicate/stale/non-monotonic received sequences
+   *     (`sequence <= lastReceivedSequence`) and enqueues the rest.
    *
-   * On success we advance `acknowledgedSequence` to the frame's sequence and
-   * update `yaw` to the frame's `lookYaw`. Movement (`moveX`/`moveZ`) is
-   * intentionally NOT integrated here — authoritative movement is Stage 2C.
+   * Note: receipt here does NOT acknowledge the frame. The frame's sequence
+   * becomes the player's `acknowledgedSequence` only once the authoritative
+   * tick has actually simulated its movement (task §5).
    */
   private handlePlayerInput(client: Client, message: unknown): void {
-    const player = this.players.get(client.sessionId);
-    if (!player) {
-      // Input from a client with no player entry (should not happen after
-      // onJoin; guard against it) — no state to mutate.
-      console.warn(
-        `${LOG} PLAYER_INPUT from sessionId=${client.sessionId} with no player entry; ignored`,
-      );
-      return;
-    }
-
     // 1) Protocol / structural validation.
     const validation = validatePlayerInputFrame(message);
     if (!validation.ok) {
@@ -198,17 +265,27 @@ export class FoundationRoom extends Room {
     }
     const frame: PlayerInputFrame = validation.value;
 
-    // 2) Server / semantic validation: strict monotonic sequence.
-    if (frame.sequence <= player.acknowledgedSequence) {
-      // Duplicate (==) or stale (<). Ignored by design; not an error.
+    if (!this.movement.hasPlayer(client.sessionId)) {
+      // Input from a client with no player entry (should not happen after
+      // onJoin; guard against it) — no simulation to enqueue into.
       console.warn(
-        `${LOG} out-of-order PLAYER_INPUT from sessionId=${client.sessionId}: sequence=${frame.sequence} <= acknowledged=${player.acknowledgedSequence}; ignored`,
+        `${LOG} PLAYER_INPUT from sessionId=${client.sessionId} with no player; ignored`,
       );
       return;
     }
 
-    // Accepted: advance acknowledgement and update the rendering-facing yaw.
-    player.acknowledgedSequence = frame.sequence;
-    player.yaw = frame.lookYaw;
+    // 2) Enqueue; the simulation enforces the sequence rules.
+    const result = this.movement.enqueueFrame(client.sessionId, frame);
+    if (result === "rejected-sequence") {
+      console.warn(
+        `${LOG} non-monotonic PLAYER_INPUT from sessionId=${client.sessionId}: sequence=${frame.sequence}; ignored`,
+      );
+      return;
+    }
+    if (result === "rejected-malformed") {
+      console.warn(
+        `${LOG} invalid PLAYER_INPUT sequence from sessionId=${client.sessionId}: sequence=${frame.sequence}; ignored`,
+      );
+    }
   }
 }
