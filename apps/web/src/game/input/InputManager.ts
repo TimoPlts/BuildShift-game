@@ -79,7 +79,16 @@ export class InputManager {
    * pointer lock is not active.
    */
   public consumeLookDelta(): LookDelta {
-    const delta = this.lookDelta;
+    // Snapshot the accumulated values into a fresh object BEFORE clearing the
+    // accumulator. `this.lookDelta` is the live accumulator, so returning it
+    // directly and then zeroing it would hand the caller the same object that
+    // was just reset (always zero). Copying the numbers preserves the
+    // accumulated movement while still clearing the accumulator for the next
+    // frame.
+    const delta = {
+      x: this.lookDelta.x,
+      y: this.lookDelta.y,
+    };
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
 
