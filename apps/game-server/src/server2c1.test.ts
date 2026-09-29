@@ -169,6 +169,15 @@ describe("Stage 2C1 authoritative movement (deterministic)", () => {
       );
     });
 
+    it("rejects fractional and unsafe-integer sequences defensively", () => {
+      movement.createPlayer(ID);
+      for (const sequence of [1.5, Number.MAX_SAFE_INTEGER + 1]) {
+        expect(movement.enqueueFrame(ID, frame({ sequence }))).toBe(
+          "rejected-malformed",
+        );
+      }
+    });
+
     it("rejects input for an unknown player", () => {
       expect(movement.enqueueFrame("ghost", frame({ sequence: 0 }))).toBe(
         "rejected-unknown-player",
@@ -335,6 +344,23 @@ describe("Stage 2C1 authoritative movement (deterministic)", () => {
       }
 
       // Still a single-jump-scale apex — the airborne jump press was ignored.
+      expect(maxY).toBeLessThan(PLAYER_SPAWN.y + 2.0);
+    });
+
+    it("does not double-jump from a later press during ascent", () => {
+      movement.createPlayer(ID);
+      movement.enqueueFrame(ID, frame({ sequence: 0, jump: true }));
+      movement.runTick(TICK);
+      movement.runTick(TICK);
+      movement.runTick(TICK);
+
+      movement.enqueueFrame(ID, frame({ sequence: 1, jump: true }));
+      let maxY = movement.getPublishable(ID)!.position.y;
+      for (let i = 0; i < 180; i++) {
+        movement.runTick(TICK);
+        maxY = Math.max(maxY, movement.getPublishable(ID)!.position.y);
+      }
+
       expect(maxY).toBeLessThan(PLAYER_SPAWN.y + 2.0);
     });
   });

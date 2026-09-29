@@ -39,6 +39,7 @@ export class InputManager {
    * buffered jump / coyote state on exactly the same triggers.
    */
   private inputCleared = false;
+  private readonly inputClearedListeners = new Set<() => void>();
   private disposed = false;
 
   public constructor(private readonly canvas: HTMLCanvasElement) {
@@ -119,15 +120,26 @@ export class InputManager {
 
   /**
    * Returns whether raw input was cleared since the previous call, then
-   * resets the signal. The runtime calls this once per render frame and, when
-   * true, drops the player's buffered jump / coyote state so a stale buffered
-   * press can never fire after the pointer is released, the window blurs, or
-   * the tab hides.
+   * resets the signal. This pull API remains available for callers that only
+   * need to inspect the latch; the game runtime uses the synchronous
+   * subscription below so hidden-tab render throttling cannot delay safety.
    */
   public consumeInputCleared(): boolean {
     const cleared = this.inputCleared;
     this.inputCleared = false;
     return cleared;
+  }
+
+  /**
+   * Observe input-clear events synchronously. The game runtime uses this
+   * event-driven path to send a neutral authoritative input even when browser
+   * rendering is paused or throttled after a blur / hidden-tab transition.
+   */
+  public subscribeInputCleared(listener: () => void): () => void {
+    this.inputClearedListeners.add(listener);
+    return () => {
+      this.inputClearedListeners.delete(listener);
+    };
   }
 
   /**
@@ -239,6 +251,9 @@ export class InputManager {
     // Signal the runtime to drop the controller's buffered jump / coyote state
     // on exactly these triggers, so a stale buffered press can't fire later.
     this.inputCleared = true;
+    for (const listener of this.inputClearedListeners) {
+      listener();
+    }
   };
 }
 

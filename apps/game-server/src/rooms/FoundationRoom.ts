@@ -2,8 +2,8 @@
  * Stage 2C1 foundational room — now the first REAL AUTHORITATIVE MOVEMENT
  * simulation.
  *
- * Stage 2B2 gave this room the minimal authoritative `players` state and a
- * transport-level (immediate) input acknowledgement. Stage 2C1 turns it into a
+ * Stage 2B2 gave this room the minimal authoritative `players` state and an
+ * input-receipt acknowledgement. Stage 2C1 turns it into a
  * genuine authoritative movement server:
  *
  *  - the client sends ONLY intent (`EVENTS.PLAYER_INPUT` +
@@ -243,9 +243,8 @@ export class FoundationRoom extends Room {
    * Stage 2C1 input handling for one `PLAYER_INPUT` frame.
    *
    *  1. PROTOCOL (structural): `validatePlayerInputFrame` — pure, never
-   *     throws. If malformed, we log and store NOTHING (no throw propagates to
-   *     the transport), so a malformed frame's sequence can never be
-   *     re-submitted.
+   *     throws. If malformed, we log and store nothing (no throw propagates to
+   *     the transport).
    *  2. ENQUEUE: the validated frame is handed to the simulation's input
    *     queue, which rejects duplicate/stale/non-monotonic received sequences
    *     (`sequence <= lastReceivedSequence`) and enqueues the rest.

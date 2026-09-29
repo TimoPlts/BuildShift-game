@@ -40,6 +40,7 @@ export class GameRuntime {
   private readonly playerController: PlayerController;
   private readonly liveInputSampler = new LiveInputSampler(2);
   private readonly foundationNetwork = getFoundationNetwork();
+  private readonly unsubscribeInputCleared: () => void;
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
   /** Time accumulator (seconds) for the fixed physics step. */
@@ -96,6 +97,9 @@ export class GameRuntime {
     this.inputManager = inputManager;
     this.cameraController = cameraController;
     this.playerController = playerController;
+    this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
+      this.handleInputCleared,
+    );
 
     this.renderFrame = () => {
       if (!this.scene.isDisposed) {
@@ -109,16 +113,7 @@ export class GameRuntime {
         this.cameraController.applyLook(lookDelta.x, lookDelta.y);
         const cameraYaw = this.cameraController.getYaw();
 
-        // 2. If raw input was cleared this frame (pointer lock released,
-        //    window blurred, tab hidden, or disposed), drop the controller's
-        //    buffered jump / coyote state so a stale buffered press can never
-        //    fire on a later grounded step.
-        if (this.inputManager.consumeInputCleared()) {
-          this.playerController.resetJumpState();
-          this.liveInputSampler.reset();
-        }
-
-        // 3. Fixed-step physics: advance the character by whole 60 Hz steps,
+        // 2. Fixed-step physics: advance the character by whole 60 Hz steps,
         //    decoupling physics from the variable render rate for deterministic
         //    collision / gravity / jump behaviour. The raw jump edge is polled
         //    once here and shared by local simulation and network sampling.
@@ -151,10 +146,10 @@ export class GameRuntime {
           this.accumulator = 0;
         }
 
-        // 4. Camera follows the character's feet (centre - half height).
+        // 3. Camera follows the character's feet (centre - half height).
         this.cameraController.update(this.playerController.getFeetPosition());
 
-        // 5. Render.
+        // 4. Render.
         this.scene.render();
       }
     };
@@ -162,6 +157,22 @@ export class GameRuntime {
       this.engine.resize();
     };
   }
+
+  /**
+   * Clear local buffered state and stop authoritative held movement without
+   * waiting for another render/fixed step (hidden tabs may throttle both).
+   */
+  private readonly handleInputCleared = (): void => {
+    this.playerController.resetJumpState();
+    this.liveInputSampler.reset();
+    this.foundationNetwork.sendSequencedPlayerInput({
+      moveX: 0,
+      moveZ: 0,
+      lookYaw: this.cameraController.getYaw(),
+      lookPitch: this.cameraController.getPitch(),
+      jump: false,
+    });
+  };
 
   public start(): void {
     if (this.disposed) {
@@ -189,9 +200,12 @@ export class GameRuntime {
       this.started = false;
     }
 
+    // InputManager.dispose() clears input, synchronously sending one final
+    // neutral frame while the clear subscription and controllers still live.
+    this.inputManager.dispose();
+    this.unsubscribeInputCleared();
     this.playerController.dispose();
     this.cameraController.dispose();
-    this.inputManager.dispose();
     this.scene.dispose();
     this.engine.dispose();
     this.disposed = true;

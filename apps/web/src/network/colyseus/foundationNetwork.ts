@@ -136,8 +136,8 @@ export class FoundationNetwork {
    * Send one validated {@link PlayerInputFrame} to the server via the shared
    * `EVENTS.PLAYER_INPUT` event.
    *
-   * This is the *send API only* — it does not read the live keyboard state.
-   * Wiring WASD/jump into frames is a later stage.
+   * This low-level send API does not read keyboard state or assign a sequence;
+   * the Stage 2C1 runtime uses {@link sendSequencedPlayerInput} for live input.
    *
    * @returns `true` when the frame was sent, `false` when it was rejected
    *          (malformed frame, or no active connection).

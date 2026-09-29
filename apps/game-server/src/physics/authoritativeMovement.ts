@@ -178,8 +178,7 @@ export class AuthoritativeMovement {
    * Enqueues one received input frame for a player.
    *
    *  - unknown player → `rejected-unknown-player`;
-   *  - malformed (failed protocol validation) → `rejected-malformed` (the
-   *    frame is NOT stored, so its sequence cannot be re-submitted);
+   *  - malformed sequence → `rejected-malformed` and the frame is not stored;
    *  - `sequence <= lastReceivedSequence` → `rejected-sequence` (duplicate or
    *    stale / non-monotonic received sequence);
    *  - otherwise the frame is enqueued and its sequence becomes the new
@@ -197,7 +196,7 @@ export class AuthoritativeMovement {
     // Sequence is a non-negative safe integer (protocol validator guarantees
     // finite number). Reject anything that is not a usable non-negative
     // integer before trusting it.
-    if (!Number.isFinite(frame.sequence) || frame.sequence < 0) {
+    if (!Number.isSafeInteger(frame.sequence) || frame.sequence < 0) {
       return "rejected-malformed";
     }
 
