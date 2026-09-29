@@ -1,5 +1,8 @@
 import {
   JUMP_INPUT_TIMING,
+  PLAYER_COLLIDER,
+  PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_COLLIDER_TOTAL_HEIGHT,
   PLAYER_MOVEMENT,
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
@@ -15,12 +18,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
 import type { InputManager } from "../input/InputManager";
-import {
-  CHARACTER_HEIGHT_OVER_2,
-  PhysicsWorld,
-} from "../physics/PhysicsWorld";
-
-const PLAYER_HEIGHT = 1.8;
+import { PhysicsWorld } from "../physics/PhysicsWorld";
 
 /**
  * The local (Stage 1) player: a visible capsule plus a small marker showing
@@ -89,7 +87,11 @@ export class PlayerController {
 
     this.mesh = MeshBuilder.CreateCapsule(
       "local-player",
-      { height: PLAYER_HEIGHT, radius: 0.35, tessellation: 16 },
+      {
+        height: PLAYER_COLLIDER_TOTAL_HEIGHT,
+        radius: PLAYER_COLLIDER.radius,
+        tessellation: 16,
+      },
       scene,
     );
     this.mesh.material = this.material;
@@ -200,7 +202,7 @@ export class PlayerController {
   public getFeetPosition(): Vector3 {
     return new Vector3(
       this.mesh.position.x,
-      this.mesh.position.y - CHARACTER_HEIGHT_OVER_2,
+      this.mesh.position.y - PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
       this.mesh.position.z,
     );
   }

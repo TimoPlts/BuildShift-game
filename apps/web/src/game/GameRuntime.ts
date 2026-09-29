@@ -1,10 +1,13 @@
 import { Engine } from "@babylonjs/core/Engines/engine";
 import type { Scene } from "@babylonjs/core/scene";
+import { PHYSICS_TIMING } from "@buildshift/game-config";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { PlayerController } from "./player/PlayerController";
-import { FIXED_DT } from "./physics/PhysicsWorld";
 import { createFoundationScene } from "./scene/createFoundationScene";
+
+/** Fixed physics timestep (s), from the shared config — 60 Hz. */
+const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
 
 /** Hard cap on a single frame's delta (s) — protects against stalled tabs. */
 const MAX_FRAME_DELTA_SECONDS = 0.1;
