@@ -93,17 +93,36 @@ describe("stepHorizontalMovement", () => {
 
 describe("movementInputToWorld", () => {
   const forward = { x: 0, z: -1 };
+  const backward = { x: 0, z: 1 };
   const right = { x: 1, z: 0 };
+  const left = { x: -1, z: 0 };
 
-  it("keeps forward on -Z at yaw zero", () => {
-    expect(movementInputToWorld(forward, 0)).toEqual({ x: 0, z: -1 });
+  it("maps yaw-zero forward and backward without changing their direction", () => {
+    const worldForward = movementInputToWorld(forward, 0);
+    const worldBackward = movementInputToWorld(backward, 0);
+
+    expect(worldForward.x).toBeCloseTo(0);
+    expect(worldForward.z).toBeCloseTo(-1);
+    expect(worldBackward.x).toBeCloseTo(0);
+    expect(worldBackward.z).toBeCloseTo(1);
   });
 
-  it("rotates forward toward +X at positive 90-degree yaw", () => {
-    const result = movementInputToWorld(forward, Math.PI / 2);
+  it("maps yaw-zero local right to visual camera-right and left to camera-left", () => {
+    expect(movementInputToWorld(right, 0)).toEqual({ x: -1, z: 0 });
+    expect(movementInputToWorld(left, 0)).toEqual({ x: 1, z: 0 });
+  });
 
-    expect(result.x).toBeCloseTo(1);
-    expect(result.z).toBeCloseTo(0);
+  it("keeps forward and strafing correctly oriented at positive 90-degree yaw", () => {
+    const rotatedForward = movementInputToWorld(forward, Math.PI / 2);
+    const rotatedRight = movementInputToWorld(right, Math.PI / 2);
+    const rotatedLeft = movementInputToWorld(left, Math.PI / 2);
+
+    expect(rotatedForward.x).toBeCloseTo(1);
+    expect(rotatedForward.z).toBeCloseTo(0);
+    expect(rotatedRight.x).toBeCloseTo(0);
+    expect(rotatedRight.z).toBeCloseTo(-1);
+    expect(rotatedLeft.x).toBeCloseTo(0);
+    expect(rotatedLeft.z).toBeCloseTo(1);
   });
 
   it("rotates forward toward +Z at 180-degree yaw", () => {
@@ -113,17 +132,31 @@ describe("movementInputToWorld", () => {
     expect(result.z).toBeCloseTo(1);
   });
 
-  it("rotates right strafe consistently with camera yaw", () => {
-    const result = movementInputToWorld(right, Math.PI / 2);
+  it("keeps camera-right perpendicular and correctly oriented at arbitrary yaw", () => {
+    const yaw = 0.731;
+    const worldForward = movementInputToWorld(forward, yaw);
+    const worldRight = movementInputToWorld(right, yaw);
 
-    expect(result.x).toBeCloseTo(0);
-    expect(result.z).toBeCloseTo(1);
+    expect(worldForward.x).toBeCloseTo(Math.sin(yaw));
+    expect(worldForward.z).toBeCloseTo(-Math.cos(yaw));
+    expect(worldRight.x).toBeCloseTo(-Math.cos(yaw));
+    expect(worldRight.z).toBeCloseTo(-Math.sin(yaw));
+    expect(
+      worldForward.x * worldRight.x + worldForward.z * worldRight.z,
+    ).toBeCloseTo(0);
   });
 
-  it("preserves vector magnitude while rotating", () => {
+  it("preserves diagonal orientation and magnitude while rotating", () => {
     const input = { x: 0.6, z: -0.8 };
-    const result = movementInputToWorld(input, 1.234);
+    const yaw = 1.234;
+    const result = movementInputToWorld(input, yaw);
 
+    expect(result.x).toBeCloseTo(
+      -input.x * Math.cos(yaw) - input.z * Math.sin(yaw),
+    );
+    expect(result.z).toBeCloseTo(
+      -input.x * Math.sin(yaw) + input.z * Math.cos(yaw),
+    );
     expect(Math.hypot(result.x, result.z)).toBeCloseTo(
       Math.hypot(input.x, input.z),
     );
