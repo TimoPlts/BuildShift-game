@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InputManager } from "./InputManager";
 
 type Listener = (event: unknown) => void;
@@ -143,5 +143,19 @@ describe("InputManager pointer-lock look", () => {
     expect(input.consumeLookDelta()).toEqual({ x: 0, y: 0 });
     mouseMove(1, 2);
     expect(input.consumeLookDelta()).toEqual({ x: 1, y: 2 });
+  });
+
+  it("notifies input-clear subscribers synchronously on blur", () => {
+    input = new InputManager(canvas as unknown as HTMLCanvasElement);
+    const cleared = vi.fn();
+    const unsubscribe = input.subscribeInputCleared(cleared);
+    lockCanvas();
+
+    windowTarget.dispatch("blur", {});
+    expect(cleared).toHaveBeenCalledOnce();
+
+    unsubscribe();
+    windowTarget.dispatch("blur", {});
+    expect(cleared).toHaveBeenCalledOnce();
   });
 });

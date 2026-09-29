@@ -72,9 +72,8 @@ const LOG_PREFIX = "[buildshift:network]";
  *    (network information **only**). It is never fed back into local
  *    prediction or the local `PlayerController`; reconciling the local player
  *    with its authoritative state is a later stage.
- *  - expose `sendPlayerInput(frame)`, which validates a frame and emits it via
- *    the shared `EVENTS.PLAYER_INPUT`. Live WASD→frame wiring is a later stage
- *    and is intentionally **not** implemented here.
+ *  - expose validated raw-frame sending plus page-lifetime sequence ownership
+ *    for live WASD intent samples.
  *
  * This class has **no** dependency on the concrete `@colyseus/sdk` `Client`;
  * it is handed a `joinRoom` seam. The real-client factory lives in
@@ -90,6 +89,7 @@ export class FoundationNetwork {
   private players: PlayerSnapshotMap = {};
   private started = false;
   private disposed = false;
+  private nextInputSequence = 0;
   /** Cached, referentially-stable UI snapshot; rebuilt only when data changes. */
   private uiSnapshot: NetworkUiState;
   private readonly listeners = new Set<() => void>();
@@ -136,8 +136,8 @@ export class FoundationNetwork {
    * Send one validated {@link PlayerInputFrame} to the server via the shared
    * `EVENTS.PLAYER_INPUT` event.
    *
-   * This is the *send API only* — it does not read the live keyboard state.
-   * Wiring WASD/jump into frames is a later stage.
+   * This low-level send API does not read keyboard state or assign a sequence;
+   * the Stage 2C1 runtime uses {@link sendSequencedPlayerInput} for live input.
    *
    * @returns `true` when the frame was sent, `false` when it was rejected
    *          (malformed frame, or no active connection).
@@ -157,8 +157,33 @@ export class FoundationNetwork {
       );
       return false;
     }
-    this.room.send(EVENTS.PLAYER_INPUT, validation.value);
+    try {
+      this.room.send(EVENTS.PLAYER_INPUT, validation.value);
+    } catch (error: unknown) {
+      console.warn(`${LOG_PREFIX} failed to send PLAYER_INPUT:`, error);
+      return false;
+    }
     return true;
+  }
+
+  /**
+   * Build and send one live intent frame using the page-lifetime sequence.
+   * Sequence numbers advance only after the existing validated send boundary
+   * accepts the frame, so disconnected samples never consume sequence space.
+   */
+  public sendSequencedPlayerInput(
+    sample: Omit<PlayerInputFrame, "sequence">,
+  ): number | null {
+    if (this.status !== "connected" || this.room === null) {
+      return null;
+    }
+    const sequence = this.nextInputSequence;
+    const sent = this.sendPlayerInput({ sequence, ...sample });
+    if (!sent) {
+      return null;
+    }
+    this.nextInputSequence += 1;
+    return sequence;
   }
 
   /**
@@ -212,6 +237,7 @@ export class FoundationNetwork {
    */
   private attachRoom(room: RoomLike): void {
     this.room = room;
+    this.nextInputSequence = 0;
     // The SDK enables reconnection by default; the Stage 2B2 spec requires no
     // auto-reconnect, so turn it off explicitly on this room.
     room.reconnection.enabled = false;

@@ -19,8 +19,8 @@ import { resolveGameServerUrl } from "./colyseus/serverUrl";
  *     adapter through the `joinRoom` seam, so every bit of state-tracking,
  *     snapshotting, and send logic stays in the testable, SDK-free adapter.
  *
- * The returned {@link FoundationNetwork} has **not** connected yet — the
- * caller starts it (see `GameRuntime`) and disposes it with the runtime.
+ * The returned {@link FoundationNetwork} has **not** connected yet. The
+ * page-lifetime network singleton starts and owns the adapter.
  *
  * @param serverUrl override the resolved server URL (useful in tests / config).
  * @returns a ready-to-`start()` network adapter.
