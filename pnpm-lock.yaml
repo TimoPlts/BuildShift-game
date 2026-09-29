@@ -172,9 +172,15 @@ importers:
 
   apps/game-server:
     dependencies:
+      '@buildshift/game-config':
+        specifier: workspace:*
+        version: link:../../packages/game-config
       '@buildshift/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@buildshift/simulation':
+        specifier: workspace:*
+        version: link:../../packages/simulation
       '@colyseus/core':
         specifier: ^0.18.16
         version: 0.18.16(@colyseus/better-call@1.3.3)(@colyseus/schema@5.0.33(typescript@5.9.3))(@colyseus/ws-transport@0.18.3)(express@4.22.3)
@@ -184,6 +190,9 @@ importers:
       '@colyseus/ws-transport':
         specifier: ^0.18.3
         version: 0.18.3(@colyseus/core@0.18.16)(express@4.22.3)
+      '@dimforge/rapier3d-compat':
+        specifier: ^0.20.0
+        version: 0.20.0
       express:
         specifier: ^4.22.3
         version: 4.22.3

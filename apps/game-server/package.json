@@ -11,10 +11,13 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@buildshift/game-config": "workspace:*",
     "@buildshift/protocol": "workspace:*",
+    "@buildshift/simulation": "workspace:*",
     "@colyseus/core": "^0.18.16",
     "@colyseus/schema": "^5.0.33",
     "@colyseus/ws-transport": "^0.18.3",
+    "@dimforge/rapier3d-compat": "^0.20.0",
     "express": "^4.22.3"
   },
   "devDependencies": {
