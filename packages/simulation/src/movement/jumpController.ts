@@ -1,4 +1,4 @@
-import type { JumpControllerConfig } from "./types.js";
+import type { JumpControllerConfig, JumpControllerState } from "./types.js";
 
 /**
  * Pure jump-input timing state machine.
@@ -41,6 +41,67 @@ export class JumpController {
   public reset(): void {
     this.jumpBufferRemaining = 0;
     this.coyoteRemaining = 0;
+  }
+
+  /**
+   * Captures the controller's deterministic timing state as a plain-data value.
+   *
+   * The returned object is a fresh copy: mutating it has no effect on the
+   * controller, and it retains no reference to the controller's internals.
+   * Use it together with {@link restoreState} to roll the controller back to
+   * an earlier simulation point (client prediction reconciliation).
+   */
+  public captureState(): JumpControllerState {
+    return {
+      jumpBufferRemaining: this.jumpBufferRemaining,
+      coyoteRemaining: this.coyoteRemaining,
+    };
+  }
+
+  /**
+   * Restores deterministic timing state previously produced by
+   * {@link captureState}, exactly.
+   *
+   * The argument is read by value; the controller does not retain a reference
+   * to it, so later mutation by the caller cannot influence the controller.
+   *
+   * @throws RangeError if either field is not a finite, non-negative number —
+   *   restoring an impossible state would silently corrupt the timing model.
+   */
+  public restoreState(state: Readonly<JumpControllerState>): void {
+    // Validate both fields before mutating anything, so an invalid snapshot
+    // leaves the controller exactly as it was (all-or-nothing).
+    const jumpBufferRemaining = this.validateRemaining(
+      state.jumpBufferRemaining,
+      "jumpBufferRemaining",
+    );
+    const coyoteRemaining = this.validateRemaining(
+      state.coyoteRemaining,
+      "coyoteRemaining",
+    );
+    this.jumpBufferRemaining = jumpBufferRemaining;
+    this.coyoteRemaining = coyoteRemaining;
+  }
+
+  /**
+   * Rejects remaining-time values that cannot occur in a healthy controller:
+   * NaN, ±Infinity, and negatives. Returns the (guaranteed sane) number.
+   */
+  private validateRemaining(value: number, field: string): number {
+    if (Number.isNaN(value)) {
+      throw new RangeError(`JumpControllerState.${field} must be a number, got NaN`);
+    }
+    if (!Number.isFinite(value)) {
+      throw new RangeError(
+        `JumpControllerState.${field} must be finite, got ${value}`,
+      );
+    }
+    if (value < 0) {
+      throw new RangeError(
+        `JumpControllerState.${field} must be non-negative, got ${value}`,
+      );
+    }
+    return value;
   }
 
   /**

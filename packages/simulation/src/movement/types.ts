@@ -37,3 +37,22 @@ export interface JumpControllerConfig {
   /** How long (s) after losing ground a jump is still allowed (coyote window). */
   coyoteTime: number;
 }
+
+/**
+ * Deterministic internal timing state of {@link JumpController}, captured and
+ * restored by the snapshot API.
+ *
+ * This is intentionally a plain-data value: no references, no closures, no
+ * physics or rendering types — so it can round-trip through structured-clone
+ * or JSON between client prediction and the authoritative server step
+ * (see docs/TECHNICAL_ARCHITECTURE.md §7.4 / §18).
+ *
+ * Both fields are remaining seconds, bounded by the controller's configured
+ * `jumpBufferTime` / `coyoteTime` at the moment of capture, and non-negative.
+ */
+export interface JumpControllerState {
+  /** Remaining (s) that the buffered press will stay valid. */
+  jumpBufferRemaining: number;
+  /** Remaining (s) that the coyote window is active. */
+  coyoteRemaining: number;
+}
