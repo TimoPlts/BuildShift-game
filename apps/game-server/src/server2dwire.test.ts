@@ -27,10 +27,10 @@ import {
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { EVENTS } from "@buildshift/protocol";
-import { PLAYER_SPAWN } from "@buildshift/game-config";
 
 import { FOUNDATION_ROOM, startServer, shutdownServer } from "./server.js";
 import type { GameServer } from "./server.js";
+import { SPAWN_SLOTS } from "./physics/authoritativeMovement.js";
 
 /** Bounded polling wait: resolves when the predicate holds or the deadline
  *  passes (explicit timeout → CI can never hang). */
@@ -136,9 +136,11 @@ describe("Stage 2D two-client multiplayer over the wire", () => {
     expect(bView).toBeDefined();
     expect(aView.playerId).toBe(roomB.sessionId);
     expect(bView.playerId).toBe(roomB.sessionId);
-    // Both views agree on the same spawn-position player B (before movement).
-    expect(aView.position.x).toBeCloseTo(PLAYER_SPAWN.x, 1);
-    expect(bView.position.x).toBeCloseTo(PLAYER_SPAWN.x, 1);
+    // B is the second to join, so it occupies spawn slot 1. Both views agree
+    // on the same spawn-position player B (before movement).
+    const bSpawn = SPAWN_SLOTS[1];
+    expect(aView.position.x).toBeCloseTo(bSpawn.x, 1);
+    expect(bView.position.x).toBeCloseTo(bSpawn.x, 1);
   });
 
   it("movement from A moves A only; B sees A's new position but does not follow", async () => {

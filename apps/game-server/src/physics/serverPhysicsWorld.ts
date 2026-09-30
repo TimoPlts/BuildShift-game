@@ -115,27 +115,24 @@ export class ServerPhysicsWorld {
   }
 
   /**
-   * Creates a player's kinematic character at the shared `PLAYER_SPAWN`.
+   * Creates a player's kinematic character at `spawn` (defaults to the shared
+   * `PLAYER_SPAWN` when omitted).
    *
    * No-op if a physics handle already exists for `playerId` (defensive against
    * a double-join on the same session).
    */
-  public createPlayer(playerId: string): void {
+  public createPlayer(playerId: string, spawn?: Translation3): void {
     if (this.disposed || this.players.has(playerId)) {
       return;
     }
 
+    const s =
+      spawn ?? { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.z };
+
     const body = this.world.createRigidBody(
       RigidBodyDesc.kinematicPositionBased(),
     );
-    body.setTranslation(
-      {
-        x: PLAYER_SPAWN.x,
-        y: PLAYER_SPAWN.y,
-        z: PLAYER_SPAWN.z,
-      },
-      true,
-    );
+    body.setTranslation({ x: s.x, y: s.y, z: s.z }, true);
 
     const colliderDesc = ColliderDesc.capsule(
       PLAYER_COLLIDER.halfHeight,

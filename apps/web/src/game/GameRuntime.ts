@@ -7,6 +7,7 @@ import { PredictionOrchestrator } from "./network/predictionOrchestrator";
 import { PredictionHistory } from "./network/predictionHistory";
 import { ReconciliationEngine } from "./network/reconciliation";
 import { ReconciliationCoordinator } from "./network/reconciliationCoordinator";
+import { RemotePlayerManager } from "./remote/RemotePlayerManager";
 import { PlayerController } from "./player/PlayerController";
 import { getFoundationNetwork } from "../network/networkInstance";
 import { createFoundationScene } from "./scene/createFoundationScene";
@@ -57,6 +58,13 @@ export class GameRuntime {
    * drives the reconciliation engine at the safe batch boundary.
    */
   private readonly reconciliationCoordinator: ReconciliationCoordinator;
+  /**
+   * Presentation-only manager for REMOTE player meshes. Owns one capsule per
+   * remote player (keyed by playerId) and is driven by the SAME network
+   * UI-state observer as the reconciliation coordinator. The local player is
+   * never rendered here — it stays owned by PlayerController.
+   */
+  private readonly remotePlayerManager: RemotePlayerManager;
   /** Unsubscribe for the page-lifetime network UI-state observer. */
   private readonly unsubscribeNetwork: () => void;
   private readonly foundationNetwork = getFoundationNetwork();
@@ -114,6 +122,10 @@ export class GameRuntime {
     this.inputManager = inputManager;
     this.cameraController = cameraController;
     this.playerController = playerController;
+    // Presentation-only remote-player meshes. The local player is never
+    // rendered here (it is owned by PlayerController); only the OTHER sessions
+    // in NetworkUiState.players get a remote capsule.
+    this.remotePlayerManager = new RemotePlayerManager(scene);
     // The orchestrator owns the batch bookkeeping for local prediction. Each
     // substep it captures ONE sample (driving both local prediction and the
     // single network frame) and simulates with the batch's explicit input —
@@ -159,24 +171,29 @@ export class GameRuntime {
       hasActiveBatch: () => this.prediction.hasActiveBatch(),
     });
 
-    // Observe the page-lifetime network: on every UI-state change the
-    // coordinator tracks the local session and coalesces the latest local
-    // authoritative snapshot. Reconciliation itself is deferred to the safe
-    // batch boundary in the fixed-step loop — never mid-batch.
+    // Observe the page-lifetime network. A SINGLE subscription feeds both
+    // consumers, so reconciliation and remote rendering always see the same
+    // UI-state snapshot:
+    //  - the coordinator tracks the local session and coalesces the latest
+    //    local authoritative snapshot (reconciliation itself is deferred to
+    //    the safe batch boundary — never mid-batch), and
+    //  - the remote manager creates/updates/removes presentation-only remote
+    //    meshes for every OTHER session (the local player is excluded and
+    //    stays driven by PlayerController).
     this.unsubscribeNetwork = this.foundationNetwork.subscribe(() => {
-      this.reconciliationCoordinator.onNetworkState(
-        this.foundationNetwork.getUiState(),
-      );
+      const state = this.foundationNetwork.getUiState();
+      this.reconciliationCoordinator.onNetworkState(state);
+      this.remotePlayerManager.sync(state.players, state.sessionId);
     });
-    // Prime the coordinator with the CURRENT UI state. `subscribe` only fires
+    // Prime BOTH consumers with the CURRENT UI state. `subscribe` only fires
     // on FUTURE changes, so an already-connected / already-in-session network
     // (the FoundationNetwork is page-lifetime and may have joined before the
     // runtime was constructed) would otherwise be missed until the next state
     // change. Feeding the snapshot once here establishes the initial session
-    // (and a fresh engine) up front.
-    this.reconciliationCoordinator.onNetworkState(
-      this.foundationNetwork.getUiState(),
-    );
+    // (and a fresh engine) up front and spawns any already-present remotes.
+    const primedState = this.foundationNetwork.getUiState();
+    this.reconciliationCoordinator.onNetworkState(primedState);
+    this.remotePlayerManager.sync(primedState.players, primedState.sessionId);
 
     this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
       this.handleInputCleared,
@@ -294,6 +311,10 @@ export class GameRuntime {
     this.unsubscribeNetwork();
     this.playerController.dispose();
     this.cameraController.dispose();
+    // Dispose every remote-player mesh (and its material) while the scene is
+    // still live — after the network observer is gone, so no remote is ever
+    // (re)created during teardown.
+    this.remotePlayerManager.dispose();
     this.scene.dispose();
     this.engine.dispose();
     this.disposed = true;

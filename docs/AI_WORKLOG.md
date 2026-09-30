@@ -323,3 +323,12 @@ For each development stage record:
 - **Client reconciliation:** Completed prediction batches retain sequence-keyed history and deterministic state capture/restore. Authoritative local position and yaw reconcile at a safe batch boundary; divergent snapshots roll back to the acknowledged checkpoint and replay unacknowledged samples locally, with jump edges applied only on replay substep A. Replayed checkpoints replace stale values. Session changes clear history and construct a fresh reconciliation engine, while disconnected local movement remains immediate.
 - **Validation:** The client branch includes live forced-correction coverage. Server tests verify acknowledgements represent the highest actually simulated input under backlog and sequence gaps. Two-client Colyseus wire validation confirms independent movement, yaw propagation, shared state visibility, and isolated leave handling. The combined suite passed **320/320** tests; workspace plus web/server typechecks, workspace build, and `git diff --check` passed. The known Vite large-chunk warning remains non-blocking.
 - **Deferred:** Remote-player rendering and interpolation remain out of scope.
+
+---
+
+## 2026-09-30 — Stage 2D-1 — Basic Visible Multiplayer Integration
+
+- **Integration:** Merged deterministic server spawn slots and remote-player presentation with conflict-free non-fast-forward merges. No integration code fix was required.
+- **Remote presentation:** `GameRuntime` feeds the same live network snapshot to reconciliation and a presentation-only remote manager. The manager excludes the local session, creates one remote capsule per joined peer, directly applies authoritative position/yaw updates, removes departed peers, and disposes its meshes before scene teardown. Remote movement deliberately snaps; interpolation is deferred to Stage 2D-2.
+- **Server visibility:** The first two players receive deterministic distinct 1v1 spawn slots, and released slots are reused. Existing authoritative movement, acknowledgements, and two-client wire behaviour remain covered.
+- **Validation:** Workspace typecheck/build and `git diff --check` passed; the combined suite passed **339/339** tests. Two-browser rendering was not run in this environment; existing two-client wire tests validate authoritative visibility and lifecycle.
