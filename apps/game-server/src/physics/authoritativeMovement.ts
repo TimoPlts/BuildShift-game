@@ -42,8 +42,31 @@ import {
   JUMP_INPUT_TIMING,
   PLAYER_MOVEMENT,
   PLAYER_PHYSICS,
+  PLAYER_SPAWN,
 } from "@buildshift/game-config";
 import type { PlayerInputFrame } from "@buildshift/protocol";
+
+/**
+ * Deterministic multiplayer spawn slots (Stage 2D, server-local for this
+ * foundation stage — a proper mode-specific spawn set will live with match
+ * rules later).
+ *
+ * Each slot is a capsule-centre position on flat, in-arena ground, clear of the
+ * static arena colliders:
+ *  - slot 0: the original shared baseline spawn (`PLAYER_SPAWN`, south-east
+ *    open area, z = +6);
+ *  - slot 1: mirrored east of centre (x = +6, z = +6) — same flat ground,
+ *    clear of the reference platform (x ≤ -1.5) and the centre box
+ *    (|x| ≤ 1.25).
+ *
+ * Slots are distinct and non-overlapping at spawn. Beyond the defined slots the
+ * allocator falls back to the shared baseline spawn (slot 0), preserving the
+ * prior single-spawn behaviour for the foundation room.
+ */
+export const SPAWN_SLOTS: readonly { x: number; y: number; z: number }[] = [
+  { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.z },
+  { x: 6, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.z },
+] as const;
 
 import {
   ServerPhysicsWorld,
@@ -89,6 +112,12 @@ export type EnqueueResult =
 interface PlayerRuntime {
   /** Highest sequence RECEIVED (used to reject duplicate/stale frames). */
   lastReceivedSequence: number;
+  /**
+   * The spawn slot index assigned to this player (`-1` when it fell back to
+   * the shared baseline spawn beyond the defined slots). Freed on
+   * {@link removePlayer}/{@link dispose} so a later join can reuse it.
+   */
+  slot: number;
   /** Queued-but-not-yet-processed frames, FIFO. */
   pending: PlayerInputFrame[];
   /**
@@ -120,9 +149,31 @@ interface PlayerRuntime {
 export class AuthoritativeMovement {
   private readonly physics: ServerPhysicsWorld;
   private readonly runtimes = new Map<string, PlayerRuntime>();
+  /**
+   * Spawn slots currently occupied by a live player (slot index → true).
+   * Bounded by `SPAWN_SLOTS.length`; entries are released on leave/dispose so
+   * bookkeeping never leaks past the slot count.
+   */
+  private readonly occupiedSlots = new Set<number>();
 
   private constructor(physics: ServerPhysicsWorld) {
     this.physics = physics;
+  }
+
+  /**
+   * Deterministically assigns the lowest free spawn slot, or `-1` when none of
+   * the defined slots is free (caller then falls back to the shared baseline
+   * spawn). The chosen index is recorded as occupied atomically with the
+   * assignment.
+   */
+  private allocateSlot(): number {
+    for (let i = 0; i < SPAWN_SLOTS.length; i++) {
+      if (!this.occupiedSlots.has(i)) {
+        this.occupiedSlots.add(i);
+        return i;
+      }
+    }
+    return -1;
   }
 
   /**
@@ -135,16 +186,24 @@ export class AuthoritativeMovement {
   }
 
   /**
-   * Registers a player's simulation (physics body at `PLAYER_SPAWN` + runtime
-   * input state). Idempotent: an existing runtime is left untouched.
+   * Registers a player's simulation. The physics body is placed at the
+   * deterministically-allocated spawn slot (the lowest free slot; the shared
+   * baseline spawn once the defined slots are all taken). Runtime input state
+   * is initialised alongside.
+   *
+   * Idempotent: an existing runtime is left untouched (no new slot is
+   * allocated, so a double-join cannot double-book a slot).
    */
   public createPlayer(playerId: string): void {
     if (this.runtimes.has(playerId)) {
       return;
     }
-    this.physics.createPlayer(playerId);
+    const slot = this.allocateSlot();
+    const spawn = slot >= 0 ? SPAWN_SLOTS[slot] : SPAWN_SLOTS[0];
+    this.physics.createPlayer(playerId, spawn);
     this.runtimes.set(playerId, {
       lastReceivedSequence: -1,
+      slot,
       pending: [],
       consumed: null,
       held: { moveX: 0, moveZ: 0, yaw: 0, pitch: 0 },
@@ -160,8 +219,12 @@ export class AuthoritativeMovement {
    * Idempotent.
    */
   public removePlayer(playerId: string): void {
-    if (!this.runtimes.has(playerId)) {
+    const runtime = this.runtimes.get(playerId);
+    if (!runtime) {
       return;
+    }
+    if (runtime.slot >= 0) {
+      this.occupiedSlots.delete(runtime.slot);
     }
     this.physics.disposePlayer(playerId);
     this.runtimes.delete(playerId);
@@ -332,5 +395,6 @@ export class AuthoritativeMovement {
   public dispose(): void {
     this.physics.dispose();
     this.runtimes.clear();
+    this.occupiedSlots.clear();
   }
 }
