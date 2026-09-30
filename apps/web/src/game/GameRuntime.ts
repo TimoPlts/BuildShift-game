@@ -4,6 +4,9 @@ import { PHYSICS_TIMING } from "@buildshift/game-config";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { PredictionOrchestrator } from "./network/predictionOrchestrator";
+import { PredictionHistory } from "./network/predictionHistory";
+import { ReconciliationEngine } from "./network/reconciliation";
+import { ReconciliationCoordinator } from "./network/reconciliationCoordinator";
 import { PlayerController } from "./player/PlayerController";
 import { getFoundationNetwork } from "../network/networkInstance";
 import { createFoundationScene } from "./scene/createFoundationScene";
@@ -43,6 +46,19 @@ export class GameRuntime {
   private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
   private readonly prediction: PredictionOrchestrator;
+  /**
+   * The single, runtime-owned prediction history. Shared by BOTH the
+   * prediction orchestrator (which records completed batches) and the live
+   * reconciliation engine (which reads/rewinds them) — one source of truth.
+   */
+  private readonly predictionHistory = new PredictionHistory();
+  /**
+   * Pure coordinator that observes the network, tracks the local session, and
+   * drives the reconciliation engine at the safe batch boundary.
+   */
+  private readonly reconciliationCoordinator: ReconciliationCoordinator;
+  /** Unsubscribe for the page-lifetime network UI-state observer. */
+  private readonly unsubscribeNetwork: () => void;
   private readonly foundationNetwork = getFoundationNetwork();
   private readonly unsubscribeInputCleared: () => void;
   private readonly renderFrame: () => void;
@@ -116,7 +132,52 @@ export class GameRuntime {
       sendSample: (sample) =>
         this.foundationNetwork.sendSequencedPlayerInput(sample),
       simulateSubstep: (input) => this.playerController.update(FIXED_DT, input),
+      // Completed successfully-sent batches are checkpointed into the shared
+      // history, captured from the local PlayerController after substep B.
+      history: this.predictionHistory,
+      capturePredictionState: () =>
+        this.playerController.capturePredictionState(),
     });
+
+    // Live reconciliation engine, rebuilt FRESH per session by the coordinator.
+    // Its replay path is LOCAL-ONLY: it drives the same PlayerController.update
+    // seam as prediction and never touches the network.
+    this.reconciliationCoordinator = new ReconciliationCoordinator({
+      history: this.predictionHistory,
+      createEngine: () =>
+        new ReconciliationEngine({
+          history: this.predictionHistory,
+          capturePredictionState: () =>
+            this.playerController.capturePredictionState(),
+          restorePredictionState: (state) =>
+            this.playerController.restorePredictionState(state),
+          setAuthoritativePosition: (position, yaw) =>
+            this.playerController.setAuthoritativePosition(position, yaw),
+          simulateSubstep: (input) =>
+            this.playerController.update(FIXED_DT, input),
+        }),
+      hasActiveBatch: () => this.prediction.hasActiveBatch(),
+    });
+
+    // Observe the page-lifetime network: on every UI-state change the
+    // coordinator tracks the local session and coalesces the latest local
+    // authoritative snapshot. Reconciliation itself is deferred to the safe
+    // batch boundary in the fixed-step loop — never mid-batch.
+    this.unsubscribeNetwork = this.foundationNetwork.subscribe(() => {
+      this.reconciliationCoordinator.onNetworkState(
+        this.foundationNetwork.getUiState(),
+      );
+    });
+    // Prime the coordinator with the CURRENT UI state. `subscribe` only fires
+    // on FUTURE changes, so an already-connected / already-in-session network
+    // (the FoundationNetwork is page-lifetime and may have joined before the
+    // runtime was constructed) would otherwise be missed until the next state
+    // change. Feeding the snapshot once here establishes the initial session
+    // (and a fresh engine) up front.
+    this.reconciliationCoordinator.onNetworkState(
+      this.foundationNetwork.getUiState(),
+    );
+
     this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
       this.handleInputCleared,
     );
@@ -143,6 +204,15 @@ export class GameRuntime {
           this.accumulator >= FIXED_DT &&
           steps < MAX_FIXED_STEPS_PER_FRAME
         ) {
+          // Safe batch boundary: authoritative reconciliation NEVER happens
+          // mid-batch. When no prediction batch is in progress (the moment a
+          // fresh one is about to start), apply the latest pending local
+          // authoritative snapshot. A snapshot that arrived during substep A
+          // stays pending and is reconciled here, once substep B has finished
+          // and the batch is idle.
+          if (!this.prediction.hasActiveBatch()) {
+            this.reconciliationCoordinator.reconcileAtSafeBoundary();
+          }
           this.prediction.stepSubstep();
           this.accumulator -= FIXED_DT;
           steps += 1;
@@ -219,6 +289,9 @@ export class GameRuntime {
     // neutral frame while the clear subscription and controllers still live.
     this.inputManager.dispose();
     this.unsubscribeInputCleared();
+    // Stop observing the page-lifetime network so no listener leaks after the
+    // runtime is gone (the network itself lives on for the page).
+    this.unsubscribeNetwork();
     this.playerController.dispose();
     this.cameraController.dispose();
     this.scene.dispose();

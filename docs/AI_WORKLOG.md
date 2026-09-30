@@ -314,3 +314,12 @@ For each development stage record:
 - **Shared simulation:** `JumpController.captureState()` and `restoreState()` expose only `jumpBufferRemaining` and `coyoteRemaining`. Restore validates both finite values within their configured `[0, maximum]` ranges before changing either field. Existing `step()` and `reset()` behavior remains unchanged.
 - **Validation:** `pnpm install`, workspace typecheck/build, web typecheck/build, simulation typecheck, and `git diff --check` passed. Two full test runs passed at **227/227** each, including 23 JumpController snapshot tests. An initial sandboxed test attempt could not bind local server sockets (`listen EPERM`); both full runs with socket access passed. Browser automation was unavailable, so pointer lock, control feel, live send cadence, acknowledgements, and server-shutdown gameplay were not rechecked in a browser.
 - **Deferred:** Stage 2C2B still needs authoritative state correction, sequence-keyed input history and replay, and reconciliation behavior. This integration does not perform reconciliation.
+
+---
+
+## 2026-09-30 — Stage 2C2B — Reconciliation Integration
+
+- **Integration:** Merged the accepted server acknowledgement stress, client reconciliation, and two-client wire-validation histories onto `a9df819` with conflict-free non-fast-forward merges. No integration code fix was required.
+- **Client reconciliation:** Completed prediction batches retain sequence-keyed history and deterministic state capture/restore. Authoritative local position and yaw reconcile at a safe batch boundary; divergent snapshots roll back to the acknowledged checkpoint and replay unacknowledged samples locally, with jump edges applied only on replay substep A. Replayed checkpoints replace stale values. Session changes clear history and construct a fresh reconciliation engine, while disconnected local movement remains immediate.
+- **Validation:** The client branch includes live forced-correction coverage. Server tests verify acknowledgements represent the highest actually simulated input under backlog and sequence gaps. Two-client Colyseus wire validation confirms independent movement, yaw propagation, shared state visibility, and isolated leave handling. The combined suite passed **320/320** tests; workspace plus web/server typechecks, workspace build, and `git diff --check` passed. The known Vite large-chunk warning remains non-blocking.
+- **Deferred:** Remote-player rendering and interpolation remain out of scope.

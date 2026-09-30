@@ -187,4 +187,75 @@ describe("Stage 2C1 authoritative movement over the wire", () => {
     const p = playerFromState(room.state, room.sessionId);
     expect(p.position.y).toBeGreaterThan(PLAYER_SPAWN.y + 0.15);
   });
+
+  it("progresses acknowledgements in order through an ordered burst (2C2B wire)", async () => {
+    // The two tests above already consumed sequences 0 and 1 on this shared
+    // room, so lastReceivedSequence is 1. This burst therefore starts at 2.
+    // We fire N frames back-to-back — microseconds apart, i.e. far faster than
+    // the room's 30 Hz authoritative tick — to build a real backlog over the
+    // wire, then prove the ack reaches the LAST sent sequence in order within
+    // an explicit deadline (so CI can never hang).
+    const START = 2;
+    const N = 24; // sequences 2..25
+    const END = START + N - 1;
+    const sent = new Set<number>();
+    for (let s = START; s <= END; s++) {
+      room.send(EVENTS.PLAYER_INPUT, {
+        sequence: s,
+        moveX: 0,
+        moveZ: 0,
+        lookYaw: 0,
+        lookPitch: 0,
+        jump: false,
+      });
+      sent.add(s);
+    }
+
+    // Early-window guard: the whole backlog can only be simulated at the 30 Hz
+    // tick rate (N frames ≈ N/30 s). If a defect made the ack mean "highest
+    // received", it would already equal END within milliseconds. Prove that is
+    // NOT the case: shortly after the burst, the ack is still far below END.
+    const earlyWindowMs = 150; // ≈ 4-5 ticks → ack should be well below END
+    const earlyStart = Date.now();
+    let earlyMax = playerFromState(room.state, room.sessionId)?.acknowledgedSequence ?? -1;
+    while (Date.now() - earlyStart < earlyWindowMs) {
+      const now = playerFromState(room.state, room.sessionId)?.acknowledgedSequence;
+      if (typeof now === "number") earlyMax = Math.max(earlyMax, now);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(earlyMax).toBeLessThan(END);
+
+    // Sample the published ack at a fast cadence until it reaches the final
+    // sequence, recording the DISTINCT values we observed so we can assert
+    // they progress in order (each a real sent sequence, never beyond END).
+    const deadlineMs = 6_000; // 24 frames @ 30Hz ≈ 0.8s + generous patch margin
+    const startedAt = Date.now();
+    const observed: number[] = [];
+    let last = playerFromState(room.state, room.sessionId)?.acknowledgedSequence ?? -1;
+    while (last < END) {
+      if (Date.now() - startedAt > deadlineMs) {
+        throw new Error(
+          `[buildshift:2c2bwire] ack did not reach sequence ${END} within ${deadlineMs}ms; last=${last}, observed=${JSON.stringify(observed)}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, 10));
+      const now = playerFromState(room.state, room.sessionId)?.acknowledgedSequence;
+      if (typeof now === "number" && now > last) {
+        observed.push(now);
+        last = now;
+      }
+    }
+
+    // The ack reached the final sent sequence.
+    expect(last).toBe(END);
+    // Every distinct observed value was a REAL sent sequence (never a skipped /
+    // highest-received leap) and they strictly increased — in order.
+    for (let i = 0; i < observed.length; i++) {
+      expect(sent.has(observed[i])).toBe(true);
+      expect(observed[i]).toBeLessThanOrEqual(END);
+      if (i > 0) {
+        expect(observed[i]).toBeGreaterThan(observed[i - 1]);
+      }
+    }
+  });
 });
