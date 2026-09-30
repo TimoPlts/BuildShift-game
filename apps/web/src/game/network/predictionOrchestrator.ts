@@ -3,6 +3,8 @@ import {
   type InputSample,
   type SubstepInput,
 } from "./inputBatcher";
+import { PredictionHistory } from "./predictionHistory";
+import type { PredictionState } from "./predictionState";
 
 /**
  * The browser-facing seam the {@link PredictionOrchestrator} drives. In the
@@ -26,6 +28,21 @@ export interface PredictionOrchestratorDeps {
   sendSample(sample: InputSample): number | null;
   /** Simulate one 1/60 substep from explicit input (drives the local player). */
   simulateSubstep(input: SubstepInput): void;
+  /**
+   * The prediction history a completed batch's checkpoint is recorded into.
+   * Injected (not instantiated) so the orchestrator stays browser-independent
+   * and unit-testable. The runtime owns the single shared instance and passes
+   * it here, so completed successfully-sent batches are ALWAYS recorded —
+   * this seam can no longer be omitted silently.
+   */
+  history: PredictionHistory;
+  /**
+   * Capture the local player's prediction state as a value copy. Called exactly
+   * once per COMPLETED two-substep batch (after substep B), and only when the
+   * batch's send returned a sequence. In the runtime this is
+   * `PlayerController.capturePredictionState()`.
+   */
+  capturePredictionState(): PredictionState;
 }
 
 /**
@@ -52,6 +69,12 @@ export interface PredictionOrchestratorDeps {
  */
 export class PredictionOrchestrator {
   private readonly batcher = new InputBatcher();
+  /**
+   * The network sequence assigned to the currently-active batch (its single
+   * send), retained until BOTH substeps complete. `null` when the connection
+   * is down (the send returned null) or when no batch is active.
+   */
+  private activeSequence: number | null = null;
 
   public constructor(private readonly deps: PredictionOrchestratorDeps) {}
 
@@ -69,12 +92,34 @@ export class PredictionOrchestrator {
       const sample = this.deps.captureInput();
       this.batcher.beginBatch(sample);
       // Exactly one send per 30 Hz prediction batch — never one per substep.
-      // The returned sequence is ignored here; Stage 2C2B will store the
-      // sample keyed by it for reconciliation.
-      this.deps.sendSample(sample);
+      // The returned sequence (or null when disconnected) is RETAINED for this
+      // active batch and recorded only once BOTH substeps have completed.
+      this.activeSequence = this.deps.sendSample(sample);
     }
     this.deps.simulateSubstep(this.batcher.currentSubstepInput());
+    // The batch's sample + retained sequence are still readable while the batch
+    // is active; capture both before finishSubstep() may close it.
+    const batchSample = this.batcher.currentSample();
+    const batchSequence = this.activeSequence;
     this.batcher.finishSubstep();
+    // A history checkpoint exists ONLY after substep B (the batch is now idle)
+    // AND the send returned a real sequence. After substep A the batch is still
+    // active, so nothing is recorded yet (the sequence is retained for substep
+    // B). A null send (disconnected) never records.
+    if (!this.batcher.hasActiveBatch()) {
+      // Record ONLY when a real sequence was assigned (a null send means the
+      // connection is down, so there is nothing the server can acknowledge).
+      // The history + capture seams are required, so a completed successfully-
+      // sent batch is always checkpointed.
+      if (batchSequence !== null) {
+        this.deps.history.append(
+          batchSequence,
+          batchSample,
+          this.deps.capturePredictionState(),
+        );
+      }
+      this.activeSequence = null;
+    }
   }
 
   /**
@@ -83,7 +128,11 @@ export class PredictionOrchestrator {
    * batch) and by the input-clear path.
    */
   public resetBatch(): void {
+    // Discard any half-finished batch, INCLUDING its retained sequence
+    // bookkeeping, so the next substep starts a fresh capture/send. No history
+    // entry is created for a batch that never completed substep B.
     this.batcher.reset();
+    this.activeSequence = null;
   }
 
   /**
@@ -92,7 +141,13 @@ export class PredictionOrchestrator {
    * After this, the next physics substep starts a FRESH prediction batch.
    */
   public clearAndSendNeutral(neutral: InputSample): void {
+    // Discard any active partial batch and its retained sequence bookkeeping,
+    // then send the neutral authoritative intent exactly once. The neutral
+    // frame's own sequence is deliberately NOT recorded in the history — that
+    // intentional missing sequence is the gap the ReconciliationEngine already
+    // handles (docs/TECHNICAL_ARCHITECTURE.md §11 / Stage 2C2B).
     this.batcher.reset();
+    this.activeSequence = null;
     this.deps.sendSample(neutral);
   }
 }

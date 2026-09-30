@@ -16,6 +16,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
 import type { SubstepInput } from "../network/inputBatcher";
+import type { PredictionState } from "../network/predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
 
@@ -175,6 +176,72 @@ export class PlayerController {
     // Face the camera look direction (Babylon Y rotation: 0 = -Z, positive
     // rotates toward +X — the same convention as the movement math).
     this.mesh.rotation.y = lookYawRadians;
+  }
+
+  /**
+   * Captures the complete local prediction state as a plain-data
+   * {@link PredictionState} (Stage 2C2B reconciliation checkpoint).
+   *
+   * Everything is a *value* copy — the physics position, vertical velocity,
+   * lagged grounded flag, the shared {@link JumpController} timing snapshot,
+   * and the current facing yaw (read from the mesh's Y rotation). The returned
+   * object holds no references into this controller, so later simulation can
+   * never mutate a stored checkpoint.
+   */
+  public capturePredictionState(): PredictionState {
+    const center = this.physics.getPosition();
+    return {
+      position: { x: center.x, y: center.y, z: center.z },
+      verticalVelocity: this.verticalVelocity,
+      lastGrounded: this.lastGrounded,
+      jump: this.jumpController.captureState(),
+      facingYaw: this.mesh.rotation.y,
+    };
+  }
+
+  /**
+   * Restores the complete local prediction state from a previously captured
+   * {@link PredictionState}. After this call:
+   *
+   * - the physics capsule-centre position equals `state.position`
+   * - the mesh position equals `state.position`
+   * - the mesh facing yaw equals `state.facingYaw`
+   *
+   * The vertical velocity, lagged grounded flag, and the shared
+   * {@link JumpController} timing are also restored, so deterministic
+   * simulation resumes exactly from the checkpoint.
+   */
+  public restorePredictionState(state: Readonly<PredictionState>): void {
+    this.physics.setPosition(state.position);
+    this.verticalVelocity = state.verticalVelocity;
+    this.lastGrounded = state.lastGrounded;
+    this.jumpController.restoreState(state.jump);
+    // Presentation mirror: mesh position + facing yaw.
+    this.mesh.position.set(
+      state.position.x,
+      state.position.y,
+      state.position.z,
+    );
+    this.mesh.rotation.y = state.facingYaw;
+  }
+
+  /**
+   * Narrow server-authoritative override: sets ONLY the position (physics
+   * capsule centre + mesh) and the facing yaw. It deliberately does NOT touch
+   * `verticalVelocity`, `lastGrounded`, or the {@link JumpController} timing.
+   *
+   * Reconciliation first restores the local deterministic checkpoint at ack N
+   * (via {@link restorePredictionState}), then applies only the
+   * server-authoritative position + yaw on top — the remaining deterministic
+   * state stays as the client checkpoint (docs/TECHNICAL_ARCHITECTURE.md §18).
+   */
+  public setAuthoritativePosition(
+    position: Readonly<{ x: number; y: number; z: number }>,
+    yaw: number,
+  ): void {
+    this.physics.setPosition(position);
+    this.mesh.position.set(position.x, position.y, position.z);
+    this.mesh.rotation.y = yaw;
   }
 
   /**
