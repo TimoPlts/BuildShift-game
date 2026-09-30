@@ -182,8 +182,13 @@ export class GameRuntime {
     //    stays driven by PlayerController).
     this.unsubscribeNetwork = this.foundationNetwork.subscribe(() => {
       const state = this.foundationNetwork.getUiState();
+      // ONE client-local monotonic receive time per network-state update.
+      // `performance.now()` (never Date.now()) is the ONLY clock input to the
+      // remote interpolation layer; the reconciliation path below does not use
+      // it at all.
+      const receivedAtMs = performance.now();
       this.reconciliationCoordinator.onNetworkState(state);
-      this.remotePlayerManager.sync(state.players, state.sessionId);
+      this.remotePlayerManager.sync(state.players, state.sessionId, receivedAtMs);
     });
     // Prime BOTH consumers with the CURRENT UI state. `subscribe` only fires
     // on FUTURE changes, so an already-connected / already-in-session network
@@ -191,9 +196,13 @@ export class GameRuntime {
     // runtime was constructed) would otherwise be missed until the next state
     // change. Feeding the snapshot once here establishes the initial session
     // (and a fresh engine) up front and spawns any already-present remotes.
+    // The prime stamps its own receive time — the same `performance.now()`
+    // clock the subscription uses — so a freshly-presented remote has a valid
+    // interpolation origin rather than an undefined one.
     const primedState = this.foundationNetwork.getUiState();
+    const primedReceivedAtMs = performance.now();
     this.reconciliationCoordinator.onNetworkState(primedState);
-    this.remotePlayerManager.sync(primedState.players, primedState.sessionId);
+    this.remotePlayerManager.sync(primedState.players, primedState.sessionId, primedReceivedAtMs);
 
     this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
       this.handleInputCleared,
@@ -246,7 +255,17 @@ export class GameRuntime {
         // 3. Camera follows the character's feet (centre - half height).
         this.cameraController.update(this.playerController.getFeetPosition());
 
-        // 4. Render.
+        // 4. Drive REMOTE presentation from interpolation. Each remote's buffer
+        // is sampled at `now - REMOTE_INTERPOLATION_DELAY_MS` and its mesh
+        // written to the result. This is the interpolation-only remote path —
+        // it reads remote buffers and writes remote meshes, and never touches
+        // the local PlayerController / prediction / reconciliation (step 2
+        // above). The render clock (`performance.now()`) is intentionally a
+        // separate concept from the receive timestamp captured in the network
+        // callback.
+        this.remotePlayerManager.render(performance.now());
+
+        // 5. Render.
         this.scene.render();
       }
     };

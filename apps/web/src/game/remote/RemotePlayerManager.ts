@@ -2,6 +2,7 @@ import { Color3, MeshBuilder, Scene, StandardMaterial, type AbstractMesh } from 
 import { PLAYER_COLLIDER, PLAYER_COLLIDER_TOTAL_HEIGHT } from "@buildshift/game-config";
 
 import type { PlayerSnapshotMap } from "../../network/colyseus/playerSnapshot";
+import { RemoteInterpolationRegistry } from "./remoteInterpolationRegistry";
 import {
   mapPlayersToRemoteViews,
   reconcileRemotePlayers,
@@ -17,6 +18,11 @@ import {
  *  - `marker`: a small box parented to the capsule, offset toward -Z, to make
  *    the facing direction readable (mirrors the local player's marker).
  *  - `material`: the capsule material (disposed with the mesh).
+ *
+ * The per-remote interpolation buffer is NOT stored here — it lives in the
+ * manager's {@link RemoteInterpolationRegistry}, keyed by the same `playerId`,
+ * so the mesh set and the interpolation history stay in lockstep but have a
+ * single, pure, testable source of truth for the history.
  */
 interface RemotePlayerMesh {
   mesh: AbstractMesh;
@@ -25,31 +31,37 @@ interface RemotePlayerMesh {
   material: StandardMaterial;
   /** Forward-marker material (disposed separately — mesh.dispose() doesn't dispose materials). */
   markerMaterial: StandardMaterial;
-  /**
-   * The last-applied snapshot. The manager skips the mesh write when a new
-   * snapshot is byte-for-byte identical, so a repeated snapshot never triggers
-   * a redundant transform update.
-   */
-  last: RemotePlayerView;
 }
 
 /**
  * Presentation-only lifecycle manager for REMOTE player meshes.
  *
- * It owns one Babylon capsule per remote player, keyed by `playerId`, and
+ * It owns one Babylon capsule per remote player (plus a matching
+ * {@link RemoteInterpolationBuffer}), keyed by `playerId`, and
  * creates/updates/removes them in response to the authoritative snapshot map
  * from the existing `FoundationNetwork` (`NetworkUiState.players`). It is
  * driven exclusively by {@link reconcileRemotePlayers}, which decides the
  * create/update/remove set — keeping the decision logic pure and node-testable
- * while this class owns only the Babylon side-effects.
+ * while this class owns only the Babylon side-effects and the per-remote
+ * interpolation history.
  *
- * Deliberate non-goals (see Stage 2D-1):
+ * Presentation is INTERPOLATION, not snapping: each network snapshot is
+ * appended to that remote's buffer (with a client-local monotonic receive
+ * timestamp); the mesh transform is driven only by {@link render}, which
+ * samples every buffer at `now - REMOTE_INTERPOLATION_DELAY_MS`. A snapshot is
+ * NEVER applied to the mesh the instant it arrives, and a later identical
+ * snapshot is still buffered (its new receive timestamp is useful history).
+ *
+ * Deliberate non-goals:
  *  - The LOCAL player is NEVER rendered here; it stays driven by
  *    `PlayerController` prediction/reconciliation. The local session id is
- *    excluded from every operation.
+ *    excluded from every operation. The interpolation buffers NEVER feed back
+ *    into prediction/reconciliation.
  *  - No physics bodies, no `PlayerController`, no prediction, no
- *    interpolation. Remote snapshots are applied directly (snap-placement).
- *  - Disposal is idempotent and tears down every owned mesh + material.
+ *    extrapolation, no adaptive delay (the delay is a fixed
+ *    `REMOTE_INTERPOLATION_DELAY_MS`).
+ *  - Disposal is idempotent and tears down every owned mesh, material, and
+ *    interpolation buffer.
  */
 export class RemotePlayerManager {
   /**
@@ -62,6 +74,12 @@ export class RemotePlayerManager {
   private readonly scene: Scene;
   /** Live remote meshes, keyed by playerId. Empty after {@link dispose}. */
   private readonly meshes = new Map<string, RemotePlayerMesh>();
+  /**
+   * Per-remote interpolation history, keyed by the same playerId as
+   * {@link meshes}. Pure and Babylon-free so the wiring contract is
+   * node-testable; the Babylon meshes are its mirror.
+   */
+  private readonly interpolation = new RemoteInterpolationRegistry();
   private disposed = false;
 
   constructor(scene: Scene) {
@@ -69,16 +87,30 @@ export class RemotePlayerManager {
   }
 
   /**
-   * Reconcile the live remote-mesh set against the authoritative snapshot map.
+   * Reconcile the live remote-mesh set against the authoritative snapshot map
+   * and append each snapshot to that remote's interpolation buffer.
    *
    * `players` is the `NetworkUiState.players` root (playerId → validated
    * snapshot). `localSessionId` is the current local session (the key that is
-   * NEVER rendered as a remote player). Calling this on every network-state
-   * emit keeps meshes in sync: new players spawn, moved players move, and
-   * departed players (including a cleared/empty map on disconnect) are
-   * disposed.
+   * NEVER rendered as a remote player). `receivedAtMs` is the ONE client-local
+   * monotonic receive time (`performance.now()`) captured by the caller at the
+   * moment this network-state update was observed; it is shared by every
+   * snapshot in this call and is the ONLY input to the interpolation clock.
+   *
+   * Calling this on every network-state emit keeps both the mesh set and the
+   * interpolation history in sync: new players get a mesh + a fresh buffer
+   * seeded with their spawn snapshot, moved players get the new snapshot
+   * APPENDED (not snapped to), and departed players (including a cleared/empty
+   * map on disconnect) lose both their mesh and their buffer.
+   *
+   * This does NOT move any mesh. Presentation is driven by {@link render},
+   * which samples the buffers at `now - REMOTE_INTERPOLATION_DELAY_MS`.
    */
-  sync(players: Readonly<PlayerSnapshotMap>, localSessionId: string | null): void {
+  sync(
+    players: Readonly<PlayerSnapshotMap>,
+    localSessionId: string | null,
+    receivedAtMs: number,
+  ): void {
     if (this.disposed) {
       return;
     }
@@ -91,10 +123,10 @@ export class RemotePlayerManager {
     );
 
     for (const op of ops.creates) {
-      this.createRemote(op.playerId, op.snapshot);
+      this.createRemote(op.playerId, op.snapshot, receivedAtMs);
     }
     for (const op of ops.updates) {
-      this.applySnapshot(op.playerId, op.snapshot);
+      this.appendRemoteSample(op.playerId, op.snapshot, receivedAtMs);
     }
     for (const op of ops.removals) {
       this.removeRemote(op.playerId);
@@ -102,8 +134,31 @@ export class RemotePlayerManager {
   }
 
   /**
-   * Dispose every owned remote mesh + material and clear tracking. Idempotent:
-   * safe to call more than once (a second call is a no-op).
+   * Drive every remote mesh to its interpolated presentation at the current
+   * "now" clock. Call once per render frame, before `scene.render()`, with
+   * `nowMs = performance.now()`.
+   *
+   * Each remote's buffer is sampled at `nowMs - REMOTE_INTERPOLATION_DELAY_MS`
+   * and, when a sample exists, the capsule position + yaw are written to it.
+   * The mesh transform is therefore ALWAYS held back by the fixed delay — the
+   * newest packet is never shown immediately. This method never mutates the
+   * authoritative network data or the interpolation history; it only reads the
+   * buffers and writes the meshes.
+   */
+  render(nowMs: number): void {
+    if (this.disposed) {
+      return;
+    }
+    const sampled = this.interpolation.sampleAll(nowMs);
+    for (const [playerId, sample] of Object.entries(sampled)) {
+      this.write(playerId, sample.position, sample.yaw);
+    }
+  }
+
+  /**
+   * Dispose every owned remote mesh, material, and interpolation buffer and
+   * clear tracking. Idempotent: safe to call more than once (a second call is
+   * a no-op).
    */
   dispose(): void {
     if (this.disposed) {
@@ -114,10 +169,24 @@ export class RemotePlayerManager {
       this.disposeEntry(entry);
     }
     this.meshes.clear();
+    this.interpolation.clear();
   }
 
-  /** Create a fresh remote capsule for `playerId` and place it at `snapshot`. */
-  private createRemote(playerId: string, snapshot: RemotePlayerView): void {
+  /**
+   * Create a fresh remote capsule for `playerId` and seed its interpolation
+   * buffer with the spawn snapshot.
+   *
+   * The mesh is placed immediately at the spawn snapshot so a newly joined
+   * remote appears on the very next frame even though it has only one sample
+   * (the buffer returns that single sample until the next one arrives). The
+   * buffer is a fresh, empty registry entry before seeding — a rejoin after a
+   * prior drop never reuses stale history.
+   */
+  private createRemote(
+    playerId: string,
+    snapshot: RemotePlayerView,
+    receivedAtMs: number,
+  ): void {
     // One mesh per playerId — the helper only emits a create for an id we do
     // not already track, so this cannot duplicate an existing remote.
     if (this.meshes.has(playerId)) {
@@ -157,50 +226,67 @@ export class RemotePlayerManager {
     marker.position.set(0, 0.2, -0.35);
     marker.isPickable = false;
 
-    // `last` is seeded with the spawn snapshot; `applySnapshot` is called so
-    // the mesh is positioned/rotated to it (it is NOT a no-op here because
-    // `last` was just written, so the write goes through).
     const entry: RemotePlayerMesh = {
       mesh,
       marker,
       material,
       markerMaterial,
-      last: snapshot,
     };
     this.meshes.set(playerId, entry);
-    // Initial placement must always write (the no-op guard below would skip it
-    // because `last` already equals the spawn snapshot).
-    this.write(entry, snapshot);
-  }
-
-  /** Unconditional position/rotate write for a tracked remote. */
-  private write(entry: RemotePlayerMesh, snapshot: RemotePlayerView): void {
-    // Authoritative position is the capsule-centre (world X/Z, Y up).
-    entry.mesh.position.set(snapshot.position.x, snapshot.position.y, snapshot.position.z);
-    // Yaw convention matches the local player: `rotation.y` in radians, yaw 0
-    // faces -Z, positive yaw rotates toward +X.
-    entry.mesh.rotation.y = snapshot.yaw;
+    // Seed the fresh buffer with the spawn snapshot (receive time stamped) and
+    // place the mesh at it immediately so the remote is visible next frame.
+    this.interpolation.appendSample(playerId, {
+      position: snapshot.position,
+      yaw: snapshot.yaw,
+      receivedAtMs,
+    });
+    this.write(playerId, snapshot.position, snapshot.yaw);
   }
 
   /**
-   * Place/rotate a tracked remote at its authoritative snapshot. Skips the
-   * transform write entirely when the snapshot is unchanged (a repeated
-   * identical snapshot is a no-op).
+   * Append a tracked remote's new authoritative snapshot to its interpolation
+   * buffer. This is the update path: the sample is buffered (with its new
+   * receive timestamp) but the mesh is NOT snapped to it — presentation is
+   * deferred to {@link render}.
+   *
+   * A snapshot identical in position/yaw to the previous one is still
+   * appended: it carries a fresh receive timestamp and is useful
+   * interpolation history, so there is deliberately NO identical-snapshot
+   * skip here (the Stage 2D-1 transform-write cache is gone).
    */
-  private applySnapshot(playerId: string, snapshot: RemotePlayerView): void {
+  private appendRemoteSample(
+    playerId: string,
+    snapshot: RemotePlayerView,
+    receivedAtMs: number,
+  ): void {
+    if (!this.meshes.has(playerId)) {
+      return;
+    }
+    this.interpolation.appendSample(playerId, {
+      position: snapshot.position,
+      yaw: snapshot.yaw,
+      receivedAtMs,
+    });
+  }
+
+  /** Unconditional position/rotate write for a tracked remote. */
+  private write(
+    playerId: string,
+    position: { x: number; y: number; z: number },
+    yaw: number,
+  ): void {
     const entry = this.meshes.get(playerId);
     if (!entry) {
       return;
     }
-    // A repeated identical snapshot is a no-op (no redundant transform write).
-    if (isSameSnapshot(entry.last, snapshot)) {
-      return;
-    }
-    entry.last = snapshot;
-    this.write(entry, snapshot);
+    // Authoritative position is the capsule-centre (world X/Z, Y up).
+    entry.mesh.position.set(position.x, position.y, position.z);
+    // Yaw convention matches the local player: `rotation.y` in radians, yaw 0
+    // faces -Z, positive yaw rotates toward +X.
+    entry.mesh.rotation.y = yaw;
   }
 
-  /** Dispose a single tracked remote (mesh + marker + both materials). */
+  /** Dispose a single tracked remote (mesh + marker + materials + buffer). */
   private removeRemote(playerId: string): void {
     const entry = this.meshes.get(playerId);
     if (!entry) {
@@ -208,6 +294,7 @@ export class RemotePlayerManager {
     }
     this.disposeEntry(entry);
     this.meshes.delete(playerId);
+    this.interpolation.drop(playerId);
   }
 
   /** Tear down one remote's meshes and materials. */
@@ -217,17 +304,4 @@ export class RemotePlayerManager {
     entry.material.dispose();
     entry.markerMaterial.dispose();
   }
-}
-
-/**
- * Structural equality on the two presentation fields only. `snapshot.position`
- * is a plain `{x,y,z}` object, so we compare component-wise.
- */
-function isSameSnapshot(a: RemotePlayerView, b: RemotePlayerView): boolean {
-  return (
-    a.yaw === b.yaw &&
-    a.position.x === b.position.x &&
-    a.position.y === b.position.y &&
-    a.position.z === b.position.z
-  );
 }
