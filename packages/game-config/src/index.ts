@@ -5,7 +5,7 @@
  * energy, weapons, modes, networking) will live in this package so they are
  * not scattered across the codebase.
  */
-export { PLAYER_MOVEMENT } from "./movement.js";
+export { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "./movement.js";
 export { JUMP_INPUT_TIMING, PLAYER_PHYSICS } from "./physics.js";
 export {
   PLAYER_COLLIDER,
