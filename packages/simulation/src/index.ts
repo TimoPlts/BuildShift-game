@@ -18,6 +18,7 @@ export { JumpController } from "./movement/jumpController.js";
 export type {
   HorizontalMovementConfig,
   JumpControllerConfig,
+  JumpControllerState,
   LocalMovementInput,
   Position2D,
   VerticalMovementConfig,
