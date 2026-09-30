@@ -3,12 +3,10 @@ import {
   PLAYER_COLLIDER,
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
   PLAYER_COLLIDER_TOTAL_HEIGHT,
-  PLAYER_MOVEMENT,
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
 import {
   JumpController,
-  movementInputToWorld,
   stepVerticalMovement,
 } from "@buildshift/simulation";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
@@ -19,6 +17,7 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
 import type { SubstepInput } from "../network/inputBatcher";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
+import { computePredictionTranslation } from "./predictionMovement";
 
 /**
  * The local (Stage 1) player: a visible capsule plus a small marker showing
@@ -140,13 +139,12 @@ export class PlayerController {
       simulationInput;
 
     // --- Horizontal: camera-relative desired world displacement ----------
-    const localInput = { x: moveX, z: moveZ };
-    const worldInput = movementInputToWorld(localInput, lookYawRadians);
-    const inputLength = Math.hypot(worldInput.x, worldInput.z);
-    const normalization = inputLength > 1 ? 1 / inputLength : 1;
-    const distance = PLAYER_MOVEMENT.moveSpeed * deltaSeconds;
-    const dx = worldInput.x * normalization * distance;
-    const dz = worldInput.z * normalization * distance;
+    // Pure, shared-math translation from the EXPLICIT intent (the same math the
+    // authoritative server uses); see `computePredictionTranslation`.
+    const { x: dx, z: dz } = computePredictionTranslation(
+      { moveX, moveZ, lookYaw: lookYawRadians },
+      deltaSeconds,
+    );
 
     // --- Jump timing: buffer + coyote, decide the launch for this step ----
     const jumpRequested = this.jumpController.step(
