@@ -28,6 +28,31 @@ export interface VerticalMovementConfig {
 }
 
 /**
+ * Configuration for the full vertical-position integrator
+ * ({@link integrateVerticalMovement}). Unlike {@link VerticalMovementConfig}
+ * (velocity-only step), this includes a ground reference so the integrator
+ * can clamp position and report landing.
+ */
+export interface IntegrateVerticalConfig {
+  /** Gravity acceleration in m/s² (negative = downward). */
+  gravity: number;
+  /** Initial upward velocity applied on a grounded jump, in m/s. */
+  jumpVelocity: number;
+  /** Ground reference Y coordinate (meters). */
+  groundY: number;
+}
+
+/** Result of a single vertical position-velocity integration step. */
+export interface IntegrateVerticalResult {
+  /** New Y position (meters) after the step. */
+  y: number;
+  /** New Y velocity (m/s) after the step. */
+  velocity: number;
+  /** True if the entity is on (or was clamped to) the ground at end of step. */
+  landed: boolean;
+}
+
+/**
  * Tuning for jump-input timing (buffer + coyote), shared by client prediction
  * and the authoritative server step.
  */
