@@ -54,19 +54,22 @@ describe("JumpController snapshot/restore", () => {
       jc.step(dt, false, true); // buffer active
 
       const state = jc.captureState();
+      const capturedValues = jc.captureState();
+      // Deliberately corrupt the returned object well past its configured
+      // maximum (999 > jumpBufferTime and > coyoteTime).
       state.jumpBufferRemaining = 999;
       state.coyoteRemaining = 999;
 
       // The controller must be untouched by the mutation.
       const after = jc.captureState();
-      expect(after.jumpBufferRemaining).toBeLessThan(999);
-      expect(after.coyoteRemaining).toBeLessThan(999);
+      expect(after).toEqual(capturedValues);
+      expect(after.jumpBufferRemaining).toBe(capturedValues.jumpBufferRemaining);
+      expect(after.coyoteRemaining).toBe(capturedValues.coyoteRemaining);
 
-      // And a fresh restore from the (now-clobbered) object still sees the
-      // original captured values because captureState copied by value.
-      const fresh = new JumpController(config);
-      fresh.restoreState(state);
-      expect(fresh.captureState().jumpBufferRemaining).toBe(999);
+      // Attempting to restore the impossible (mutated) snapshot is rejected,
+      // and the original controller stays exactly as it was.
+      expect(() => jc.restoreState(state)).toThrow(RangeError);
+      expect(jc.captureState()).toEqual(capturedValues);
     });
 
     it("does not share object identity across captures", () => {
@@ -273,6 +276,78 @@ describe("JumpController snapshot/restore", () => {
         jumpBufferRemaining: 0,
         coyoteRemaining: 0,
       });
+    });
+  });
+
+  describe("UPPER BOUND", () => {
+    it("accepts a jumpBufferRemaining exactly equal to jumpBufferTime", () => {
+      const jc = new JumpController(config);
+      expect(() =>
+        jc.restoreState({
+          jumpBufferRemaining: config.jumpBufferTime,
+          coyoteRemaining: 0,
+        }),
+      ).not.toThrow();
+      expect(jc.captureState()).toEqual({
+        jumpBufferRemaining: config.jumpBufferTime,
+        coyoteRemaining: 0,
+      });
+    });
+
+    it("accepts a coyoteRemaining exactly equal to coyoteTime", () => {
+      const jc = new JumpController(config);
+      expect(() =>
+        jc.restoreState({
+          jumpBufferRemaining: 0,
+          coyoteRemaining: config.coyoteTime,
+        }),
+      ).not.toThrow();
+      expect(jc.captureState()).toEqual({
+        jumpBufferRemaining: 0,
+        coyoteRemaining: config.coyoteTime,
+      });
+    });
+
+    it("rejects a jumpBufferRemaining slightly above jumpBufferTime", () => {
+      const jc = new JumpController(config);
+      const before = jc.captureState();
+      expect(() =>
+        jc.restoreState({
+          jumpBufferRemaining: config.jumpBufferTime + 1e-9,
+          coyoteRemaining: 0,
+        }),
+      ).toThrow(RangeError);
+      expect(jc.captureState()).toEqual(before);
+    });
+
+    it("rejects a coyoteRemaining slightly above coyoteTime", () => {
+      const jc = new JumpController(config);
+      const before = jc.captureState();
+      expect(() =>
+        jc.restoreState({
+          jumpBufferRemaining: 0,
+          coyoteRemaining: config.coyoteTime + 1e-9,
+        }),
+      ).toThrow(RangeError);
+      expect(jc.captureState()).toEqual(before);
+    });
+
+    it("leaves previous state unchanged when an upper-bound restore fails", () => {
+      const jc = new JumpController(config);
+      jc.step(dt, false, true); // buffer active
+      const before = jc.captureState();
+      expect(before.jumpBufferRemaining).toBeGreaterThan(0);
+
+      // A valid field (coyote) paired with an impossible one (buffer > max).
+      expect(() =>
+        jc.restoreState({
+          jumpBufferRemaining: config.jumpBufferTime + 0.5,
+          coyoteRemaining: config.coyoteTime,
+        }),
+      ).toThrow(RangeError);
+
+      // All-or-nothing: the controller keeps its pre-restore values exactly.
+      expect(jc.captureState()).toEqual(before);
     });
   });
 
