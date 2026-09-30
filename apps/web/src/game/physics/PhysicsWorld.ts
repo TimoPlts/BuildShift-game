@@ -182,6 +182,29 @@ export class PhysicsWorld {
     return { x: t.x, y: t.y, z: t.z };
   }
 
+  /**
+   * Restores the character's capsule-centre position to `position` (plain
+   * world x/y/z). Used by prediction reconciliation to snap the local body to
+   * a checkpoint / authoritative position without rebuilding anything.
+   *
+   * - Sets the kinematic body translation directly; the character controller
+   *   and arena colliders are left untouched and NOT rebuilt.
+   * - {@link getPosition} immediately reflects the restored position.
+   * - The trailing `world.step()` propagates the new translation to the
+   *   collider (mirroring {@link step}), so the next normal `step()` — and any
+   *   collision queries — continue correctly from the restored position.
+   */
+  public setPosition(position: Readonly<Translation3>): void {
+    if (this.disposed) {
+      return;
+    }
+    this.characterBody.setTranslation(
+      { x: position.x, y: position.y, z: position.z },
+      true,
+    );
+    this.world.step();
+  }
+
   public dispose(): void {
     if (this.disposed) {
       return;
