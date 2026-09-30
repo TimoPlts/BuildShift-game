@@ -1,4 +1,4 @@
-import type { JumpControllerConfig } from "./types.js";
+import type { JumpControllerConfig, JumpControllerState } from "./types.js";
 
 /**
  * Pure jump-input timing state machine.
@@ -41,6 +41,83 @@ export class JumpController {
   public reset(): void {
     this.jumpBufferRemaining = 0;
     this.coyoteRemaining = 0;
+  }
+
+  /**
+   * Captures the controller's deterministic timing state as a plain-data value.
+   *
+   * The returned object is a fresh copy: mutating it has no effect on the
+   * controller, and it retains no reference to the controller's internals.
+   * Use it together with {@link restoreState} to roll the controller back to
+   * an earlier simulation point (client prediction reconciliation).
+   */
+  public captureState(): JumpControllerState {
+    return {
+      jumpBufferRemaining: this.jumpBufferRemaining,
+      coyoteRemaining: this.coyoteRemaining,
+    };
+  }
+
+  /**
+   * Restores deterministic timing state previously produced by
+   * {@link captureState}, exactly.
+   *
+   * The argument is read by value; the controller does not retain a reference
+   * to it, so later mutation by the caller cannot influence the controller.
+   *
+   * Both fields are validated against the controller's configured bounds, so a
+   * value a healthy controller can never hold is rejected:
+   *
+   *   0 <= jumpBufferRemaining <= config.jumpBufferTime
+   *   0 <= coyoteRemaining <= config.coyoteTime
+   *
+   * @throws RangeError if either field is not a finite, non-negative number
+   *   within its configured maximum — restoring an impossible state would
+   *   silently corrupt the timing model.
+   */
+  public restoreState(state: Readonly<JumpControllerState>): void {
+    // Validate both fields before mutating anything, so an invalid snapshot
+    // leaves the controller exactly as it was (all-or-nothing).
+    const jumpBufferRemaining = this.validateRemaining(
+      state.jumpBufferRemaining,
+      "jumpBufferRemaining",
+      this.config.jumpBufferTime,
+    );
+    const coyoteRemaining = this.validateRemaining(
+      state.coyoteRemaining,
+      "coyoteRemaining",
+      this.config.coyoteTime,
+    );
+    this.jumpBufferRemaining = jumpBufferRemaining;
+    this.coyoteRemaining = coyoteRemaining;
+  }
+
+  /**
+   * Validates a remaining-time value against the documented controller
+   * invariant `0 <= value <= max`. Rejects values a healthy controller can
+   * never hold: NaN, ±Infinity, negatives, and anything above the configured
+   * maximum. Returns the (guaranteed sane) number.
+   */
+  private validateRemaining(value: number, field: string, max: number): number {
+    if (Number.isNaN(value)) {
+      throw new RangeError(`JumpControllerState.${field} must be a number, got NaN`);
+    }
+    if (!Number.isFinite(value)) {
+      throw new RangeError(
+        `JumpControllerState.${field} must be finite, got ${value}`,
+      );
+    }
+    if (value < 0) {
+      throw new RangeError(
+        `JumpControllerState.${field} must be non-negative, got ${value}`,
+      );
+    }
+    if (value > max) {
+      throw new RangeError(
+        `JumpControllerState.${field} must be <= ${max} (${field} max), got ${value}`,
+      );
+    }
+    return value;
   }
 
   /**

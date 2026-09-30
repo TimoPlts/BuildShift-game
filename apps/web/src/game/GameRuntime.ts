@@ -3,14 +3,13 @@ import type { Scene } from "@babylonjs/core/scene";
 import { PHYSICS_TIMING } from "@buildshift/game-config";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
+import { PredictionOrchestrator } from "./network/predictionOrchestrator";
 import { PlayerController } from "./player/PlayerController";
-import { LiveInputSampler } from "./network/liveInputSampler";
 import { getFoundationNetwork } from "../network/networkInstance";
 import { createFoundationScene } from "./scene/createFoundationScene";
 
 /** Fixed physics timestep (s), from the shared config — 60 Hz. */
 const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
-
 /** Hard cap on a single frame's delta (s) — protects against stalled tabs. */
 const MAX_FRAME_DELTA_SECONDS = 0.1;
 /**
@@ -26,11 +25,16 @@ const MAX_FIXED_STEPS_PER_FRAME = 8;
  * Per-frame update order (avoids a one-frame lag between movement and
  * camera follow):
  *
- * 1. consume input (keyboard state + accumulated mouse delta)
- * 2. apply mouse look to the camera yaw/pitch
- * 3. poll one jump edge, update local physics, and sample live network intent
- * 4. update the camera position from the new player position
- * 5. render the scene
+ * 1. consume input (accumulated mouse delta) and apply it to the camera —
+ *    the visual camera always runs at render rate, never 30 Hz
+ * 2. fixed-step prediction in two-substep batches: at the first 1/60
+ *    substep of a batch capture ONE input sample (movement axes, yaw, pitch,
+ *    jump edge — each read once) and send it to the network exactly once;
+ *    both substeps then simulate with that same sample (second substep with
+ *    jumpPressed forced false), matching the server's "one PlayerInputFrame
+ *    = two 1/60 physics substeps" semantics
+ * 3. update the camera position from the new player position
+ * 4. render the scene
  */
 export class GameRuntime {
   private readonly engine: Engine;
@@ -38,7 +42,7 @@ export class GameRuntime {
   private readonly inputManager: InputManager;
   private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
-  private readonly liveInputSampler = new LiveInputSampler(2);
+  private readonly prediction: PredictionOrchestrator;
   private readonly foundationNetwork = getFoundationNetwork();
   private readonly unsubscribeInputCleared: () => void;
   private readonly renderFrame: () => void;
@@ -62,10 +66,7 @@ export class GameRuntime {
       let cameraController: ThirdPersonCameraController | undefined;
       try {
         cameraController = new ThirdPersonCameraController(scene);
-        const playerController = await PlayerController.create(
-          scene,
-          inputManager,
-        );
+        const playerController = await PlayerController.create(scene);
         return new GameRuntime(
           engine,
           scene,
@@ -97,53 +98,62 @@ export class GameRuntime {
     this.inputManager = inputManager;
     this.cameraController = cameraController;
     this.playerController = playerController;
+    // The orchestrator owns the batch bookkeeping for local prediction. Each
+    // substep it captures ONE sample (driving both local prediction and the
+    // single network frame) and simulates with the batch's explicit input —
+    // the same semantics the server applies to one PlayerInputFrame.
+    this.prediction = new PredictionOrchestrator({
+      captureInput: () => {
+        const movement = this.inputManager.getMovementInput();
+        return {
+          moveX: movement.x,
+          moveZ: movement.z,
+          lookYaw: this.cameraController.getYaw(),
+          lookPitch: this.cameraController.getPitch(),
+          jump: this.inputManager.pollJumpPressed(),
+        };
+      },
+      sendSample: (sample) =>
+        this.foundationNetwork.sendSequencedPlayerInput(sample),
+      simulateSubstep: (input) => this.playerController.update(FIXED_DT, input),
+    });
     this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
       this.handleInputCleared,
     );
 
     this.renderFrame = () => {
       if (!this.scene.isDisposed) {
+        // 1. Camera look (consumed once per frame, independent of physics).
+        // The visual third-person camera keeps updating every render frame;
+        // only movement *prediction* is sampled at 30 Hz (per batch).
+        const lookDelta = this.inputManager.consumeLookDelta();
+        this.cameraController.applyLook(lookDelta.x, lookDelta.y);
+
+        // 2. Fixed-step prediction: advance the character by whole 60 Hz
+        // substeps, batched two per input sample (30 Hz cadence) so the local
+        // prediction matches the server's authoritative semantics exactly —
+        // one PlayerInputFrame feeds two 1/60 substeps.
         const deltaSeconds = Math.min(
           Math.max(this.engine.getDeltaTime() / 1000, 0),
           MAX_FRAME_DELTA_SECONDS,
         );
-
-        // 1. Camera look (consumed once per frame, independent of physics).
-        const lookDelta = this.inputManager.consumeLookDelta();
-        this.cameraController.applyLook(lookDelta.x, lookDelta.y);
-        const cameraYaw = this.cameraController.getYaw();
-
-        // 2. Fixed-step physics: advance the character by whole 60 Hz steps,
-        //    decoupling physics from the variable render rate for deterministic
-        //    collision / gravity / jump behaviour. The raw jump edge is polled
-        //    once here and shared by local simulation and network sampling.
-        //    The shared JumpController guarantees a single launch per press
-        //    (buffer + coyote), so no double jump is possible even if the
-        //    accumulator advances several steps in one frame.
         this.accumulator += deltaSeconds;
         let steps = 0;
         while (
           this.accumulator >= FIXED_DT &&
           steps < MAX_FIXED_STEPS_PER_FRAME
         ) {
-          const jumpPressed = this.inputManager.pollJumpPressed();
-          this.playerController.update(FIXED_DT, cameraYaw, jumpPressed);
-          const liveSample = this.liveInputSampler.observeFixedStep(
-            jumpPressed,
-            this.inputManager.getMovementInput(),
-            cameraYaw,
-            this.cameraController.getPitch(),
-          );
-          if (liveSample !== null) {
-            this.foundationNetwork.sendSequencedPlayerInput(liveSample);
-          }
+          this.prediction.stepSubstep();
           this.accumulator -= FIXED_DT;
           steps += 1;
         }
         if (steps >= MAX_FIXED_STEPS_PER_FRAME) {
           // Spiral-of-death guard: drop the un-simulated remainder so a long
-          // hitch can't stall the render loop.
+          // hitch can't stall the render loop. Any half-finished batch is
+          // discarded so the next substep starts a fresh capture — no stale
+          // sample survives the hitch.
           this.accumulator = 0;
+          this.prediction.resetBatch();
         }
 
         // 3. Camera follows the character's feet (centre - half height).
@@ -161,11 +171,16 @@ export class GameRuntime {
   /**
    * Clear local buffered state and stop authoritative held movement without
    * waiting for another render/fixed step (hidden tabs may throttle both).
+   *
+   * The player's jump state (buffer + coyote) and the prediction batch are
+   * both reset synchronously, then one neutral authoritative intent is sent
+   * so the server stops applying the last held movement. After the reset the
+   * next physics substep starts a FRESH prediction batch — no stale sample
+   * survives.
    */
   private readonly handleInputCleared = (): void => {
     this.playerController.resetJumpState();
-    this.liveInputSampler.reset();
-    this.foundationNetwork.sendSequencedPlayerInput({
+    this.prediction.clearAndSendNeutral({
       moveX: 0,
       moveZ: 0,
       lookYaw: this.cameraController.getYaw(),
