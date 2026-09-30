@@ -168,6 +168,15 @@ export class GameRuntime {
         this.foundationNetwork.getUiState(),
       );
     });
+    // Prime the coordinator with the CURRENT UI state. `subscribe` only fires
+    // on FUTURE changes, so an already-connected / already-in-session network
+    // (the FoundationNetwork is page-lifetime and may have joined before the
+    // runtime was constructed) would otherwise be missed until the next state
+    // change. Feeding the snapshot once here establishes the initial session
+    // (and a fresh engine) up front.
+    this.reconciliationCoordinator.onNetworkState(
+      this.foundationNetwork.getUiState(),
+    );
 
     this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
       this.handleInputCleared,
