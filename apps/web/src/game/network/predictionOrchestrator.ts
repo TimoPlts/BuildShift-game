@@ -31,19 +31,18 @@ export interface PredictionOrchestratorDeps {
   /**
    * The prediction history a completed batch's checkpoint is recorded into.
    * Injected (not instantiated) so the orchestrator stays browser-independent
-   * and unit-testable. Optional so the existing `GameRuntime` construction
-   * (which supplies only the three original seams) still compiles unchanged;
-   * Stage 2C2B-4 wires the real instance there. When absent, completed batches
-   * are simply not recorded.
+   * and unit-testable. The runtime owns the single shared instance and passes
+   * it here, so completed successfully-sent batches are ALWAYS recorded —
+   * this seam can no longer be omitted silently.
    */
-  history?: PredictionHistory;
+  history: PredictionHistory;
   /**
    * Capture the local player's prediction state as a value copy. Called exactly
    * once per COMPLETED two-substep batch (after substep B), and only when the
    * batch's send returned a sequence. In the runtime this is
-   * `PlayerController.capturePredictionState()`. Optional (see `history`).
+   * `PlayerController.capturePredictionState()`.
    */
-  capturePredictionState?(): PredictionState;
+  capturePredictionState(): PredictionState;
 }
 
 /**
@@ -108,12 +107,16 @@ export class PredictionOrchestrator {
     // active, so nothing is recorded yet (the sequence is retained for substep
     // B). A null send (disconnected) never records.
     if (!this.batcher.hasActiveBatch()) {
-      // Record ONLY when a real sequence was assigned AND the history / capture
-      // seams are wired (Stage 2C2B-4 provides them from the real PlayerController).
-      const history = this.deps.history;
-      const capture = this.deps.capturePredictionState;
-      if (batchSequence !== null && history && capture) {
-        history.append(batchSequence, batchSample, capture());
+      // Record ONLY when a real sequence was assigned (a null send means the
+      // connection is down, so there is nothing the server can acknowledge).
+      // The history + capture seams are required, so a completed successfully-
+      // sent batch is always checkpointed.
+      if (batchSequence !== null) {
+        this.deps.history.append(
+          batchSequence,
+          batchSample,
+          this.deps.capturePredictionState(),
+        );
       }
       this.activeSequence = null;
     }
