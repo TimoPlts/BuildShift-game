@@ -8,8 +8,5 @@
  * import { TwoPlayerClient, type TwoPlayerClientOptions } from "@/network/twoPlayer";
  * ```
  */
-export {
-  TwoPlayerClient,
-  TWO_PLAYER_ROOM_NAME,
-  type TwoPlayerClientOptions,
-} from "../network/twoPlayer/TwoPlayerClient";
+export { TwoPlayerClient, TWO_PLAYER_ROOM_NAME } from "../network/twoPlayer/TwoPlayerClient";
+export type { TwoPlayerClientOptions } from "../network/twoPlayer/TwoPlayerClient";

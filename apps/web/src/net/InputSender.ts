@@ -8,9 +8,5 @@
  * import { InputSender, type InputSample, type BufferedInput } from "@/network/twoPlayer";
  * ```
  */
-export {
-  InputSender,
-  INPUT_BUFFER_SIZE,
-  type InputSample,
-  type BufferedInput,
-} from "../network/twoPlayer/InputSender";
+export { InputSender, INPUT_BUFFER_SIZE } from "../network/twoPlayer/InputSender";
+export type { InputSample, BufferedInput } from "../network/twoPlayer/InputSender";
