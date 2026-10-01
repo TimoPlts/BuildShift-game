@@ -26,9 +26,9 @@ function fwd(overrides: Partial<{ moveX: number; moveZ: number; yaw: number; pit
   return { moveX: 0, moveZ: -1, yaw: 0, pitch: 0, jump: false, crouch: false, ...overrides };
 }
 
-function buf(seq: number, overrides: Partial<{ moveX: number; moveZ: number; yaw: number; pitch: number; jump: boolean; crouch: boolean }> = {}): BufferedInput {
+function buf(seq: number, overrides: Partial<{ moveX: number; moveZ: number; lookYaw: number; lookPitch: number; jump: boolean; crouch: boolean }> = {}): BufferedInput {
   return {
-    input: { sequence: seq, moveX: 0, moveZ: -1, yaw: 0, pitch: 0, jump: false, crouch: false, ...overrides },
+    input: { sequence: seq, moveX: 0, moveZ: -1, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false, ...overrides },
     predictedX: 0, predictedY: 0, predictedZ: 0,
     predictedVelocityY: 0, predictedGrounded: true,
   };

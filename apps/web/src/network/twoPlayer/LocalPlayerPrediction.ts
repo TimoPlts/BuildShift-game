@@ -208,7 +208,7 @@ export class LocalPlayerPrediction {
       if (entry.input.sequence <= ack) continue;
       const worldInput = movementInputToWorld(
         { x: entry.input.moveX, z: entry.input.moveZ },
-        entry.input.yaw,
+        entry.input.lookYaw,
       );
       this.state = stepFullMovement(
         this.state,
