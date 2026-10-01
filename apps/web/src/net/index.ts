@@ -1,4 +1,6 @@
 /**
- * @deprecated This directory has been consolidated into `@/network/twoPlayer`.
- * This file is intentionally empty. Import directly from `@/network/twoPlayer` instead.
+ * @deprecated This module is a pure re-export from the canonical
+ * `network/twoPlayer/` layer. Import directly from `@/network/twoPlayer`
+ * in new code.
  */
+export * from "../network/twoPlayer/";
