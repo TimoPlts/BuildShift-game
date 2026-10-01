@@ -1,22 +1,30 @@
 /**
- * @deprecated Legacy barrel for the old `net/` module.
+ * @deprecated This module is a thin re-export barrel for backward compatibility.
  *
- * The canonical two-player networking layer lives in `@/network/twoPlayer`.
- * This barrel exists only so that any lingering `import ... from "@/net"`
- * or `import ... from "../net"` call-sites continue to resolve.
+ * The canonical implementation lives in `@/network/twoPlayer`.
+ * Import directly from there instead:
  *
- * New code MUST import directly from `@/network/twoPlayer`.
+ * ```ts
+ * import { TwoPlayerClient, InputSender, LocalPlayerPrediction } from "@/network/twoPlayer";
+ * ```
  */
-export { TwoPlayerClient, TWO_PLAYER_ROOM_NAME } from "./ConnectionManager";
-export type { TwoPlayerClientOptions } from "./ConnectionManager";
+export {
+  TwoPlayerClient,
+  TWO_PLAYER_ROOM_NAME,
+  type TwoPlayerClientOptions,
+} from "../network/twoPlayer";
 
-export { InputSender, INPUT_BUFFER_SIZE } from "./InputSender";
-export type { InputSample, BufferedInput } from "./InputSender";
+export {
+  InputSender,
+  INPUT_BUFFER_SIZE,
+  type InputSample,
+  type BufferedInput,
+} from "../network/twoPlayer";
 
 export {
   LocalPlayerPrediction,
   SIMULATION_TICK_SECONDS,
   CORRECTION_SNAP_THRESHOLD,
   CORRECTION_SMOOTH_FRAMES,
-} from "./LocalPlayerPredictor";
-export type { PredictedState } from "./LocalPlayerPredictor";
+  type PredictedState,
+} from "../network/twoPlayer";
