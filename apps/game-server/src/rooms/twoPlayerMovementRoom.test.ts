@@ -141,7 +141,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
   }, 20_000);
 
-  // ─── Test 1: Two players can join and their states appear ─────────────
+  // ─── Test 1: Two players can join and their states appear ─────────────────────
 
   it("two players can join and their states appear in the room state", async () => {
     // Wait until both players are visible in both clients' state.
@@ -176,7 +176,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(playerB.velocityY).toBeCloseTo(0, 2);
   });
 
-  // ─── Test 2: Sending a valid input updates position after a tick ─────
+  // ─── Test 2: Sending a valid input updates position after a tick ──────────────
 
   it("sending a valid input updates the player's position after a tick", async () => {
     // Record A's current position.
@@ -214,7 +214,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     // So z should decrease.
     expect(aAfter.z).toBeLessThan(zBefore);
     // The player's sequence was updated.
-    expect(aAfter.lastInputSequence).toBe(0);
+    expect(aAfter.lastProcessedSequence).toBe(0);
 
     // Player B's position did NOT change (B sent nothing).
     const bAfter = playerFromState(roomA.state, roomB.sessionId);
@@ -222,7 +222,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(bAfter.z).toBeCloseTo(0, 1);
   });
 
-  // ─── Test 3: Out-of-order (lower sequence) input is rejected ─────────
+  // ─── Test 3: Out-of-order (lower sequence) input is rejected ─────────────────
 
   it("sending an out-of-order (lower sequence) input is rejected (position unchanged)", async () => {
     // First, send a valid input with sequence 1 to advance A's position.
@@ -244,7 +244,7 @@ describe("Stage 2D canonical two-player movement room", () => {
       roomA,
       (s) => {
         const p = playerFromState(s, roomA.sessionId);
-        return p && p.lastInputSequence >= 1;
+        return p && p.lastProcessedSequence >= 1;
       },
       3_000,
     );
@@ -273,9 +273,9 @@ describe("Stage 2D canonical two-player movement room", () => {
     // Wait a few ticks to ensure the rejected input had a chance to be processed.
     await waitMs(200);
 
-    // The player's lastInputSequence should still be 1 (not rolled back to 0).
+    // The player's lastProcessedSequence should still be 1 (not rolled back to 0).
     const aAfterRejected = playerFromState(roomA.state, roomA.sessionId);
-    expect(aAfterRejected.lastInputSequence).toBe(1);
+    expect(aAfterRejected.lastProcessedSequence).toBe(1);
 
     // Position should be nearly the same as when sequence 1 was processed.
     // (The neutral-input ticks between the seq-1 tick and now advance the
@@ -286,7 +286,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(Math.abs(aAfterRejected.z - zAtSeq1)).toBeLessThan(0.1);
   });
 
-  // ─── Test 4: A player leaving removes their state ─────────────────────
+  // ─── Test 4: A player leaving removes their state ─────────────────────────────
 
   it("a player leaving removes their state", async () => {
     // Before B leaves, A should see both players.

@@ -10,7 +10,7 @@
  *    and calls `predict()` to advance the local predicted state.
  * 2. When a server state patch arrives for the local player, `onServerState()`
  *    is called:
- *      a. Find the server-processed sequence (lastInputSequence).
+ *      a. Find the server-processed sequence (lastProcessedSequence).
  *      b. Discard all buffered inputs with sequence <= server sequence.
  *      c. Reset local predicted position/velocity to the server's authoritative
  *         values.
