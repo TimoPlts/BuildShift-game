@@ -19,6 +19,12 @@
  * Stage 2D (consolidated) introduces the canonical two-player multiplayer
  * movement contract: `PlayerNetworkInput`, `PlayerNetworkState`,
  * `GameStateSchema`, and the `GAME_MODES` / `GameModeId` identifiers.
+ *
+ * The first combat milestone adds the server-authoritative hitscan contract:
+ * the `PlayerInput` per-tick input payload, the combat `EVENTS`
+ * (`HIT` / `ELIMINATED` / `HEALTH_UPDATE`) and the `HitEventPayload` message
+ * type, and the authoritative `health` / `alive` fields on
+ * `PlayerStateSchema`.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -32,6 +38,8 @@ export {
   type PlayerNetworkInput,
   PLAYER_NETWORK_INPUT_LIMITS,
 } from "./inputs/playerNetworkInput.js";
+
+export { type PlayerInput } from "./inputs/playerInput.js";
 
 export {
   type ProtocolValidation,
@@ -49,9 +57,14 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-export { EVENTS, type EventName } from "./messages/events.js";
+// ─── Event identifiers + combat payloads (single source of truth) ────────
+export {
+  EVENTS,
+  type EventName,
+  type HitEventPayload,
+} from "./events/index.js";
 
-// ───── Stage 2D: Colyseus wire schemas ─────────────────────────────────────
+// ─── Stage 2D: Colyseus wire schemas ───────────────────────────────────────
 
 export {
   PlayerStateSchema,
@@ -61,7 +74,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ───── Stage 2D (consolidated): canonical movement contract ────────────────
+// ─── Stage 2D (consolidated): canonical movement contract ─────────────────
 
 export {
   type PlayerNetworkState,
