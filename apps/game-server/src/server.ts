@@ -19,8 +19,9 @@
  *
  * Stage 2D notes: the authoritative two-player movement room
  * (`TwoPlayerMovementRoom`) is registered under
- * `TWO_PLAYER_MOVEMENT_ROOM`. Its name and input message type live in the room
- * module so the entry point, clients, and tests share one identifier.
+ * `ROOMS.TWO_PLAYER_MOVEMENT`. Both room identifiers are sourced from the
+ * shared protocol contract so the entry point, clients, and tests share one
+ * identifier.
  *
  * Deliberately NOT implemented here (later stages): authentication,
  * reconnection policy, database/persistence. (Room capacity IS now expressed
@@ -33,10 +34,7 @@ import type { AddressInfo } from "node:net";
 import { ROOMS, type RoomType } from "@buildshift/protocol";
 
 import { FoundationRoom } from "./rooms/FoundationRoom.js";
-import {
-  TwoPlayerMovementRoom,
-  TWO_PLAYER_MOVEMENT_ROOM,
-} from "./rooms/TwoPlayerMovementRoom.js";
+import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
 
 export type GameServer = Server;
 
@@ -53,9 +51,10 @@ export const FOUNDATION_ROOM: RoomType = ROOMS.FOUNDATION;
 
 /**
  * The Stage 2D two-player authoritative movement room name (sourced from the
- * room module so client / entry point / tests agree on the identifier).
+ * shared protocol contract so client / entry point / tests agree on the
+ * identifier).
  */
-export const TWO_PLAYER_ROOM: string = TWO_PLAYER_MOVEMENT_ROOM;
+export const TWO_PLAYER_ROOM: RoomType = ROOMS.TWO_PLAYER_MOVEMENT;
 
 /**
  * Create a Colyseus server configured with the WebSocket transport and the
@@ -76,8 +75,8 @@ export function createServer(options: ServerOptions = {}): GameServer {
     transport,
     ...options,
   });
-  server.define(FOUNDATION_ROOM, FoundationRoom);
-  server.define(TWO_PLAYER_MOVEMENT_ROOM, TwoPlayerMovementRoom);
+  server.define(ROOMS.FOUNDATION, FoundationRoom);
+  server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
   return server;
 }
 
