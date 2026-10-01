@@ -31,7 +31,7 @@ describe("PlayerStateSchema", () => {
     p.yaw = Math.PI / 4;
     p.velocityY = 9.8;
     p.grounded = true;
-    p.lastInputSequence = 42;
+    p.lastProcessedSequence = 42;
 
     expect(p.x).toBe(1.5);
     expect(p.y).toBe(2.0);
@@ -39,13 +39,13 @@ describe("PlayerStateSchema", () => {
     expect(p.yaw).toBeCloseTo(Math.PI / 4);
     expect(p.velocityY).toBe(9.8);
     expect(p.grounded).toBe(true);
-    expect(p.lastInputSequence).toBe(42);
+    expect(p.lastProcessedSequence).toBe(42);
   });
 
-  it("supports the negative lastInputSequence sentinel (-1 = no input processed)", () => {
+  it("supports the negative lastProcessedSequence sentinel (-1 = no input processed)", () => {
     const p = new (PlayerStateSchema as any)() as PlayerStateSchemaInstance;
-    p.lastInputSequence = -1;
-    expect(p.lastInputSequence).toBe(-1);
+    p.lastProcessedSequence = -1;
+    expect(p.lastProcessedSequence).toBe(-1);
   });
 
   it("supports updating fields (simulating a server tick)", () => {
@@ -58,7 +58,7 @@ describe("PlayerStateSchema", () => {
     p.yaw = 0;
     p.velocityY = 0;
     p.grounded = true;
-    p.lastInputSequence = 0;
+    p.lastProcessedSequence = 0;
 
     // Simulate a jump
     p.velocityY = 12;
@@ -98,7 +98,7 @@ describe("RoomStateSchema", () => {
     playerA.yaw = Math.PI;
     playerA.velocityY = 0;
     playerA.grounded = true;
-    playerA.lastInputSequence = 0;
+    playerA.lastProcessedSequence = 0;
     room.players.set("session-a", playerA);
 
     // Simulate player B joining
@@ -109,7 +109,7 @@ describe("RoomStateSchema", () => {
     playerB.yaw = 0;
     playerB.velocityY = 9.8;
     playerB.grounded = false;
-    playerB.lastInputSequence = 7;
+    playerB.lastProcessedSequence = 7;
     room.players.set("session-b", playerB);
 
     // Verify both are present
@@ -158,17 +158,17 @@ describe("RoomStateSchema", () => {
     player.yaw = 0;
     player.velocityY = 0;
     player.grounded = true;
-    player.lastInputSequence = 0;
+    player.lastProcessedSequence = 0;
     room.players.set("s1", player);
 
     // Mutate through the stored reference
     player.x = 42;
-    player.lastInputSequence = 5;
+    player.lastProcessedSequence = 5;
 
     // Read back through the map — should reflect the mutation
     const retrieved = room.players.get("s1")!;
     expect(retrieved.x).toBe(42);
-    expect(retrieved.lastInputSequence).toBe(5);
+    expect(retrieved.lastProcessedSequence).toBe(5);
   });
 });
 

@@ -9,7 +9,7 @@
  * The server treats this as the authoritative input intent for one
  * simulation tick. The client predicts locally using the same
  * `@buildshift/simulation` step and reconciles when the authoritative
- * state (carrying `lastInputSequence`) arrives.
+ * state (carrying `lastProcessedSequence`) arrives.
  *
  * Conventions:
  *  - `moveX` / `moveZ` are normalised local movement axes in [-1, 1].

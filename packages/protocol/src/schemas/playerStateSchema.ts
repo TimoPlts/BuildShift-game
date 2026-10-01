@@ -14,9 +14,9 @@
  *  - velocityY     — vertical velocity in m/s (positive = upward). Used for
  *                    jump/fall rendering on remote clients.
  *  - grounded      — true when the character is in contact with the ground.
- *  - lastInputSequence — the highest input sequence the server has processed
- *                    for this player; used by the owning client for
- *                    reconciliation (re-apply inputs with sequence > this).
+ *  - lastProcessedSequence — the highest input sequence the server has
+ *                    authoritatively processed for this player; used by the
+ *                    owning client for reconciliation (rollback + replay).
  *
  * Coordinate convention matches `PlayerPositionSemantic` (capsule-centre)
  * and the shared `@buildshift/simulation` movement step.
@@ -38,11 +38,13 @@ export const PlayerStateSchema = schema(
     /** True when the character is grounded. */
     grounded: t.boolean(),
     /**
-     * Highest input sequence the server has authoritatively processed for
-     * this player. `-1` means no input has been processed yet. The client
-     * reconciles by re-applying local inputs with sequence > this value.
+     * Highest input sequence number the server has authoritatively processed
+     * for this player. The client uses this to determine which of its
+     * locally-buffered inputs have been acknowledged by the server so it can
+     * perform reconciliation (rollback + replay). `-1` means no input has
+     * been processed yet.
      */
-    lastInputSequence: t.number(),
+    lastProcessedSequence: t.number(),
   },
   "PlayerStateSchema",
 );

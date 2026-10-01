@@ -33,7 +33,7 @@
  *      - `moveX` / `moveZ` are clamped to [-1, 1];
  *      - `lookYaw` / `lookPitch` are clamped to [-π, π];
  *  - if valid, `stepPlayerMovement` advances the player and the player's
- *    `lastInputSequence` (wire: `sequence`) is updated.
+ *    `lastProcessedSequence` is updated.
  *
  * Spawn:
  *  - The first player to join spawns at x = -5, y = ground, z = 0.
@@ -228,7 +228,7 @@ export class TwoPlayerMovementRoom extends Room<{
     player.yaw = 0;
     player.velocityY = 0;
     player.grounded = true;
-    player.lastInputSequence = -1; // no input processed yet
+    player.lastProcessedSequence = -1; // no input processed yet
     this.state.players.set(client.sessionId, player);
 
     console.log(
@@ -278,11 +278,11 @@ export class TwoPlayerMovementRoom extends Room<{
 
       if (buffered !== undefined) {
         // Validate sequence: must be strictly greater than last processed.
-        if (buffered.sequence > player.lastInputSequence) {
+        if (buffered.sequence > player.lastProcessedSequence) {
           // Valid input — consume it and step the simulation.
           this.stepPlayer(player, buffered);
           // Update the player's processed sequence on the wire.
-          player.lastInputSequence = buffered.sequence;
+          player.lastProcessedSequence = buffered.sequence;
           // Clear the consumed input.
           this.inputBuffers.delete(sessionId);
         } else {
@@ -290,14 +290,14 @@ export class TwoPlayerMovementRoom extends Room<{
           // Position is unchanged; just clear the stale buffer.
           this.inputBuffers.delete(sessionId);
           console.warn(
-            `${LOG} rejected out-of-order input (sessionId=${sessionId}, seq=${buffered.sequence} <= last=${player.lastInputSequence})`,
+            `${LOG} rejected out-of-order input (sessionId=${sessionId}, seq=${buffered.sequence} <= last=${player.lastProcessedSequence})`,
           );
         }
       } else {
         // No buffered input: step with a neutral intent (no movement, no jump)
         // so gravity still integrates (keeps airborne players falling).
         this.stepPlayer(player, {
-          sequence: player.lastInputSequence,
+          sequence: player.lastProcessedSequence,
           moveX: 0,
           moveZ: 0,
           lookYaw: player.yaw,

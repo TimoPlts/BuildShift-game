@@ -321,12 +321,12 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
  * Parse one player entry from the schema into a ParsedPlayerState.
  *
  * NOTE: The server's PlayerStateSchema carries x, y, z, yaw, velocityY,
- * grounded, lastInputSequence. The PlayerNetworkState interface from
+ * grounded, lastProcessedSequence. The PlayerNetworkState interface from
  * @buildshift/protocol expects x, y, z, vx, vy, vz, sequence, yaw, pitch.
  * We map the schema fields to the network state fields:
  *   - vx, vz are not carried on the wire (schema only has velocityY)
  *     so they default to 0.
- *   - sequence maps from lastInputSequence.
+ *   - sequence maps from lastProcessedSequence.
  *   - pitch is not carried on the wire; defaults to 0.
  */
 function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
@@ -339,7 +339,7 @@ function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   const z = r.z;
   const yaw = r.yaw;
   const velocityY = r.velocityY;
-  const lastInputSequence = r.lastInputSequence;
+  const lastProcessedSequence = r.lastProcessedSequence;
 
   if (
     typeof x !== "number" ||
@@ -352,7 +352,7 @@ function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   }
 
   const sequence =
-    typeof lastInputSequence === "number" ? lastInputSequence : -1;
+    typeof lastProcessedSequence === "number" ? lastProcessedSequence : -1;
 
   return {
     x,

@@ -8,7 +8,7 @@
  *     client sessions join the canonical `TwoPlayerMovementRoom`.
  *  2. Client A sends a "move forward" input (moveZ = -1, yaw 0 → world -Z).
  *  3. Client B sends a "move right" input (moveX = 1, yaw 0 → world -X).
- *  4. We wait (via bounded polling on `lastInputSequence`) until both inputs
+ *  4. We wait (via bounded polling on `lastProcessedSequence`) until both inputs
  *     have been authoritatively processed.
  *  5. We assert that each client's state snapshot shows the correct
  *     independent displacement:
@@ -18,7 +18,7 @@
  *  6. Cleanup: both clients leave, server is shut down.
  *
  * Determinism:
- *  - We await the `lastInputSequence` field reaching the expected value
+ *  - We await the `lastProcessedSequence` field reaching the expected value
  *    (proving the server tick consumed the input) rather than sleeping for
  *    a fixed wall-clock duration.
  *  - A short additional bounded wait allows the state patch to propagate
@@ -43,9 +43,9 @@ import {
   TWO_PLAYER_MOVEMENT_INPUT,
 } from "./TwoPlayerMovementRoom.js";
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Helpers (same bounded-polling patterns as twoPlayerMovementRoom.test.ts)
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Bounded polling wait: resolves when the predicate holds or the deadline
@@ -120,9 +120,9 @@ async function withDeadline<T>(
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 // Test fixture
-// ──────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
 
 /** The expected per-tick displacement magnitude at 30 Hz with moveSpeed 6. */
 const DISPLACEMENT_PER_TICK = PLAYER_MOVEMENT.moveSpeed * (1 / 30); // 0.2 m
@@ -169,9 +169,9 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
   }, 20_000);
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // Setup: wait until both players are visible in both clients' state
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
 
   it("setup: both players appear in the room state at their spawn positions", async () => {
     // Wait until both players are visible in both clients' state.
@@ -206,12 +206,12 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     expect(playerB.grounded).toBe(true);
   });
 
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
   // Core test: both clients send distinct movement inputs simultaneously
-  // ──────────────────────────────────────────────────────────────────────────
+  // ─────────────────────────────────────────────────────────────────────────────
 
   it("each client receives an independent state snapshot reflecting its own movement", async () => {
-    // ── Send distinct movement inputs ──────────────────────────────────────
+    // ── Send distinct movement inputs ───────────────────────────────────────────
     //
     // Client A: "move forward" → moveZ = -1, lookYaw = 0
     //   World-space direction: (0, -1) → displacement in -Z
@@ -219,7 +219,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // Client B: "move right" → moveX = 1, lookYaw = 0
     //   World-space direction: (-1, 0) → displacement in -X
     //
-    // Both use sequence 0 (first input; lastInputSequence starts at -1).
+    // Both use sequence 0 (first input; lastProcessedSequence starts at -1).
 
     roomA.send(TWO_PLAYER_MOVEMENT_INPUT, {
       sequence: 0,
@@ -247,9 +247,9 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
       secondaryFire: false,
     });
 
-    // ── Wait until both inputs have been authoritatively processed ─────────
+    // ── Wait until both inputs have been authoritatively processed ──────────────
     //
-    // `lastInputSequence` is written to the wire schema on the tick that
+    // `lastProcessedSequence` is written to the wire schema on the tick that
     // consumes the input. When both reach 0, the server has stepped both
     // players with their respective movement inputs.
 
@@ -257,7 +257,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
       roomA,
       (s) => {
         const p = playerFromState(s, roomA.sessionId);
-        return p && p.lastInputSequence >= 0;
+        return p && p.lastProcessedSequence >= 0;
       },
       5_000,
     );
@@ -265,20 +265,20 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
       roomB,
       (s) => {
         const p = playerFromState(s, roomB.sessionId);
-        return p && p.lastInputSequence >= 0;
+        return p && p.lastProcessedSequence >= 0;
       },
       5_000,
     );
 
-    // ── Allow one additional patch cycle for positions to settle ──────────
+    // ── Allow one additional patch cycle for positions to settle ────────────────
     //
-    // The `lastInputSequence` is updated in the same tick as the position,
+    // The `lastProcessedSequence` is updated in the same tick as the position,
     // but the Colyseus state patch carrying the position change may arrive
     // one micro-tick after the one carrying the sequence update. A short
     // bounded wait ensures both fields are consistently visible.
     await waitMs(100);
 
-    // ── Assert independent state snapshots ─────────────────────────────────
+    // ── Assert independent state snapshots ─────────────────────────────────────
 
     // Read each client's view of the room state.
     const aInAState = playerFromState(roomA.state, roomA.sessionId);
@@ -286,9 +286,9 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     const aInBState = playerFromState(roomB.state, roomA.sessionId);
     const bInBState = playerFromState(roomB.state, roomB.sessionId);
 
-    // ── Client A's own snapshot: moved forward in -Z, X unchanged ─────────
+    // ── Client A's own snapshot: moved forward in -Z, X unchanged ──────────────
     expect(aInAState).toBeDefined();
-    expect(aInAState.lastInputSequence).toBe(0);
+    expect(aInAState.lastProcessedSequence).toBe(0);
 
     // A moved forward: z decreased by approximately DISPLACEMENT_PER_TICK.
     // The exact value depends on how many ticks the server ran between
@@ -304,9 +304,9 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // A did NOT move in the X direction (its input had moveX=0).
     expect(Math.abs(aInAState.x - (-5))).toBeLessThan(0.1);
 
-    // ── Client B's own snapshot: moved right in -X, Z unchanged ───────────
+    // ── Client B's own snapshot: moved right in -X, Z unchanged ────────────────
     expect(bInBState).toBeDefined();
-    expect(bInBState.lastInputSequence).toBe(0);
+    expect(bInBState.lastProcessedSequence).toBe(0);
 
     // B moved right: x decreased (toward 0) by approximately
     // DISPLACEMENT_PER_TICK per tick of input.
@@ -316,7 +316,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // B did NOT move in the Z direction (its input had moveZ=0).
     expect(Math.abs(bInBState.z)).toBeLessThan(0.1);
 
-    // ── Both clients see the same authoritative state (consistency) ──────
+    // ── Both clients see the same authoritative state (consistency) ────────────
     //
     // Client A's view of player A should match client B's view of player A,
     // and vice versa. Both clients receive the same Colyseus state patch.
@@ -326,7 +326,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     expect(bInAState.x).toBeCloseTo(bInBState.x, 2);
     expect(bInAState.z).toBeCloseTo(bInBState.z, 2);
 
-    // ── Independence: A's position ≠ B's position ─────────────────────────
+    // ── Independence: A's position ≠ B's position ──────────────────────────────
     //
     // The two players occupy distinct positions, proving the server
     // tracked them independently and the snapshots are per-player.
