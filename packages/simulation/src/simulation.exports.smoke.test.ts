@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   SIMULATION_VERSION,
   integrateVerticalMovement,
+  stepFullMovement,
   stepHorizontalMovement,
+  stepVerticalState,
 } from "./index.js";
 
 /**
@@ -19,5 +21,13 @@ describe("simulation public exports", () => {
 
   it("exposes integrateVerticalMovement as a defined function", () => {
     expect(typeof integrateVerticalMovement).toBe("function");
+  });
+
+  it("exposes stepFullMovement as a defined function", () => {
+    expect(typeof stepFullMovement).toBe("function");
+  });
+
+  it("exposes stepVerticalState (full-state vertical step) as a defined function", () => {
+    expect(typeof stepVerticalState).toBe("function");
   });
 });
