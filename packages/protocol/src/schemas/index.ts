@@ -1,5 +1,6 @@
 /**
- * Barrel export for the Colyseus wire schemas and movement input types.
+ * Barrel export for the Colyseus wire schemas, movement input types, and
+ * the canonical plain-TypeScript network state contracts.
  *
  * These are the shared wire types for the Stage 2D two-player movement
  * room. Both the authoritative server (`apps/game-server`) and the client
@@ -16,3 +17,9 @@ export {
   RoomStateSchema,
   type RoomStateSchemaInstance,
 } from "./roomStateSchema.js";
+
+// ─── Canonical plain-TypeScript network contracts ──────────────────────
+
+export { type PlayerNetworkState } from "./playerNetworkState.js";
+
+export { type GameStateSchema } from "./gameStateSchema.js";

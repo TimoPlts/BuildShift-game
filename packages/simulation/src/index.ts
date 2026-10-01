@@ -21,6 +21,16 @@ export { stepFullMovement } from "./movement/verticalMovement.js";
 // legacy velocity-only `stepVerticalMovement` (kept for the existing
 // game-server / web-app integrations).
 export { stepVerticalMovement as stepVerticalState } from "./movement/verticalMovement.js";
+
+// ─── Canonical player movement step (Stage 2D consolidated) ───────────
+
+export {
+  stepPlayerMovement,
+  type PlayerMovementState,
+  type PlayerMovementInput,
+  type PlayerMovementConfig,
+} from "./movement/stepPlayerMovement.js";
+
 export type {
   FullMovementState,
   HorizontalMovementConfig,
@@ -41,7 +51,7 @@ export type {
  * Version of the simulation rules. Client and server must stay synchronized on
  * this (see docs/TECHNICAL_ARCHITECTURE.md §18 "Physics and Prediction Rule").
  */
-export const SIMULATION_VERSION = "0.1.0" as const;
+export const SIMULATION_VERSION = "0.2.0" as const;
 
 /**
  * Resolves the shared game-config version used by the simulation.
