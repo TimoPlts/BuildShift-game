@@ -11,7 +11,8 @@ import type { VerticalMovementConfig } from "./types.js";
  * only for the grounded downward-velocity clamp.
  *
  * Rules:
- * - When a jump launches this step, the velocity starts at `jumpSpeed`.
+ * - When a jump launches this step, the velocity starts at the configured
+ *   jump velocity (`jumpVelocity` preferred, `jumpSpeed` as legacy fallback).
  * - Gravity is then integrated: `verticalVelocity += gravity * deltaSeconds`.
  * - A grounded character never accumulates downward velocity into the floor,
  *   so standing still reads as `verticalVelocity = 0`.
@@ -30,7 +31,7 @@ export function stepVerticalMovement(
   let velocity = verticalVelocity;
 
   if (jumpRequested) {
-    velocity = config.jumpSpeed;
+    velocity = config.jumpVelocity ?? config.jumpSpeed ?? 0;
   }
 
   velocity += config.gravity * deltaSeconds;
