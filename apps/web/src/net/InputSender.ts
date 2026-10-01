@@ -1,11 +1,16 @@
 /**
- * @deprecated This module has been consolidated into
- * `apps/web/src/network/twoPlayer/`. Use {@link InputSender} from
- * `@/network/twoPlayer` instead.
+ * @deprecated This module is a thin re-export for backward compatibility.
  *
- * The old `InputSender` sent sequenced `MovementInput` frames with a
- * fixed-size ring buffer. The canonical version in `network/twoPlayer`
- * additionally stores predicted state alongside each input for
- * reconciliation and supports `pruneUpTo` for efficient acknowledgement.
+ * The canonical implementation lives in `@/network/twoPlayer`.
+ * Import directly from there instead:
+ *
+ * ```ts
+ * import { InputSender, type InputSample, type BufferedInput } from "@/network/twoPlayer";
+ * ```
  */
-export {};
+export {
+  InputSender,
+  INPUT_BUFFER_SIZE,
+  type InputSample,
+  type BufferedInput,
+} from "../network/twoPlayer/InputSender";

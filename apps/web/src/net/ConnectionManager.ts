@@ -1,11 +1,15 @@
 /**
- * @deprecated This module has been consolidated into
- * `apps/web/src/network/twoPlayer/`. Use {@link TwoPlayerClient} from
- * `@/network/twoPlayer` instead.
+ * @deprecated This module is a thin re-export for backward compatibility.
  *
- * The old `ConnectionManager` provided Colyseus connection lifecycle
- * management. That responsibility is now handled by `TwoPlayerClient`,
- * which additionally parses room state and exposes a stable
- * `onStateChange` / `onConnectionChange` API.
+ * The canonical implementation lives in `@/network/twoPlayer` as
+ * `TwoPlayerClient`. Import directly from there instead:
+ *
+ * ```ts
+ * import { TwoPlayerClient, type TwoPlayerClientOptions } from "@/network/twoPlayer";
+ * ```
  */
-export {};
+export {
+  TwoPlayerClient,
+  TWO_PLAYER_ROOM_NAME,
+  type TwoPlayerClientOptions,
+} from "../network/twoPlayer/TwoPlayerClient";
