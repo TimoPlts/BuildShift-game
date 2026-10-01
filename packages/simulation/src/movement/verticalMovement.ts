@@ -20,8 +20,9 @@ import { stepHorizontalMovement } from "./stepHorizontalMovement.js";
  *
  * Rules (in order):
  * 1. Jump launch: if `input.jump` is true AND the entity is grounded,
- *    set `velocityY = config.jumpVelocity` (or `config.jumpSpeed` fallback)
- *    and mark the entity as airborne.
+ *    set `velocityY` to the configured jump velocity (`jumpVelocity`
+ *    preferred, `jumpSpeed` as legacy fallback) and mark the entity
+ *    as airborne.
  * 2. Apply gravity: `velocityY += config.gravity * deltaSeconds`.
  * 3. Terminal-velocity clamp: if `velocityY < config.maxFallSpeed`,
  *    set `velocityY = config.maxFallSpeed`.
@@ -47,8 +48,10 @@ export function stepVerticalMovement(
   config: Readonly<VerticalMovementConfig>,
 ): VerticalStepResult {
   // Resolve config fields with sensible fallbacks for backward-compatible
-  // configs that only have `jumpSpeed` but not the newer optional fields.
-  const jumpVelocity = config.jumpVelocity ?? config.jumpSpeed;
+  // configs. `jumpVelocity` is the preferred name; `jumpSpeed` is the legacy
+  // alias. At least one should be provided; 0 is the safe default if neither
+  // is (effectively "no jump").
+  const jumpVelocity = config.jumpVelocity ?? config.jumpSpeed ?? 0;
   const maxFallSpeed = config.maxFallSpeed ?? -Infinity;
   const groundY = config.groundY ?? 0;
 

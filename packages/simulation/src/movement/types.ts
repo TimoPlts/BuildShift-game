@@ -22,17 +22,25 @@ export interface HorizontalMovementConfig {
 /**
  * Shared gravity / jump tuning for vertical movement.
  *
- * The first two fields (`gravity`, `jumpSpeed`) are required and used by the
- * legacy velocity-only `stepVerticalMovement`. The optional fields
- * (`jumpVelocity`, `maxFallSpeed`, `groundY`, `playerHalfHeight`) are used by
- * the full-state `stepVerticalMovement` in `verticalMovement.ts` and are
+ * The legacy velocity-only `stepVerticalMovement` historically required
+ * `jumpSpeed`. The full-state `stepVerticalMovement` in `verticalMovement.ts`
+ * introduced `jumpVelocity` as the preferred name. Both are now optional:
+ * callers must provide at least one, and the implementation resolves the
+ * effective jump velocity as `jumpVelocity ?? jumpSpeed`.
+ *
+ * The optional fields (`maxFallSpeed`, `groundY`, `playerHalfHeight`) are used
+ * by the full-state `stepVerticalMovement` in `verticalMovement.ts` and are
  * expected to be provided by the shared `VERTICAL_MOVEMENT` config.
  */
 export interface VerticalMovementConfig {
   /** Gravity acceleration in m/s² (negative = downward). */
   gravity: number;
-  /** Initial upward velocity applied on a grounded jump (legacy, m/s). */
-  jumpSpeed: number;
+  /**
+   * Initial upward velocity applied on a grounded jump (legacy name, m/s).
+   * Use `jumpVelocity` as the preferred field; this is kept for backward
+   * compatibility with configs that only have the legacy name.
+   */
+  jumpSpeed?: number;
   /** Initial upward velocity (preferred name for the full-state step, m/s). */
   jumpVelocity?: number;
   /** Terminal velocity clamp in m/s (negative = maximum downward speed). */
