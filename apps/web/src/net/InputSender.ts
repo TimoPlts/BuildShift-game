@@ -1,16 +1,10 @@
 /**
- * @deprecated This module is a thin re-export for backward compatibility.
+ * @deprecated This module has been consolidated into `@/network/twoPlayer`.
  *
- * The canonical implementation lives in `@/network/twoPlayer`.
- * Import directly from there instead:
+ * The canonical implementation is `InputSender`:
  *
  * ```ts
  * import { InputSender, type InputSample, type BufferedInput } from "@/network/twoPlayer";
  * ```
  */
-export {
-  InputSender,
-  INPUT_BUFFER_SIZE,
-  type InputSample,
-  type BufferedInput,
-} from "../network/twoPlayer/InputSender";
+export {};
