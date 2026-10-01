@@ -93,7 +93,9 @@ function isPureReExportStub(source: string): boolean {
 
   const canonicalPrefixes = [
     "../network/twoPlayer/",
+    "../network/twoPlayer",
     "../../network/twoPlayer/",
+    "../../network/twoPlayer",
     "@buildshift/protocol",
   ];
 
@@ -143,7 +145,7 @@ describe("apps/web/src/net/ consolidation audit", () => {
         isStub,
         `File "net/${file}" is NOT a pure re-export stub.\n` +
           `Contents after comment stripping:\n${stripComments(source).trim()}\n` +
-          `Expected only: export { ... } from "../network/twoPlayer/..." or "@buildshift/protocol"`,
+          `Expected only: export { ... } from "../network/twoPlayer" or "@buildshift/protocol"`,
       ).toBe(true);
     }
   });
@@ -184,6 +186,14 @@ describe("apps/web/src/net/ consolidation audit", () => {
       let resolvedPath: string;
       if (target.startsWith(".")) {
         resolvedPath = resolve(netDir, target);
+        // If the target is a directory (barrel), check for index.ts
+        if (
+          existsSync(resolvedPath) &&
+          existsSync(join(resolvedPath, "index.ts"))
+        ) {
+          // It's a directory with an index — valid barrel target
+          continue;
+        }
         // Append .ts if not present
         if (!resolvedPath.endsWith(".ts")) {
           resolvedPath += ".ts";

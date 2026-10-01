@@ -13,5 +13,5 @@ export {
   SIMULATION_TICK_SECONDS,
   CORRECTION_SNAP_THRESHOLD,
   CORRECTION_SMOOTH_FRAMES,
-} from "../network/twoPlayer/LocalPlayerPrediction";
-export type { PredictedState } from "../network/twoPlayer/LocalPlayerPrediction";
+  type PredictedState,
+} from "../network/twoPlayer";
