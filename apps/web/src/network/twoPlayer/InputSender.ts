@@ -1,20 +1,20 @@
 /**
- * InputSender — manages the local input sequence and sends MovementInput
+ * InputSender — manages the local input sequence and sends PlayerNetworkInput
  * frames to the server each simulation tick.
  *
  * Responsibilities:
  *  - Maintains a monotonically increasing sequence counter starting at 0.
  *  - Each simulation tick (30 Hz, aligned with the server), constructs a
- *    MovementInput from the captured input sample and sends it via the
+ *    PlayerNetworkInput from the captured input sample and sends it via the
  *    TwoPlayerClient.
  *  - Stores the sent input in a local ring buffer for reconciliation
  *    (re-applying unacknowledged inputs after a server correction).
  *
  * The InputSender is a pure networking concern: it reads a plain input
  * sample handed to it by the caller and converts it into a protocol
- * MovementInput. It does NOT read the browser keyboard or mouse directly.
+ * PlayerNetworkInput. It does NOT read the browser keyboard or mouse directly.
  */
-import type { MovementInput } from "@buildshift/protocol";
+import type { PlayerNetworkInput } from "@buildshift/protocol";
 import type { TwoPlayerClient } from "./TwoPlayerClient";
 
 /**
@@ -27,7 +27,7 @@ export const INPUT_BUFFER_SIZE = 30;
 /**
  * A plain input sample — the fields the caller captures from the input
  * system and hands to the sender each tick. The sender adds the sequence
- * to produce the full MovementInput.
+ * to produce the full PlayerNetworkInput.
  */
 export interface InputSample {
   /** Local movement X, normalised to [-1, 1] (+X is right). */
@@ -45,15 +45,17 @@ export interface InputSample {
 }
 
 /**
- * A buffered entry: the full MovementInput that was sent, plus the
+ * A buffered entry: the full PlayerNetworkInput that was sent, plus the
  * predicted state after applying it (for reconciliation comparison).
  */
 export interface BufferedInput {
-  /** The full MovementInput that was sent to the server. */
-  input: MovementInput;
+  /** The full PlayerNetworkInput that was sent to the server. */
+  input: PlayerNetworkInput;
   /** Predicted position after this input was applied (x, y, z). */
   predictedX: number;
+  /** Predicted Y after this input was applied. */
   predictedY: number;
+  /** Predicted Z after this input was applied. */
   predictedZ: number;
   /** Predicted vertical velocity after this input. */
   predictedVelocityY: number;
@@ -62,7 +64,7 @@ export interface BufferedInput {
 }
 
 /**
- * Sends sequenced MovementInput messages to the server and maintains a
+ * Sends sequenced PlayerNetworkInput messages to the server and maintains a
  * buffer of the last N sent inputs for reconciliation.
  */
 export class InputSender {
@@ -100,13 +102,13 @@ export class InputSender {
 
   /**
    * Capture an input sample, assign the next sequence, build the
-   * MovementInput, send it to the server, and store it in the buffer.
+   * PlayerNetworkInput, send it to the server, and store it in the buffer.
    *
    * @param sample the captured input (without sequence).
    * @param client the TwoPlayerClient to send through.
    * @param predictedState the predicted state after applying this input
    *        (captured by the caller right after prediction).
-   * @returns the full MovementInput that was sent (with sequence).
+   * @returns the full PlayerNetworkInput that was sent (with sequence).
    */
   public send(
     sample: InputSample,
@@ -118,15 +120,18 @@ export class InputSender {
       velocityY: number;
       grounded: boolean;
     },
-  ): MovementInput {
-    const input: MovementInput = {
+  ): PlayerNetworkInput {
+    const input: PlayerNetworkInput = {
       sequence: this.sequence,
       moveX: sample.moveX,
       moveZ: sample.moveZ,
-      yaw: sample.yaw,
-      pitch: sample.pitch,
+      lookYaw: sample.yaw,
+      lookPitch: sample.pitch,
       jump: sample.jump,
+      sprint: false,
       crouch: sample.crouch,
+      primaryFire: false,
+      secondaryFire: false,
     };
     this.sequence += 1;
 

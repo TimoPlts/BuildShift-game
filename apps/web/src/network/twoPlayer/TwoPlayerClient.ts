@@ -14,11 +14,11 @@
  *
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
- * RoomStateSchema and sends MovementInput messages.
+ * RoomStateSchema and sends PlayerNetworkInput messages.
  */
 import { Client } from "@colyseus/sdk";
 import type {
-  MovementInput,
+  PlayerNetworkInput,
   PlayerNetworkState,
 } from "@buildshift/protocol";
 import { resolveGameServerUrl } from "../colyseus/serverUrl";
@@ -82,7 +82,7 @@ export interface TwoPlayerClientOptions {
  * const client = new TwoPlayerClient({ serverUrl: "ws://localhost:2567" });
  * client.onStateChange((state) => { ... });
  * await client.start();
- * client.sendInput({ sequence: 0, moveX: 1, moveZ: 0, yaw: 0, pitch: 0, jump: false, crouch: false });
+ * client.sendInput({ sequence: 0, moveX: 1, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
  * // ... game loop ...
  * client.stop();
  * ```
@@ -156,10 +156,10 @@ export class TwoPlayerClient {
   }
 
   /**
-   * Send one MovementInput frame to the server.
+   * Send one PlayerNetworkInput frame to the server.
    * No-op when not connected. Returns true if the message was sent.
    */
-  public sendInput(input: MovementInput): boolean {
+  public sendInput(input: PlayerNetworkInput): boolean {
     if (!this.room || !this._isConnected) {
       return false;
     }
