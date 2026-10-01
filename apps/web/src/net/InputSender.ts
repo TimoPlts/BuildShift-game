@@ -13,4 +13,4 @@ export {
   INPUT_BUFFER_SIZE,
   type InputSample,
   type BufferedInput,
-} from "../network/twoPlayer/InputSender";
+} from "../network/twoPlayer";

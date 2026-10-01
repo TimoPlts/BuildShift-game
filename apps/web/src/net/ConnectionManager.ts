@@ -12,4 +12,4 @@ export {
   TwoPlayerClient,
   TWO_PLAYER_ROOM_NAME,
   type TwoPlayerClientOptions,
-} from "../network/twoPlayer/TwoPlayerClient";
+} from "../network/twoPlayer";

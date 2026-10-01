@@ -14,4 +14,4 @@ export {
   CORRECTION_SNAP_THRESHOLD,
   CORRECTION_SMOOTH_FRAMES,
   type PredictedState,
-} from "../network/twoPlayer/LocalPlayerPrediction";
+} from "../network/twoPlayer";
