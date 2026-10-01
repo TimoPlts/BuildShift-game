@@ -15,6 +15,7 @@ export interface LookDelta {
  * - keyboard state (WASD intent)
  * - accumulated pointer-lock mouse movement (look delta)
  * - pointer-lock lifecycle (request, release, listeners)
+ * - mouse button state (fire / left-click)
  *
  * Real gameplay input is only active while the canvas has pointer lock;
  * while unlocked, both movement and look report zero so the player cannot
@@ -42,8 +43,19 @@ export class InputManager {
   private readonly inputClearedListeners = new Set<() => void>();
   private disposed = false;
 
+  // ── Fire (left-mouse) state ────────────────────────────────────────────────
+  /** Whether the left mouse button is currently held down (while pointer-locked). */
+  private fireHeld = false;
+  /**
+   * Latched true when a left-mouse press edge is detected (pointer-locked).
+   * Consumed by {@link consumeFirePressed}. Cleared on input-clear events.
+   */
+  private firePressed = false;
+
   public constructor(private readonly canvas: HTMLCanvasElement) {
     canvas.addEventListener("click", this.requestPointerLock);
+    canvas.addEventListener("mousedown", this.handleMouseDown);
+    canvas.addEventListener("mouseup", this.handleMouseUp);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("blur", this.clearInput);
@@ -55,6 +67,11 @@ export class InputManager {
   /** True while the canvas currently has browser pointer lock. */
   public isPointerLocked(): boolean {
     return this.pointerLocked;
+  }
+
+  /** True while the left mouse button is currently held down (pointer-locked). */
+  public isFireHeld(): boolean {
+    return this.fireHeld;
   }
 
   /**
@@ -115,6 +132,20 @@ export class InputManager {
   public pollJumpPressed(): boolean {
     const wasPressed = this.jumpPressed;
     this.jumpPressed = false;
+    return wasPressed;
+  }
+
+  /**
+   * Returns true if the left mouse button was pressed (fire edge) since the
+   * last call, and clears the latch. Edge-triggered like the look delta.
+   *
+   * The edge is only latched while pointer lock is active, matching the
+   * behaviour of movement and jump. The latch is cleared on blur, visibility
+   * change, and pointer-lock release (via {@link clearInput}).
+   */
+  public consumeFirePressed(): boolean {
+    const wasPressed = this.firePressed;
+    this.firePressed = false;
     return wasPressed;
   }
 
@@ -183,6 +214,8 @@ export class InputManager {
     }
 
     this.canvas.removeEventListener("click", this.requestPointerLock);
+    this.canvas.removeEventListener("mousedown", this.handleMouseDown);
+    this.canvas.removeEventListener("mouseup", this.handleMouseUp);
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.clearInput);
@@ -225,6 +258,31 @@ export class InputManager {
     this.lookDelta.y += event.movementY;
   };
 
+  /**
+   * Left-mouse-down on the canvas. Latches the fire edge only while pointer
+   * lock is active, matching movement/jump behaviour.
+   */
+  private readonly handleMouseDown = (event: MouseEvent): void => {
+    if (event.button !== 0 || !this.pointerLocked) {
+      return;
+    }
+
+    this.fireHeld = true;
+    this.firePressed = true;
+  };
+
+  /**
+   * Left-mouse-up on the canvas. Clears the held state regardless of pointer
+   * lock so a stale "held" flag can never persist after unlock.
+   */
+  private readonly handleMouseUp = (event: MouseEvent): void => {
+    if (event.button !== 0) {
+      return;
+    }
+
+    this.fireHeld = false;
+  };
+
   private readonly handlePointerLockChange = (): void => {
     this.pointerLocked =
       document.pointerLockElement === this.canvas;
@@ -248,6 +306,10 @@ export class InputManager {
     // jump / coyote state is reset separately by the player (it has no access
     // to the input layer).
     this.jumpPressed = false;
+    // Drop any pending fire press so a stale left-click can't trigger a shot
+    // after the pointer is released (blur / Esc / hidden tab).
+    this.fireHeld = false;
+    this.firePressed = false;
     // Signal the runtime to drop the controller's buffered jump / coyote state
     // on exactly these triggers, so a stale buffered press can't fire later.
     this.inputCleared = true;
@@ -256,4 +318,3 @@ export class InputManager {
     }
   };
 }
-
