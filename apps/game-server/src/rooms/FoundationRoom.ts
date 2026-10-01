@@ -120,8 +120,9 @@ export class FoundationRoom extends Room {
 
   /**
    * One authoritative tick. Consumes input, advances the physics substeps,
-   * then publishes each player's authoritative position + yaw + ack to the
-   * room state (which Colyseus serializes and sends on its patch cadence).
+   * then publishes each player's authoritative position + yaw + landed + ack
+   * to the room state (which Colyseus serializes and sends on its patch
+   * cadence).
    */
   private authoritativeTick(ctx: StepContext): void {
     const tick: TickInput = { subSteps: ctx.subSteps, subDt: ctx.subDt };
@@ -131,8 +132,9 @@ export class FoundationRoom extends Room {
 
   /**
    * Copies the authoritative simulation's per-player state (position from the
-   * Rapier body, yaw, and processed-sequence ack) onto the synchronized room
-   * state. Pitch is intentionally NOT synced (server-runtime only).
+   * Rapier body, yaw, landed/grounded flag, and processed-sequence ack) onto
+   * the synchronized room state. Pitch is intentionally NOT synced
+   * (server-runtime only).
    */
   private publishAuthoritativeState(): void {
     for (const [sessionId, player] of this.players) {
@@ -144,6 +146,7 @@ export class FoundationRoom extends Room {
       player.position.y = publishable.position.y;
       player.position.z = publishable.position.z;
       player.yaw = publishable.yaw;
+      player.landed = publishable.landed;
       player.acknowledgedSequence = publishable.acknowledgedSequence;
     }
   }
@@ -224,6 +227,7 @@ export class FoundationRoom extends Room {
       player.position.x = spawn.position.x;
       player.position.y = spawn.position.y;
       player.position.z = spawn.position.z;
+      player.landed = spawn.landed;
     }
     player.yaw = 0;
     player.acknowledgedSequence = NO_SEQUENCE_ACKNOWLEDGED;

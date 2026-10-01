@@ -91,6 +91,11 @@ export interface AuthoritativePlayerState {
   /** Horizontal facing, radians (the runtime look-yaw, exposed to clients). */
   yaw: number;
   /**
+   * True when the player's character is on the ground (as reported by the
+   * physics character controller after the most recent substep).
+   */
+  landed: boolean;
+  /**
    * Highest input sequence whose movement has actually been processed by the
    * authoritative simulation (`-1` = none yet).
    */
@@ -375,7 +380,8 @@ export class AuthoritativeMovement {
 
   /**
    * The authoritative state to publish for a player (position from the Rapier
-   * body, yaw from the held look-yaw, and the processed-sequence ack).
+   * body, yaw from the held look-yaw, the landed/grounded flag, and the
+   * processed-sequence ack).
    */
   public getPublishable(playerId: string): AuthoritativePlayerState | null {
     const runtime = this.runtimes.get(playerId);
@@ -385,6 +391,7 @@ export class AuthoritativeMovement {
     return {
       position: this.physics.getPosition(playerId),
       yaw: runtime.held.yaw,
+      landed: runtime.lastGrounded,
       acknowledgedSequence: runtime.acknowledgedSequence,
     };
   }

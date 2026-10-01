@@ -83,6 +83,13 @@ export const PlayerState = schema(
     yaw: t.number(),
     /** Highest input sequence processed authoritatively; -1 = none yet. */
     acknowledgedSequence: t.number(),
+    /**
+     * True when the player's character is in contact with the ground (or was
+     * clamped to the ground reference this step). Remote clients use this for
+     * vertical-movement interpolation: while `landed` is true the client
+     * snaps to the authoritative Y; when false it interpolates freely.
+     */
+    landed: t.boolean(),
   },
   "PlayerState",
 );
