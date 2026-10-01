@@ -49,6 +49,23 @@ function playerFromState(state: unknown, sessionId: string): any {
   return players[sessionId];
 }
 
+/**
+ * Snapshot the relevant numeric fields from a live player object.
+ *
+ * Colyseus mutates the state objects in place when it patches, so we must
+ * capture plain values here — otherwise the "initial" and "final" references
+ * would alias the same object and every delta would read as zero.
+ */
+function snapshotPlayer(p: any): { x: number; y: number; z: number; grounded: boolean; lastProcessedSequence: number } {
+  return {
+    x: p.x,
+    y: p.y,
+    z: p.z,
+    grounded: p.grounded,
+    lastProcessedSequence: p.lastProcessedSequence,
+  };
+}
+
 async function teardownRoom(room: ClientRoom | null): Promise<void> {
   if (!room) return;
   room.leave().catch(() => {});
@@ -112,9 +129,9 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     await waitForState(roomA, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
     await waitForState(roomB, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
 
-    // Record spawn positions.
-    const a0 = playerFromState(roomA.state, roomA.sessionId);
-    const b0 = playerFromState(roomA.state, roomB.sessionId);
+    // Snapshot spawn positions as plain values (Colyseus mutates in place).
+    const a0 = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
+    const b0 = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
     expect(Math.abs(a0.x - (-5))).toBeLessThan(0.5);
     expect(Math.abs(a0.z)).toBeLessThan(0.5);
     expect(Math.abs(b0.x - 5)).toBeLessThan(0.5);
@@ -134,9 +151,9 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     await waitForState(roomB, (s) => playerFromState(s, roomB.sessionId)?.lastProcessedSequence >= finalSeq, 5_000);
     await waitMs(100);
 
-    // Read final state.
-    const af = playerFromState(roomA.state, roomA.sessionId);
-    const bf = playerFromState(roomB.state, roomB.sessionId);
+    // Snapshot final state as plain values.
+    const af = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
+    const bf = snapshotPlayer(playerFromState(roomB.state, roomB.sessionId));
 
     // PREDICTION: sustained displacement in correct direction.
     expect(af.z).toBeLessThan(0); // A moved forward (−Z)
@@ -153,8 +170,8 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     expect(Math.abs(bf.z - b0.z)).toBeLessThan(0.5);
 
     // INTERPOLATION: both clients observe consistent state.
-    const aInB = playerFromState(roomB.state, roomA.sessionId);
-    const bInA = playerFromState(roomA.state, roomB.sessionId);
+    const aInB = snapshotPlayer(playerFromState(roomB.state, roomA.sessionId));
+    const bInA = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
     expect(aInB.x).toBeCloseTo(af.x, 1);
     expect(aInB.z).toBeCloseTo(af.z, 1);
     expect(bInA.x).toBeCloseTo(bf.x, 1);
