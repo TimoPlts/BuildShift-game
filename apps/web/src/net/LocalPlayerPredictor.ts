@@ -1,17 +1,10 @@
 /**
- * @deprecated This module is a thin re-export for backward compatibility.
+ * @deprecated This module has been consolidated into `@/network/twoPlayer`.
  *
- * The canonical implementation lives in `@/network/twoPlayer` as
- * `LocalPlayerPrediction`. Import directly from there instead:
+ * The canonical implementation is `LocalPlayerPrediction`:
  *
  * ```ts
  * import { LocalPlayerPrediction, type PredictedState } from "@/network/twoPlayer";
  * ```
  */
-export {
-  LocalPlayerPrediction,
-  SIMULATION_TICK_SECONDS,
-  CORRECTION_SNAP_THRESHOLD,
-  CORRECTION_SMOOTH_FRAMES,
-  type PredictedState,
-} from "../network/twoPlayer/LocalPlayerPrediction";
+export {};
