@@ -1,14 +1,6 @@
 /**
- * @deprecated Re-exported from the canonical `network/twoPlayer/TwoPlayerClient`.
- * Import directly from `@/network/twoPlayer` in new code.
+ * @deprecated Consolidated into `network/twoPlayer` as `TwoPlayerClient`.
+ * This shim re-exports the canonical class under both names for compatibility.
  */
-export {
-  TwoPlayerClient,
-  parseRoomState,
-  TWO_PLAYER_ROOM_NAME,
-  MOVEMENT_INPUT_TYPE,
-  type TwoPlayerClientOptions,
-  type RoomLike,
-  type ParsedRoomState,
-  type ParsedPlayerState,
-} from "../network/twoPlayer/TwoPlayerClient";
+
+export { TwoPlayerClient, TwoPlayerClient as ConnectionManager } from "../network/twoPlayer/TwoPlayerClient";

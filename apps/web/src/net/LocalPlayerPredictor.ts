@@ -1,11 +1,6 @@
 /**
- * @deprecated Re-exported from the canonical `network/twoPlayer/LocalPlayerPrediction`.
- * Import directly from `@/network/twoPlayer` in new code.
+ * @deprecated Consolidated into `network/twoPlayer` as `LocalPlayerPrediction`.
+ * This shim re-exports the canonical class under both names for compatibility.
  */
-export {
-  LocalPlayerPrediction,
-  SIMULATION_TICK_SECONDS,
-  CORRECTION_SNAP_THRESHOLD,
-  CORRECTION_SMOOTH_FRAMES,
-  type PredictedState,
-} from "../network/twoPlayer/LocalPlayerPrediction";
+
+export { LocalPlayerPrediction, LocalPlayerPrediction as LocalPlayerPredictor } from "../network/twoPlayer/LocalPlayerPrediction";
