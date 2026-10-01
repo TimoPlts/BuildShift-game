@@ -48,6 +48,26 @@ describe("PlayerStateSchema", () => {
     expect(p.lastProcessedSequence).toBe(-1);
   });
 
+  it("supports the authoritative combat fields (health / alive)", () => {
+    const p = new (PlayerStateSchema as any)() as PlayerStateSchemaInstance;
+
+    p.health = 100;
+    p.alive = true;
+
+    expect(p.health).toBe(100);
+    expect(p.alive).toBe(true);
+
+    // Simulate an authoritative hit reducing health.
+    p.health = 80;
+    expect(p.health).toBe(80);
+
+    // Simulate elimination.
+    p.health = 0;
+    p.alive = false;
+    expect(p.health).toBe(0);
+    expect(p.alive).toBe(false);
+  });
+
   it("supports updating fields (simulating a server tick)", () => {
     const p = new (PlayerStateSchema as any)() as PlayerStateSchemaInstance;
 
@@ -99,6 +119,8 @@ describe("RoomStateSchema", () => {
     playerA.velocityY = 0;
     playerA.grounded = true;
     playerA.lastProcessedSequence = 0;
+    playerA.health = 100;
+    playerA.alive = true;
     room.players.set("session-a", playerA);
 
     // Simulate player B joining
@@ -110,6 +132,8 @@ describe("RoomStateSchema", () => {
     playerB.velocityY = 9.8;
     playerB.grounded = false;
     playerB.lastProcessedSequence = 7;
+    playerB.health = 100;
+    playerB.alive = true;
     room.players.set("session-b", playerB);
 
     // Verify both are present
@@ -159,6 +183,8 @@ describe("RoomStateSchema", () => {
     player.velocityY = 0;
     player.grounded = true;
     player.lastProcessedSequence = 0;
+    player.health = 100;
+    player.alive = true;
     room.players.set("s1", player);
 
     // Mutate through the stored reference
