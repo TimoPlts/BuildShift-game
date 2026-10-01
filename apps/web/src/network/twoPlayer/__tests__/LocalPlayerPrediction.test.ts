@@ -138,7 +138,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     const p = new LocalPlayerPrediction();
     predictN(p, 5);
     const s1 = { x: 0, y: 0, z: -D * 4, yaw: 0, velocityY: 0, grounded: true, sequence: 3 };
-    const inputs = [0, 1, 2, 3, 4].map(buf);
+    const inputs = [0, 1, 2, 3, 4].map((i) => buf(i));
     p.onServerState(s1, inputs);
     expect(p.lastAckSequence).toBe(3);
 
@@ -154,7 +154,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     predictN(p, 5);
     const divergence = 0.1;
     const server = { x: divergence, y: 0, z: -D * 4, yaw: 0, velocityY: 0, grounded: true, sequence: 3 };
-    const inputs = [0, 1, 2, 3, 4].map(buf);
+    const inputs = [0, 1, 2, 3, 4].map((i) => buf(i));
     const dist = p.onServerState(server, inputs);
 
     expect(dist!).toBeCloseTo(divergence, 8);
@@ -175,7 +175,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     predictN(p, 5);
     const big = 10;
     const server = { x: big, y: 0, z: -D * 4, yaw: 0, velocityY: 0, grounded: true, sequence: 3 };
-    const inputs = [0, 1, 2, 3, 4].map(buf);
+    const inputs = [0, 1, 2, 3, 4].map((i) => buf(i));
     const dist = p.onServerState(server, inputs);
 
     const s = p.getCurrentState();
@@ -211,7 +211,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     const p = new LocalPlayerPrediction();
     predictN(p, 3);
     const server = { x: 0, y: 0, z: -D * 3, yaw: 0, velocityY: 0, grounded: true, sequence: 2 };
-    const inputs = [0, 1, 2].map(buf);
+    const inputs = [0, 1, 2].map((i) => buf(i));
     const dist = p.onServerState(server, inputs);
 
     const s = p.getCurrentState();
@@ -229,7 +229,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     // First reconcile: server acks seq 3.
     p.onServerState(
       { x: 0, y: 0, z: -D * 3, yaw: 0, velocityY: 0, grounded: true, sequence: 3 },
-      [0, 1, 2, 3, 4].map(buf),
+      [0, 1, 2, 3, 4].map((i) => buf(i)),
     );
 
     // Predict 2 more ticks.
@@ -239,7 +239,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
     // Second reconcile: server acks seq 4, authoritative at -1.4.
     p.onServerState(
       { x: 0, y: 0, z: -D * 7, yaw: 0, velocityY: 0, grounded: true, sequence: 4 },
-      [5, 6].map(buf),
+      [5, 6].map((i) => buf(i)),
     );
 
     // Reapplied inputs 5,6: z = -1.4 + (-0.4) = -1.8
@@ -254,7 +254,7 @@ describe("LocalPlayerPrediction — Reconciliation", () => {
 
     p.onServerState(
       { x: 0, y: 0, z: -D * 4, yaw: 0, velocityY: 0, grounded: true, sequence: 3 },
-      [0, 1, 2, 3, 4].map(buf),
+      [0, 1, 2, 3, 4].map((i) => buf(i)),
     );
 
     expect(p.lastCorrectionDistance).not.toBeNull();
