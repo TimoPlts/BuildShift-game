@@ -3,10 +3,12 @@ import type { Scene } from "@babylonjs/core/scene";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { PHYSICS_TIMING } from "@buildshift/game-config";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
+import { AimController } from "./aim/AimController";
 import { PredictionOrchestrator } from "./network/predictionOrchestrator";
 import { PredictionHistory } from "./network/predictionHistory";
 import { ReconciliationEngine } from "./network/reconciliation";
@@ -45,6 +47,15 @@ export class GameRuntime {
   private accumulator = 0;
   private started = false;
   private disposed = false;
+
+  // ── Aim ───────────────────────────────────────────────────────────────────
+  private readonly aimController = new AimController();
+  /**
+   * The current world-space aim direction, updated every render frame.
+   * The future network/combat layer reads this to determine where the local
+   * player is aiming. It is a stable reference — do not replace the object.
+   */
+  public readonly currentAimDirection = new Vector3(0, 0, -1);
 
   // Stage 2D two-player system
   private readonly twoPlayerClient: TwoPlayerClient;
@@ -182,6 +193,13 @@ export class GameRuntime {
 
         if (this.twoPlayerConnected) this.updateRemotePlayers();
         this.cameraController.update(this.playerController.getFeetPosition());
+
+        // Compute the current aim direction from the updated camera.
+        this.aimController.getAimDirection(
+          this.cameraController.getCamera(),
+          this.currentAimDirection,
+        );
+
         this.updateDebugHud();
         this.scene.render();
       }
