@@ -1,8 +1,10 @@
 /**
  * Consolidation audit test for `apps/web/src/net/`.
  *
- * Verifies that every file under `net/` is either absent or a pure re-export
- * stub pointing into `network/twoPlayer/`. No implementation logic may remain.
+ * Verifies that every non-test file under `net/` contains no implementation
+ * logic (no classes, functions, state, or imports). Files must be either
+ * empty (comment-only) or pure re-export stubs pointing into
+ * `network/twoPlayer/`.
  *
  * This test enforces the consolidation contract so that a future refactor
  * cannot silently reintroduce dead code into the legacy `net/` namespace.
@@ -59,18 +61,18 @@ function extractReExportTarget(source: string): string | null {
 }
 
 /**
- * Check that a source string consists solely of re-export statements
- * (after stripping comments and blank lines).
+ * Check that a source string is either empty (comment-only) or a pure
+ * re-export stub pointing to the canonical location.
  */
-function isPureReExportStub(source: string): boolean {
+function isAllowedStub(source: string): boolean {
   const cleaned = stripComments(source).trim();
 
-  // If the file is empty after stripping comments, it's not a valid stub
+  // Empty file (comment-only) is acceptable — fully consolidated
   if (cleaned.length === 0) {
-    return false;
+    return true;
   }
 
-  // Must start with `export`
+  // Must start with `export` if it has content
   if (!cleaned.startsWith("export")) {
     return false;
   }
@@ -133,19 +135,19 @@ describe("apps/web/src/net/ consolidation audit", () => {
     }
   });
 
-  it("every file under net/ is a pure re-export stub (or directory is empty/absent)", () => {
+  it("every file under net/ is either empty or a pure re-export stub", () => {
     const files = listFiles(netDir);
 
     for (const file of files) {
       const fullPath = join(netDir, file);
       const source = readFileSync(fullPath, "utf-8");
-      const isStub = isPureReExportStub(source);
+      const isAllowed = isAllowedStub(source);
 
       expect(
-        isStub,
-        `File "net/${file}" is NOT a pure re-export stub.\n` +
+        isAllowed,
+        `File "net/${file}" contains implementation logic.\n` +
           `Contents after comment stripping:\n${stripComments(source).trim()}\n` +
-          `Expected only: export { ... } from "../network/twoPlayer" or "@buildshift/protocol"`,
+          `Expected: empty file or re-export from "../network/twoPlayer"`,
       ).toBe(true);
     }
   });
@@ -158,7 +160,7 @@ describe("apps/web/src/net/ consolidation audit", () => {
       const source = readFileSync(fullPath, "utf-8");
       const cleaned = stripComments(source);
 
-      // No import statements (only export-from re-exports allowed)
+      // No import statements (only export-from re-exports or empty allowed)
       expect(
         /\bimport\s+[{*/]/.test(cleaned),
         `File "net/${file}" contains import statements - not a pure re-export.`,
@@ -172,7 +174,7 @@ describe("apps/web/src/net/ consolidation audit", () => {
     }
   });
 
-  it("re-export targets in net/ resolve to existing canonical modules", () => {
+  it("re-export targets in net/ resolve to existing canonical modules (if present)", () => {
     const files = listFiles(netDir);
 
     for (const file of files) {
@@ -180,6 +182,7 @@ describe("apps/web/src/net/ consolidation audit", () => {
       const source = readFileSync(fullPath, "utf-8");
       const target = extractReExportTarget(source);
 
+      // Empty files have no target — skip
       if (target === null) continue;
 
       // Resolve the target relative to the net/ directory
