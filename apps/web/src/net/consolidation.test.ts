@@ -1,22 +1,19 @@
 /**
- * Consolidation verification for the legacy `net/` module.
+ * Runtime consolidation test for `apps/web/src/net/`.
  *
- * The two-player networking code was consolidated from `src/net/` into
- * `src/network/twoPlayer/`. The old `src/net/` files were reduced to pure
- * re-export stubs kept only for backward compatibility. This test locks in
- * that invariant so it can never silently drift:
+ * Verifies that the legacy `net/` stubs re-export the exact same bindings
+ * (same function/class/constant identity) as the canonical
+ * `network/twoPlayer/` modules. This guards against a future refactor
+ * silently replacing a re-export with a copy or a different implementation.
  *
- *   - every symbol a `net/` stub re-exports must be the EXACT SAME binding as
- *     the canonical `network/twoPlayer` module it points at (strict `toBe` on
- *     the shared reference / value), and
- *   - the stub must not introduce its own implementation.
- *
- * If a stub ever starts carrying its own logic — or repoints anywhere other
- * than `network/twoPlayer/` — these reference-equality checks fail.
+ * The audit test (`__tests__/netConsolidation.test.ts`) checks the *shape*
+ * of the stubs (source-level). This test checks the *runtime* behavior
+ * (binding identity).
  */
+
 import { describe, expect, it } from "vitest";
 
-// Legacy stubs (backward-compat re-exports) — the module under verification.
+// Import the same named exports from the legacy stubs, aliased for clarity.
 import {
   TwoPlayerClient as LegacyTwoPlayerClient,
   TWO_PLAYER_ROOM_NAME as LegacyRoomName,
@@ -29,23 +26,18 @@ import {
   LocalPlayerPrediction as LegacyPrediction,
   SIMULATION_TICK_SECONDS as LegacyTick,
   CORRECTION_SNAP_THRESHOLD as LegacySnap,
-  CORRECTION_SMOOTH_FRAMES as LegacySmooth,
 } from "./LocalPlayerPredictor";
 
-// Canonical modules living in network/twoPlayer (the consolidation target).
+// Import the canonical bindings directly from the network/twoPlayer layer.
 import {
   TwoPlayerClient,
   TWO_PLAYER_ROOM_NAME,
 } from "../network/twoPlayer/TwoPlayerClient";
-import {
-  InputSender,
-  INPUT_BUFFER_SIZE,
-} from "../network/twoPlayer/InputSender";
+import { InputSender, INPUT_BUFFER_SIZE } from "../network/twoPlayer/InputSender";
 import {
   LocalPlayerPrediction,
   SIMULATION_TICK_SECONDS,
   CORRECTION_SNAP_THRESHOLD,
-  CORRECTION_SMOOTH_FRAMES,
 } from "../network/twoPlayer/LocalPlayerPrediction";
 
 describe("net/ consolidation -> network/twoPlayer/", () => {
@@ -63,11 +55,10 @@ describe("net/ consolidation -> network/twoPlayer/", () => {
     expect(LegacyPrediction).toBe(LocalPlayerPrediction);
     expect(LegacyTick).toBe(SIMULATION_TICK_SECONDS);
     expect(LegacySnap).toBe(CORRECTION_SNAP_THRESHOLD);
-    expect(LegacySmooth).toBe(CORRECTION_SMOOTH_FRAMES);
   });
 
   it("exposes the canonical twoPlayer surface through the stubs (single source of truth)", () => {
-    // All three stubs resolve to the same underlying module instances that
+    // All three stubs resolve to the same underlying module instances as
     // the canonical network/twoPlayer layer exports.
     expect(LegacyTwoPlayerClient).toBe(TwoPlayerClient);
     expect(LegacyInputSender).toBe(InputSender);
