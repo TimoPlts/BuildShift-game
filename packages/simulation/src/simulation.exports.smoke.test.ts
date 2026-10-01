@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  JumpController,
   SIMULATION_VERSION,
   integrateVerticalMovement,
   stepFullMovement,
   stepHorizontalMovement,
+  stepPlayerMovement,
   stepVerticalState,
 } from "./index.js";
 
@@ -29,5 +31,13 @@ describe("simulation public exports", () => {
 
   it("exposes stepVerticalState (full-state vertical step) as a defined function", () => {
     expect(typeof stepVerticalState).toBe("function");
+  });
+
+  it("exposes stepPlayerMovement (canonical movement step) as a defined function", () => {
+    expect(typeof stepPlayerMovement).toBe("function");
+  });
+
+  it("exposes JumpController as a defined class", () => {
+    expect(typeof JumpController).toBe("function");
   });
 });

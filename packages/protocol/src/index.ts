@@ -39,6 +39,10 @@ export {
 } from "./inputs/validatePlayerInputFrame.js";
 
 export {
+  validatePlayerNetworkInput,
+} from "./inputs/validatePlayerNetworkInput.js";
+
+export {
   PlayerPositionSemantic,
   type AuthoritativePlayerState,
 } from "./state/playerState.js";
@@ -47,7 +51,7 @@ export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
 export { EVENTS, type EventName } from "./messages/events.js";
 
-// ─── Stage 2D: Colyseus wire schemas ───────────────────────────────────
+// ───── Stage 2D: Colyseus wire schemas ─────────────────────────────────────
 
 export {
   PlayerStateSchema,
@@ -57,7 +61,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ─── Stage 2D (consolidated): canonical movement contract ──────────────
+// ───── Stage 2D (consolidated): canonical movement contract ────────────────
 
 export {
   type PlayerNetworkState,
