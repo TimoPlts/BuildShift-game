@@ -6,7 +6,9 @@
  *    (`@colyseus/ws-transport`) instead of the default uWebSockets transport,
  *    which avoids the `uWebSockets.js` native dependency that is rejected by
  *    the repo's `blockExoticSubdeps` pnpm policy;
- *  - registration of ONE foundational room (see `rooms/FoundationRoom.ts`);
+ *  - registration of the foundational room (see `rooms/FoundationRoom.ts`) and
+ *    the Stage 2D two-player movement room (see
+ *    `rooms/TwoPlayerMovementRoom.ts`);
  *  - `startServer` which binds to a port and reports the port actually bound
  *    (useful when booting on port 0 to get a free port);
  *  - `shutdownServer` which delegates to `Server.gracefullyShutdown()`.
@@ -15,9 +17,14 @@
  * (`ROOMS.FOUNDATION`) and the registered room is the minimal STATEFUL
  * `FoundationRoom` (see `rooms/FoundationRoom.ts` + `state/foundationState.ts`).
  *
+ * Stage 2D notes: the authoritative two-player movement room
+ * (`TwoPlayerMovementRoom`) is registered under
+ * `TWO_PLAYER_MOVEMENT_ROOM`. Its name and input message type live in the room
+ * module so the entry point, clients, and tests share one identifier.
+ *
  * Deliberately NOT implemented here (later stages): authentication,
- * reconnection policy, room capacity, database/persistence, and any
- * authoritative gameplay (see docs/TECHNICAL_ARCHITECTURE.md §6).
+ * reconnection policy, database/persistence. (Room capacity IS now expressed
+ * per-room via `maxPlayers`.)
  */
 import { Server, type ServerOptions } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
@@ -26,6 +33,10 @@ import type { AddressInfo } from "node:net";
 import { ROOMS, type RoomType } from "@buildshift/protocol";
 
 import { FoundationRoom } from "./rooms/FoundationRoom.js";
+import {
+  TwoPlayerMovementRoom,
+  TWO_PLAYER_MOVEMENT_ROOM,
+} from "./rooms/TwoPlayerMovementRoom.js";
 
 export type GameServer = Server;
 
@@ -41,9 +52,15 @@ export type GameServer = Server;
 export const FOUNDATION_ROOM: RoomType = ROOMS.FOUNDATION;
 
 /**
+ * The Stage 2D two-player authoritative movement room name (sourced from the
+ * room module so client / entry point / tests agree on the identifier).
+ */
+export const TWO_PLAYER_ROOM: string = TWO_PLAYER_MOVEMENT_ROOM;
+
+/**
  * Create a Colyseus server configured with the WebSocket transport and the
- * single foundational room registered. The server is NOT listening yet —
- * call `startServer` to bind a port.
+ * registered rooms (foundation + two-player movement). The server is NOT
+ * listening yet — call `startServer` to bind a port.
  */
 export function createServer(options: ServerOptions = {}): GameServer {
   const transport = new WebSocketTransport();
@@ -60,6 +77,7 @@ export function createServer(options: ServerOptions = {}): GameServer {
     ...options,
   });
   server.define(FOUNDATION_ROOM, FoundationRoom);
+  server.define(TWO_PLAYER_MOVEMENT_ROOM, TwoPlayerMovementRoom);
   return server;
 }
 
