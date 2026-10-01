@@ -1,15 +1,4 @@
 /**
- * @deprecated This module is a thin re-export for backward compatibility.
- *
- * The canonical implementation lives in `@/network/twoPlayer` as
- * `TwoPlayerClient`. Import directly from there instead:
- *
- * ```ts
- * import { TwoPlayerClient, type TwoPlayerClientOptions } from "@/network/twoPlayer";
- * ```
+ * @deprecated Consolidated into `@/network/twoPlayer` as `TwoPlayerClient`.
+ * This file is intentionally empty.
  */
-export {
-  TwoPlayerClient,
-  TWO_PLAYER_ROOM_NAME,
-  type TwoPlayerClientOptions,
-} from "../network/twoPlayer";
