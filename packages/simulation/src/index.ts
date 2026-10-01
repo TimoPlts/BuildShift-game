@@ -16,7 +16,13 @@ export { stepHorizontalMovement } from "./movement/stepHorizontalMovement.js";
 export { stepVerticalMovement } from "./movement/stepVerticalMovement.js";
 export { integrateVerticalMovement } from "./movement/integrateVerticalMovement.js";
 export { JumpController } from "./movement/jumpController.js";
+export { stepFullMovement } from "./movement/verticalMovement.js";
+// The full-state vertical step is aliased to avoid a name collision with the
+// legacy velocity-only `stepVerticalMovement` (kept for the existing
+// game-server / web-app integrations).
+export { stepVerticalMovement as stepVerticalState } from "./movement/verticalMovement.js";
 export type {
+  FullMovementState,
   HorizontalMovementConfig,
   IntegrateVerticalConfig,
   IntegrateVerticalResult,
@@ -24,7 +30,10 @@ export type {
   JumpControllerState,
   LocalMovementInput,
   Position2D,
+  VerticalInput,
   VerticalMovementConfig,
+  VerticalState,
+  VerticalStepResult,
   WorldMovementInput,
 } from "./movement/types.js";
 

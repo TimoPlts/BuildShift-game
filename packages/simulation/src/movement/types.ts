@@ -19,12 +19,28 @@ export interface HorizontalMovementConfig {
   moveSpeed: number;
 }
 
-/** Shared gravity / jump tuning for vertical movement. */
+/**
+ * Shared gravity / jump tuning for vertical movement.
+ *
+ * The first two fields (`gravity`, `jumpSpeed`) are required and used by the
+ * legacy velocity-only `stepVerticalMovement`. The optional fields
+ * (`jumpVelocity`, `maxFallSpeed`, `groundY`, `playerHalfHeight`) are used by
+ * the full-state `stepVerticalMovement` in `verticalMovement.ts` and are
+ * expected to be provided by the shared `VERTICAL_MOVEMENT` config.
+ */
 export interface VerticalMovementConfig {
   /** Gravity acceleration in m/s² (negative = downward). */
   gravity: number;
-  /** Initial upward velocity applied on a grounded jump, in m/s. */
+  /** Initial upward velocity applied on a grounded jump (legacy, m/s). */
   jumpSpeed: number;
+  /** Initial upward velocity (preferred name for the full-state step, m/s). */
+  jumpVelocity?: number;
+  /** Terminal velocity clamp in m/s (negative = maximum downward speed). */
+  maxFallSpeed?: number;
+  /** Ground reference Y coordinate (meters). */
+  groundY?: number;
+  /** Capsule half-height in meters, used for ground-check tolerance. */
+  playerHalfHeight?: number;
 }
 
 /**
@@ -80,4 +96,37 @@ export interface JumpControllerState {
   jumpBufferRemaining: number;
   /** Remaining (s) that the coyote window is active. */
   coyoteRemaining: number;
+}
+
+/** Vertical kinematic state (position + velocity + ground contact). */
+export interface VerticalState {
+  y: number;
+  velocityY: number;
+  grounded: boolean;
+}
+
+/** Vertical input for one simulation step. */
+export interface VerticalInput {
+  jump: boolean;
+}
+
+/** Result of a single full-state vertical movement step. */
+export interface VerticalStepResult {
+  y: number;
+  velocityY: number;
+  grounded: boolean;
+}
+
+/**
+ * Full player movement state combining horizontal position, orientation,
+ * and vertical kinematics. Used by {@link stepFullMovement} to step both
+ * horizontal and vertical axes in one call.
+ */
+export interface FullMovementState {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  velocityY: number;
+  grounded: boolean;
 }
