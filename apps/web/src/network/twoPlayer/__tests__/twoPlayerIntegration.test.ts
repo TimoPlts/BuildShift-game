@@ -110,7 +110,7 @@ describe("TwoPlayerClient integration: two simulated peers, 72 frames @ 30 Hz", 
       }
     }
 
-    // ── 1. Independent movement ──────────────────────────────────────────────
+    // ── 1. Independent movement ──────────────────────────────────────────
     // Phase 1 end (frame 29): A moved 30 ticks forward, B stayed at origin.
     expect(predA[29].z).toBeCloseTo(-PLAYER_MOVEMENT.moveSpeed * TICK * 30, 4);
     expect(predA[29].x).toBeCloseTo(0, 8);
@@ -124,7 +124,7 @@ describe("TwoPlayerClient integration: two simulated peers, 72 frames @ 30 Hz", 
     expect(finalA.z).toBeCloseTo(predA[29].z, 3);
     expect(finalA.x).toBeCloseTo(0, 8);
 
-    // ── 2. Prediction active before first snapshot ──────────────────────────
+    // ── 2. Prediction active before first snapshot ──────────────────────
     // First snapshot arrives at frame DL=2. At frames 0 and 1, A's position
     // advanced purely from local prediction with no server state.
     expect(predA[0].z).toBeCloseTo(-PLAYER_MOVEMENT.moveSpeed * TICK, 6);
@@ -134,7 +134,7 @@ describe("TwoPlayerClient integration: two simulated peers, 72 frames @ 30 Hz", 
     const firstReconFrame = recons.length > 0 ? recons[0].f : Infinity;
     expect(firstReconFrame).toBeGreaterThanOrEqual(DL);
 
-    // ── 3. Reconciliation active ─────────────────────────────────────────────
+    // ── 3. Reconciliation active ─────────────────────────────────────────
     expect(recons.length).toBeGreaterThanOrEqual(20);
     for (const r of recons) expect(r.d).toBeLessThan(CORRECTION_SNAP_THRESHOLD);
     for (let i = 1; i < recons.length; i++) expect(recons[i].ack).toBeGreaterThan(recons[i - 1].ack);
@@ -143,9 +143,18 @@ describe("TwoPlayerClient integration: two simulated peers, 72 frames @ 30 Hz", 
     const div = Math.hypot(finalA.x - srv.a.x, finalA.y - srv.a.y, finalA.z - srv.a.z);
     expect(div).toBeLessThan(0.01);
 
-    // ── 4. Interpolation active ──────────────────────────────────────────────
-    // During phase 2, B is moving. Verify that the interpolated z is
-    // strictly between two consecutive authoritative B snapshots.
+    // ── 4. Interpolation active ──────────────────────────────────────────
+    // During phase 2, B is moving. The RemotePlayerInterpolation renders
+    // at targetTime = renderTime - REMOTE_INTERPOLATION_DELAY_MS (100ms).
+    // Since snapshots arrive every DI frames (= 100ms at 30Hz), the
+    // interpolation target at frame f falls between the snapshot delivered
+    // at frame (f - DI) and the snapshot delivered at frame f.
+    //
+    // Therefore, for a pair (lo, hi) of consecutive B snapshots where lo
+    // was delivered at frame loDel and hi at frame hiDel, the frames where
+    // the interpolation target falls strictly between lo and hi are
+    // frames (hiDel+1) through (hiDel + DI - 1), i.e. the frames AFTER hi
+    // is delivered but BEFORE the next snapshot arrives.
     const bMoving = bSnaps.filter(s => s.f >= 30);
     expect(bMoving.length).toBeGreaterThanOrEqual(10);
 
@@ -156,13 +165,11 @@ describe("TwoPlayerClient integration: two simulated peers, 72 frames @ 30 Hz", 
       const dz = hi.z - lo.z;
       if (Math.abs(dz) < 0.001) continue;
 
-      // The snapshot for lo was delivered at frame lo.f + DL
-      // The snapshot for hi was delivered at frame hi.f + DL
-      // We want an interpolated sample at a frame between those deliveries.
-      const loDeliver = lo.f + DL;
+      // hi was delivered at frame hi.f + DL.
+      // The frames AFTER hi's delivery where interpolation targets
+      // fall between lo and hi are: (hiDeliver+1) .. (hiDeliver+DI-1).
       const hiDeliver = hi.f + DL;
-      // Find the first rpos sample at or after loDeliver but before hiDeliver
-      const candidates = rpos.filter(r => r.f >= loDeliver && r.f < hiDeliver);
+      const candidates = rpos.filter(r => r.f > hiDeliver && r.f < hiDeliver + DI);
       for (const c of candidates) {
         const zMin = Math.min(lo.z, hi.z);
         const zMax = Math.max(lo.z, hi.z);
