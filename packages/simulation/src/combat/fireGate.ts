@@ -90,3 +90,95 @@ export function canFire(
   // elapsed since the last shot. The `>=` makes the exact boundary inclusive.
   return currentSequence - lastFireSequence >= fireIntervalTicks;
 }
+
+/**
+ * The reason an authoritative fire request was rejected by {@link fireGate}.
+ *
+ * The literal set is intentionally small and stable so the authoritative
+ * server can broadcast a rejection event (see `@buildshift/protocol`
+ * `FIRE_REJECTED`) and the client can present it deterministically.
+ */
+export type FireGateRejectionReason =
+  | "eliminated"
+  | "no_ammo"
+  | "cooldown";
+
+/**
+ * Discriminated result of {@link fireGate}.
+ *
+ * When the shot is allowed, the result is `{ approved: true }`. When it is
+ * blocked, the result is `{ approved: false, reason }` where `reason` names
+ * the *first* failing check in the fixed precedence below (elimination is the
+ * strongest, then ammo availability, then cooldown).
+ */
+export type FireGateResult =
+  | { approved: true }
+  | { approved: false; reason: FireGateRejectionReason };
+
+/**
+ * Inputs to the authoritative fire gate.
+ *
+ * This is the *full* eligibility view the authoritative server has for a single
+ * fire intent: the sequence-based cooldown state (delegated to {@link canFire}),
+ * whether the shooter is still alive, and whether the weapon has ammo to spend.
+ *
+ * Keeping `fireGate` a pure function of these inputs (with no weapon-object or
+ * platform dependency) lets the client predict local fire and the server
+ * validate with identical results.
+ */
+export interface FireGateInput {
+  /** Input sequence at which the shooter last fired (`-1` = never fired). */
+  lastFireSequence: number;
+  /** The input sequence of the current fire intent (the tick being fired). */
+  currentSequence: number;
+  /** Weapon cooldown in ticks (`fireIntervalTicks`). */
+  fireIntervalTicks: number;
+  /** Whether the shooter is currently eliminated. */
+  isEliminated: boolean;
+  /** Rounds currently in the shooter's magazine (weapon-available check). */
+  ammo: number;
+}
+
+/**
+ * Authoritatively validate a fire request.
+ *
+ * This is the fire-gate the authoritative room invokes on every fire intent.
+ * It composes the pure {@link canFire} cooldown gate (the core combat math —
+ * never reimplemented elsewhere) with the two additional eligibility checks the
+ * full gate needs: the shooter must not be eliminated, and the weapon must have
+ * at least one round in the magazine.
+ *
+ * Precedence (the *first* failing check wins, and only one reason is reported):
+ *  1. `eliminated` — an eliminated player can never fire.
+ *  2. `no_ammo` — the magazine is empty, so there is no weapon available.
+ *  3. `cooldown` — `fireIntervalTicks` ticks have not elapsed since the last
+ *     shot (per {@link canFire}).
+ *
+ * @param input — the full eligibility view for one fire intent.
+ * @returns — a discriminated {@link FireGateResult}: `{ approved: true }` or
+ *   `{ approved: false, reason }`.
+ */
+export function fireGate(input: FireGateInput): FireGateResult {
+  // 1. An eliminated shooter can never fire, regardless of anything else.
+  if (input.isEliminated) {
+    return { approved: false, reason: "eliminated" };
+  }
+
+  // 2. The weapon must have a round available to spend.
+  if (input.ammo <= 0) {
+    return { approved: false, reason: "no_ammo" };
+  }
+
+  // 3. The sequence-based cooldown gate (the shared, pure combat math).
+  const cooldownOk = canFire(
+    input.lastFireSequence,
+    input.currentSequence,
+    input.fireIntervalTicks,
+    { isEliminated: input.isEliminated },
+  );
+  if (!cooldownOk) {
+    return { approved: false, reason: "cooldown" };
+  }
+
+  return { approved: true };
+}

@@ -8,7 +8,7 @@
  *  - the movement-input event carried over from the Stage 2 foundation
  *    (`PLAYER_INPUT`);
  *  - the combat events introduced by the server-authoritative hitscan
- *    contract (`HIT`, `ELIMINATED`, `HEALTH_UPDATE`).
+ *    contract (`HIT`, `ELIMINATED`, `HEALTH_UPDATE`, `FIRE_REJECTED`).
  *
  * Authoritative *state* (positions, health, shield, ammo, eliminated) is
  * delivered by Colyseus' built-in Schema synchronisation, not by a bespoke
@@ -43,10 +43,19 @@ export const EVENTS = {
    */
   ELIMINATED: "combat:eliminated",
   /**
-   * Server → owner: the player's health/shield changed. Lets the owning
-   * client update its HUD without relying solely on state-diff latency.
+   * Server → all: the affected player's health/shield changed. Lets the owning
+   * client (and any HUD) reflect the new authoritative combat values without
+   * relying solely on state-diff latency. The canonical payload is a
+   * {@link HealthUpdateEvent}.
    */
   HEALTH_UPDATE: "combat:health",
+  /**
+   * Server → all: a fire-intent was rejected by the authoritative fire gate.
+   * Fired when the shooter is in cooldown, eliminated, or out of ammo, so the
+   * owning client can suppress a predicted muzzle flash / sound. The canonical
+   * payload is a {@link FireRejectedEvent}.
+   */
+  FIRE_REJECTED: "combat:fire_rejected",
 } as const;
 
 /** A valid network event identifier. */
@@ -94,6 +103,51 @@ export interface PlayerEliminatedEvent {
   eliminatedId: string;
   /** Colyseus `sessionId` of the player who eliminated them. */
   eliminatedById: string;
+}
+
+/**
+ * Why an authoritative fire-intent was rejected by the fire gate.
+ *
+ * The literal set mirrors `@buildshift/simulation`'s `FireGateRejectionReason`
+ * exactly so the server can pass the gate's result straight into this payload
+ * and the client can present it deterministically.
+ */
+export type FireRejectionReason = "eliminated" | "no_ammo" | "cooldown";
+
+/**
+ * Canonical payload for the {@link EVENTS.FIRE_REJECTED} event.
+ *
+ * Identifies the player whose shot the authoritative fire gate rejected and
+ * the reason for the rejection. Broadcast *instead of* (not in addition to)
+ * the {@link EVENTS.HIT} event, because no damage is applied for a rejected
+ * shot.
+ */
+export interface FireRejectedEvent {
+  /** Colyseus `sessionId` of the player whose shot was rejected. */
+  shooterId: string;
+  /** Why the shot was rejected. */
+  reason: FireRejectionReason;
+}
+
+/**
+ * Canonical payload for the {@link EVENTS.HEALTH_UPDATE} event.
+ *
+ * Carries the affected player's authoritative health / shield / liveness
+ * *after* the server applied damage. Every client in the room receives it, so
+ * a HUD can reflect the exact authoritative combat values without depending on
+ * state-diff latency alone.
+ */
+export interface HealthUpdateEvent {
+  /** Colyseus `sessionId` of the affected player. */
+  playerId: string;
+  /** Authoritative health after the change (>= 0). */
+  health: number;
+  /** Authoritative shield after the change (>= 0). */
+  shield: number;
+  /** Authoritative liveness flag after the change. */
+  alive: boolean;
+  /** Authoritative elimination flag after the change. */
+  isEliminated: boolean;
 }
 
 /**

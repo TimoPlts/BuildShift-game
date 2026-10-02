@@ -1,16 +1,19 @@
 /**
- * Unit tests for {@link canFire} — the shared fire-gate used by both the
- * predicting client (local fire) and the authoritative server (validation).
+ * Unit tests for the shared fire gate:
+ *
+ *  - {@link canFire}: the pure, sequence-based cooldown gate (first shot,
+ *    within cooldown, exactly at the cooldown boundary, and after elimination)
+ *    plus a few extra guards (non-positive interval, default config, monotonic
+ *    ordering);
+ *  - {@link fireGate}: the authoritative, multi-factor gate the room invokes on
+ *    each fire intent (elimination → no-ammo → cooldown precedence).
  *
  * The gate keys off the input *sequence*: a player may fire again only once
  * `fireIntervalTicks` ticks have elapsed since the sequence at which they
- * last fired. These tests pin the four behaviours the combat contract relies
- * on (first shot, within cooldown, exactly at the cooldown boundary, and
- * after elimination) plus a few extra guards (non-positive interval, default
- * config, monotonic ordering).
+ * last fired.
  */
 import { describe, expect, it } from "vitest";
-import { canFire } from "./fireGate.js";
+import { canFire, fireGate } from "./fireGate.js";
 
 /** A representative weapon cooldown in ticks. */
 const INTERVAL = 8;
@@ -96,5 +99,87 @@ describe("canFire — extra guards", () => {
     expect(canFire(0, 35, 35)).toBe(true);
     expect(canFire(0, 7, 8)).toBe(false);
     expect(canFire(0, 8, 8)).toBe(true);
+  });
+});
+
+describe("fireGate — approval", () => {
+  it("approves the first shot (never fired, alive, has ammo)", () => {
+    const result = fireGate({
+      lastFireSequence: -1,
+      currentSequence: 0,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: false,
+      ammo: 30,
+    });
+    expect(result).toEqual({ approved: true });
+  });
+
+  it("approves once the cooldown has fully elapsed", () => {
+    const result = fireGate({
+      lastFireSequence: 10,
+      currentSequence: 18,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: false,
+      ammo: 1,
+    });
+    expect(result).toEqual({ approved: true });
+  });
+});
+
+describe("fireGate — rejection precedence (eliminated > no_ammo > cooldown)", () => {
+  it("reports 'eliminated' even when ammo is present and cooldown has elapsed", () => {
+    const result = fireGate({
+      lastFireSequence: 10,
+      currentSequence: 100,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: true,
+      ammo: 30,
+    });
+    expect(result).toEqual({ approved: false, reason: "eliminated" });
+  });
+
+  it("reports 'no_ammo' when the magazine is empty (alive, cooldown elapsed)", () => {
+    const result = fireGate({
+      lastFireSequence: -1,
+      currentSequence: 0,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: false,
+      ammo: 0,
+    });
+    expect(result).toEqual({ approved: false, reason: "no_ammo" });
+  });
+
+  it("reports 'no_ammo' in preference to 'cooldown' (both fail)", () => {
+    // Within cooldown AND out of ammo — the ammo check wins (precedence).
+    const result = fireGate({
+      lastFireSequence: 10,
+      currentSequence: 11,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: false,
+      ammo: 0,
+    });
+    expect(result).toEqual({ approved: false, reason: "no_ammo" });
+  });
+
+  it("reports 'cooldown' when alive with ammo but within the interval", () => {
+    const result = fireGate({
+      lastFireSequence: 10,
+      currentSequence: 15,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: false,
+      ammo: 30,
+    });
+    expect(result).toEqual({ approved: false, reason: "cooldown" });
+  });
+
+  it("reports 'eliminated' in preference to 'no_ammo' and 'cooldown'", () => {
+    const result = fireGate({
+      lastFireSequence: 10,
+      currentSequence: 11,
+      fireIntervalTicks: INTERVAL,
+      isEliminated: true,
+      ammo: 0,
+    });
+    expect(result).toEqual({ approved: false, reason: "eliminated" });
   });
 });

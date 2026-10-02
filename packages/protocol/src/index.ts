@@ -22,8 +22,9 @@
  *
  * The canonical hitscan combat milestone adds the full combat contract:
  * the `PlayerInput` per-tick input payload (with a `0`/`1` `primaryFire`
- * edge), the combat `EVENTS` (`HIT` / `ELIMINATED` / `HEALTH_UPDATE`) with
- * the `HitResultEvent` / `PlayerEliminatedEvent` payloads and the legacy
+ * edge), the combat `EVENTS` (`HIT` / `ELIMINATED` / `HEALTH_UPDATE` /
+ * `FIRE_REJECTED`) with the `HitResultEvent` / `PlayerEliminatedEvent` /
+ * `HealthUpdateEvent` / `FireRejectedEvent` payloads and the legacy
  * `HitEventPayload`, the shared `WeaponId` vocabulary, and the authoritative
  * `health` / `shield` / `energy` / `ammo` / `lastFireSequence` /
  * `isEliminated` fields on `PlayerStateSchema`.
@@ -59,24 +60,27 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ─── Weapon vocabulary (canonical hitscan combat) ────────────────────────────
+// ───── Weapon vocabulary (canonical hitscan combat) ─────
 export {
   WEAPON_IDS,
   isWeaponId,
   type WeaponId,
 } from "./weapons.js";
 
-// ─── Event identifiers + combat payloads (single source of truth) ────────────
+// ───── Event identifiers + combat payloads (single source of truth) ─────
 export {
   EVENTS,
   type EventName,
   type HitPoint,
   type HitResultEvent,
   type PlayerEliminatedEvent,
+  type FireRejectionReason,
+  type FireRejectedEvent,
+  type HealthUpdateEvent,
   type HitEventPayload,
 } from "./events/index.js";
 
-// ─── Stage 2D: Colyseus wire schemas ─────────────────────────────────────────
+// ───── Stage 2D: Colyseus wire schemas ─────
 
 export {
   PlayerStateSchema,
@@ -86,7 +90,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ─── Stage 2D (consolidated): canonical movement contract ───────────────────
+// ───── Stage 2D (consolidated): canonical movement contract ─────
 
 export {
   type PlayerNetworkState,
