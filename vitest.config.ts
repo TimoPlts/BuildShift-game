@@ -24,11 +24,13 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     exclude: [
-      // Retired competing client networking stacks — no longer part of the
-      // production import graph. The canonical networking stack lives in
-      // apps/web/src/game/network/.
+      // Retired legacy networking test stubs — physically empty (export {} only).
+      // These files should be deleted once the legacy directories are removed
+      // (apps/web/src/net/, apps/web/src/network/twoPlayer/, CombatRoom.ts).
       "apps/web/src/net/**",
       "apps/web/src/network/**",
+      "apps/web/src/game/GameRuntime.twoPlayer.integration.test.ts",
+      "apps/game-server/src/rooms/combatRoom.test.ts",
       "**/node_modules/**",
     ],
     environment: "node",
