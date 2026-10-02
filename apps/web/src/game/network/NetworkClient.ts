@@ -8,7 +8,8 @@
  *    start(), stop(), sendInput(), onStateChange(), onEvent()
  *  - tracks the local session ID
  *  - parses the synchronized RoomStateSchema into plain player state
- *    objects for the prediction and interpolation layers
+ *    objects for the prediction and interpolation layers, and the
+ *    authoritative match/round state for the match-loop lifecycle.
  *
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
@@ -16,10 +17,11 @@
  * messages.
  */
 import { Client } from "@colyseus/sdk";
-import type {
-  PlayerNetworkInput,
-  PlayerNetworkState,
-} from "@buildshift/protocol";
+import type { PlayerNetworkInput, PlayerNetworkState } from "@buildshift/protocol";
+import {
+  parseMatchState,
+  type ParsedMatchState,
+} from "./matchStateParse";
 import { resolveGameServerUrl } from "./serverUrl";
 
 /**
@@ -65,10 +67,13 @@ export interface RoomLike {
 }
 
 /**
- * The full parsed room state: a map of sessionId → player state.
+ * The full parsed room state: a map of sessionId → player state plus the
+ * authoritative match/round state.
  */
 export interface ParsedRoomState {
   players: Record<string, ParsedPlayerState>;
+  /** The authoritative match/round state for this room. */
+  match: ParsedMatchState;
 }
 
 /**
@@ -110,7 +115,10 @@ export class NetworkClient {
   private room: RoomLike | null = null;
   private _sessionId: string | null = null;
   private _isConnected = false;
-  private _parsedState: ParsedRoomState = { players: {} };
+  private _parsedState: ParsedRoomState = {
+    players: {},
+    match: parseMatchState({}),
+  };
   private readonly stateListeners = new Set<(state: ParsedRoomState) => void>();
   private readonly connectionListeners = new Set<(connected: boolean) => void>();
   private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>();
@@ -168,7 +176,7 @@ export class NetworkClient {
     this.started = false;
     this._isConnected = false;
     this._sessionId = null;
-    this._parsedState = { players: {} };
+    this._parsedState = { players: {}, match: parseMatchState({}) };
     this.emitConnectionChange();
     this.emitStateChange();
   }
@@ -330,7 +338,7 @@ export class NetworkClient {
     if (this.disposed || !this._isConnected) return;
     this._isConnected = false;
     this._sessionId = null;
-    this._parsedState = { players: {} };
+    this._parsedState = { players: {}, match: parseMatchState({}) };
     this.room = null;
     this.emitConnectionChange();
     this.emitStateChange();
@@ -353,11 +361,23 @@ export class NetworkClient {
  * Parse the raw Colyseus room state into a plain ParsedRoomState.
  *
  * The server uses a RoomStateSchema with a `players` MapSchema keyed by
- * sessionId. From the client SDK, this arrives as a schema object whose
- * `players` property is a MapSchema (iterable as [key, value] pairs).
+ * sessionId plus the authoritative match fields (`matchPhase`, `roundScore`,
+ * `currentRound`, `lastRoundResult`). From the client SDK this arrives as a
+ * schema object whose `players` is a MapSchema (iterable as [key, value]
+ * pairs) and whose match fields are parsed by {@link parseMatchState}.
  */
 export function parseRoomState(raw: unknown): ParsedRoomState {
-  const result: ParsedRoomState = { players: {} };
+  return {
+    players: parsePlayers(raw),
+    match: parseMatchState(raw),
+  };
+}
+
+/**
+ * Parse the `players` collection of the raw room state into a plain record.
+ */
+function parsePlayers(raw: unknown): Record<string, ParsedPlayerState> {
+  const result: Record<string, ParsedPlayerState> = {};
 
   if (raw == null || typeof raw !== "object") {
     return result;
@@ -377,7 +397,7 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
         const key = String(item[0]);
         const parsed = parsePlayerEntry(item[1]);
         if (parsed) {
-          result.players[key] = parsed;
+          result[key] = parsed;
         }
       }
     }
@@ -390,7 +410,7 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
         (playersRoot as Record<string, unknown>)[key],
       );
       if (parsed) {
-        result.players[key] = parsed;
+        result[key] = parsed;
       }
     }
   }
