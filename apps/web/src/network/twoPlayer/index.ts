@@ -19,6 +19,8 @@ export {
   parseRoomState,
   TWO_PLAYER_ROOM_NAME,
   MOVEMENT_INPUT_TYPE,
+  COMBAT_HIT_EVENT,
+  COMBAT_ELIMINATED_EVENT,
   type TwoPlayerClientOptions,
   type RoomLike,
   type ParsedRoomState,
@@ -38,6 +40,8 @@ export {
   CORRECTION_SNAP_THRESHOLD,
   CORRECTION_SMOOTH_FRAMES,
   type PredictedState,
+  type LocalCombatState,
+  type FirePredictionResult,
 } from "./LocalPlayerPrediction";
 
 export {

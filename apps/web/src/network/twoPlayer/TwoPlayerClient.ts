@@ -7,14 +7,16 @@
  *  - connects to the game server (configurable URL, default ws://localhost:2567)
  *  - joins the "two-player-movement" room
  *  - exposes a clean API for the GameRuntime to drive:
- *    start(), stop(), sendInput(), onStateChange()
+ *    start(), stop(), sendInput(), onStateChange(), onEvent()
  *  - tracks the local session ID
- *  - parses the synchronized RoomStateSchema into plain PlayerNetworkState
- *    objects for the prediction and interpolation layers
+ *  - parses the synchronized RoomStateSchema into plain player state
+ *    objects (extended with combat fields) for the prediction and
+ *    interpolation layers
  *
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
- * RoomStateSchema and sends PlayerNetworkInput messages.
+ * RoomStateSchema, listens for combat events, and sends PlayerNetworkInput
+ * messages.
  */
 import { Client } from "@colyseus/sdk";
 import type {
@@ -36,6 +38,16 @@ export const TWO_PLAYER_ROOM_NAME = "two-player-movement";
 export const MOVEMENT_INPUT_TYPE = "two-player:input";
 
 /**
+ * Server → all: a confirmed hitscan hit was applied.
+ */
+export const COMBAT_HIT_EVENT = "combat:hit";
+
+/**
+ * Server → all: a player was eliminated.
+ */
+export const COMBAT_ELIMINATED_EVENT = "combat:eliminated";
+
+/**
  * A narrow, structural view of the Colyseus Room that the client layer
  * consumes. Keeping it structural means unit tests can substitute a plain
  * fake room without mocking the SDK.
@@ -46,6 +58,10 @@ export interface RoomLike {
   readonly state: unknown;
   send: (type: string, payload?: unknown) => void;
   onStateChange: (callback: (state: unknown) => void) => void;
+  onMessage: (
+    type: string,
+    callback: (message: unknown) => void,
+  ) => unknown;
   onLeave: (callback: (code: number, reason?: string) => void) => void;
   onDrop: (callback: (code: number, reason?: string) => void) => void;
   leave: (consented?: boolean) => Promise<number>;
@@ -60,9 +76,22 @@ export interface ParsedRoomState {
 
 /**
  * A plain, validated player state parsed from the RoomStateSchema.
- * Mirrors PlayerNetworkState from @buildshift/protocol.
+ * Extends the movement state with the combat fields carried on the wire.
  */
-export type ParsedPlayerState = PlayerNetworkState;
+export interface ParsedPlayerState extends PlayerNetworkState {
+  /** Authoritative current health (from the server schema). */
+  health: number;
+  /** Authoritative current shield. */
+  shield: number;
+  /** Authoritative current energy. */
+  energy: number;
+  /** Authoritative current magazine ammo. */
+  ammo: number;
+  /** Highest input sequence at which this player last fired (-1 = never). */
+  lastFireSequence: number;
+  /** Whether the player is eliminated. */
+  isEliminated: boolean;
+}
 
 /**
  * Options for the TwoPlayerClient.
@@ -76,16 +105,6 @@ export interface TwoPlayerClientOptions {
 
 /**
  * The main Colyseus client for the two-player movement room.
- *
- * Usage:
- * ```ts
- * const client = new TwoPlayerClient({ serverUrl: "ws://localhost:2567" });
- * client.onStateChange((state) => { ... });
- * await client.start();
- * client.sendInput({ sequence: 0, moveX: 1, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
- * // ... game loop ...
- * client.stop();
- * ```
  */
 export class TwoPlayerClient {
   private readonly serverUrl: string;
@@ -97,6 +116,8 @@ export class TwoPlayerClient {
   private _parsedState: ParsedRoomState = { players: {} };
   private readonly stateListeners = new Set<(state: ParsedRoomState) => void>();
   private readonly connectionListeners = new Set<(connected: boolean) => void>();
+  private readonly eventListeners = new Map<string, Set<(payload: unknown) => void>>();
+  private readonly messageHandlerRemovers = new Map<string, () => void>();
   private disposed = false;
   private started = false;
 
@@ -194,6 +215,40 @@ export class TwoPlayerClient {
   }
 
   /**
+   * Subscribe to a named server event (e.g. "combat:hit", "combat:eliminated").
+   * The callback is invoked with the event payload. Returns an unsubscribe
+   * function.
+   */
+  public onEvent(
+    eventName: string,
+    callback: (payload: unknown) => void,
+  ): () => void {
+    let listeners = this.eventListeners.get(eventName);
+    if (!listeners) {
+      listeners = new Set();
+      this.eventListeners.set(eventName, listeners);
+    }
+    listeners.add(callback);
+    if (this.room) {
+      this.attachMessageHandler(eventName);
+    }
+    return () => {
+      const set = this.eventListeners.get(eventName);
+      if (set) {
+        set.delete(callback);
+        if (set.size === 0) {
+          this.eventListeners.delete(eventName);
+          const remover = this.messageHandlerRemovers.get(eventName);
+          if (remover) {
+            remover();
+            this.messageHandlerRemovers.delete(eventName);
+          }
+        }
+      }
+    };
+  }
+
+  /**
    * Tear down all resources. After dispose, the client cannot be reused.
    */
   public dispose(): void {
@@ -201,6 +256,11 @@ export class TwoPlayerClient {
     this.stop();
     this.stateListeners.clear();
     this.connectionListeners.clear();
+    this.eventListeners.clear();
+    for (const remover of this.messageHandlerRemovers.values()) {
+      remover();
+    }
+    this.messageHandlerRemovers.clear();
     this.client = null;
   }
 
@@ -221,13 +281,20 @@ export class TwoPlayerClient {
       this.handleDisconnect();
     });
 
-    // Parse the initial state immediately.
+    for (const eventName of this.eventListeners.keys()) {
+      this.attachMessageHandler(eventName);
+    }
+
     this.handleStateChange(room.state);
     this.emitConnectionChange();
     this.emitStateChange();
   }
 
   private detachRoom(): void {
+    for (const remover of this.messageHandlerRemovers.values()) {
+      remover();
+    }
+    this.messageHandlerRemovers.clear();
     if (this.room) {
       void this.room.leave().catch(() => {
         // Drop that already happened — ignore.
@@ -235,6 +302,25 @@ export class TwoPlayerClient {
       this.room = null;
     }
     this.client = null;
+  }
+
+  private attachMessageHandler(eventName: string): void {
+    if (this.messageHandlerRemovers.has(eventName) || !this.room) {
+      return;
+    }
+    const handler = this.room.onMessage(eventName, (payload) => {
+      const listeners = this.eventListeners.get(eventName);
+      if (listeners) {
+        for (const listener of listeners) {
+          listener(payload);
+        }
+      }
+    });
+    this.messageHandlerRemovers.set(eventName, () => {
+      if (typeof handler === "function") {
+        (handler as () => void)();
+      }
+    });
   }
 
   private handleStateChange(state: unknown): void {
@@ -285,7 +371,6 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
     return result;
   }
 
-  // MapSchema is iterable as [key, value] pairs.
   if (
     typeof (playersRoot as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
     "function"
@@ -302,7 +387,6 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
     return result;
   }
 
-  // Fallback: plain object keyed by sessionId.
   if (typeof playersRoot === "object" && !Array.isArray(playersRoot)) {
     for (const key of Object.keys(playersRoot)) {
       const parsed = parsePlayerEntry(
@@ -320,14 +404,9 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
 /**
  * Parse one player entry from the schema into a ParsedPlayerState.
  *
- * NOTE: The server's PlayerStateSchema carries x, y, z, yaw, velocityY,
- * grounded, lastProcessedSequence. The PlayerNetworkState interface from
- * @buildshift/protocol expects x, y, z, vx, vy, vz, sequence, yaw, pitch.
- * We map the schema fields to the network state fields:
- *   - vx, vz are not carried on the wire (schema only has velocityY)
- *     so they default to 0.
- *   - sequence maps from lastProcessedSequence.
- *   - pitch is not carried on the wire; defaults to 0.
+ * The server's PlayerStateSchema carries x, y, z, yaw, velocityY,
+ * grounded, lastProcessedSequence, health, shield, energy, ammo,
+ * lastFireSequence, alive, isEliminated.
  */
 function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   if (raw == null || typeof raw !== "object") {
@@ -339,7 +418,6 @@ function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   const z = r.z;
   const yaw = r.yaw;
   const velocityY = r.velocityY;
-  const lastProcessedSequence = r.lastProcessedSequence;
 
   if (
     typeof x !== "number" ||
@@ -352,7 +430,17 @@ function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   }
 
   const sequence =
-    typeof lastProcessedSequence === "number" ? lastProcessedSequence : -1;
+    typeof r.lastProcessedSequence === "number"
+      ? (r.lastProcessedSequence as number)
+      : -1;
+
+  const health = typeof r.health === "number" ? r.health : 100;
+  const shield = typeof r.shield === "number" ? r.shield : 0;
+  const energy = typeof r.energy === "number" ? r.energy : 0;
+  const ammo = typeof r.ammo === "number" ? r.ammo : 0;
+  const lastFireSequence =
+    typeof r.lastFireSequence === "number" ? r.lastFireSequence : -1;
+  const isEliminated = r.isEliminated === true;
 
   return {
     x,
@@ -364,5 +452,11 @@ function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
     sequence,
     yaw,
     pitch: 0,
+    health,
+    shield,
+    energy,
+    ammo,
+    lastFireSequence,
+    isEliminated,
   };
 }

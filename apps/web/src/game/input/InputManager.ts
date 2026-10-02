@@ -43,7 +43,7 @@ export class InputManager {
   private readonly inputClearedListeners = new Set<() => void>();
   private disposed = false;
 
-  // ── Fire (left-mouse) state ────────────────────────────────────────────────
+  // ── Fire (left-mouse) state ─────────────────────────────────────────────
   /** Whether the left mouse button is currently held down (while pointer-locked). */
   private fireHeld = false;
   /**
@@ -72,6 +72,22 @@ export class InputManager {
   /** True while the left mouse button is currently held down (pointer-locked). */
   public isFireHeld(): boolean {
     return this.fireHeld;
+  }
+
+  /**
+   * The player's **fire intent** for the current simulation tick: true while
+   * the left mouse button is held down AND the canvas has pointer lock.
+   *
+   * This is a *hold* signal (not a per-tick edge) so holding the button
+   * produces continuous fire. The shared {@link canFire} cooldown gate —
+   * evaluated with the locally-tracked `lastFireSequence` by the prediction
+   * layer — decides on each tick whether the held intent actually releases a
+   * shot (hold-to-auto-fire semantics). It is zero while pointer lock is not
+   * active, matching movement/jump behaviour, so a stale click can never fire
+   * after unlock.
+   */
+  public isFiring(): boolean {
+    return this.fireHeld && this.pointerLocked;
   }
 
   /**
