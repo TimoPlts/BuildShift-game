@@ -1,7 +1,7 @@
 /**
  * Game server entry point.
  *
- * Boots the Stage 2A Colyseus foundation (see `server.ts`) and wires
+ * Boots the Colyseus server (see `server.ts`) and wires
  * explicit process signal handling so the server shuts down cleanly on
  * SIGINT / SIGTERM. The port is read from `GAME_SERVER_PORT` (falling back
  * to `PORT`, then a sensible dev default), so the same binary works in
@@ -11,7 +11,7 @@ import { PROTOCOL_VERSION } from "@buildshift/protocol";
 
 import { resolvePort } from "./port.js";
 import {
-  FOUNDATION_ROOM,
+  TWO_PLAYER_ROOM,
   createServer,
   startServer,
   shutdownServer,
@@ -52,17 +52,13 @@ async function main(): Promise<void> {
   const requestedPort = resolvePort();
   console.log(`${LOG_PREFIX} starting (protocol ${PROTOCOL_VERSION})`);
   console.log(`${LOG_PREFIX} requested port: ${requestedPort}`);
-  console.log(`${LOG_PREFIX} registering room: ${FOUNDATION_ROOM}`);
+  console.log(`${LOG_PREFIX} registering room: ${TWO_PLAYER_ROOM}`);
 
   server = createServer();
   const { server: running, port } = await startServer(requestedPort, server);
   server = running;
 
   const bound = running.transport.server?.address();
-  // Normalize the bound address into a clean, host-style string for the log:
-  //  - `::` / `0.0.0.0` (any-interface) → `0.0.0.0`
-  //  - a specific IPv6 address → bracketed, e.g. `[::1]`
-  //  - anything else (IPv4 / undefined) → as-is, or `localhost`
   const displayHost = (() => {
     if (typeof bound !== "object" || bound === null) return "localhost";
     const { address } = bound;
@@ -78,7 +74,7 @@ async function main(): Promise<void> {
     `${LOG_PREFIX} listening on http://${displayHost}:${port}` +
       (anyInterface ? " (bound to all interfaces)" : ""),
   );
-  console.log(`${LOG_PREFIX} room "${FOUNDATION_ROOM}" is ready for connections`);
+  console.log(`${LOG_PREFIX} room "${TWO_PLAYER_ROOM}" is ready for connections`);
 
   process.on("SIGINT", () => {
     void shutdown("received SIGINT");
