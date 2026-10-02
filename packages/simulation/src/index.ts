@@ -22,7 +22,7 @@ export { stepFullMovement } from "./movement/verticalMovement.js";
 // game-server / web-app integrations).
 export { stepVerticalMovement as stepVerticalState } from "./movement/verticalMovement.js";
 
-// ─── Canonical player movement step (Stage 2D consolidated) ───────────────
+// ───── Canonical player movement step (Stage 2D consolidated) ─────
 
 export {
   stepPlayerMovement,
@@ -47,18 +47,27 @@ export type {
   WorldMovementInput,
 } from "./movement/types.js";
 
-// ─── Combat (canonical hitscan contract) ─────────────────────────────────────
+// ───── Combat (canonical hitscan contract) ─────
 
 export {
   rayIntersectsCapsule,
   distance3d,
+  hitscan,
+  DEFAULT_TARGET_RADIUS,
   type Vec3,
   type RayIntersectionResult,
+  type HitscanTarget,
+  type HitscanWeapon,
+  type HitscanHit,
 } from "./combat/hitscan.js";
 
 export {
   canFire,
+  fireGate,
   type CanFireConfig,
+  type FireGateInput,
+  type FireGateResult,
+  type FireGateRejectionReason,
 } from "./combat/fireGate.js";
 
 /**

@@ -140,3 +140,147 @@ export function distance3d(a: Readonly<Vec3>, b: Readonly<Vec3>): number {
   const dz = a.z - b.z;
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
+
+// ─── Multi-target hitscan resolution (canonical contract) ───────────────────
+//
+// The single-target {@link rayIntersectsCapsule} above is the core geometry
+// math. The {@link hitscan} function below is the authoritative, multi-target
+// resolver the room invokes on an approved fire intent: it ray-casts against
+// every live target, picks the *nearest* hit (the first target the hitscan
+// ray reaches), and reports the hit result. The room owns the *state mutation*
+// (applying damage, elimination); the simulation owns only the *math* of which
+// target is hit and where.
+
+/** Default target collision-sphere radius (metres) when the weapon omits one. */
+export const DEFAULT_TARGET_RADIUS = 0.4;
+
+/** A single aimable target for {@link hitscan}. */
+export interface HitscanTarget {
+  /** Stable identifier of the target (e.g. the Colyseus `sessionId`). */
+  id: string;
+  /** Centre of the target collision sphere, metres (Y-up). */
+  position: Readonly<Vec3>;
+}
+
+/**
+ * The weapon parameters the multi-target {@link hitscan} resolver needs.
+ *
+ * Deliberately a *structural* subset of `@buildshift/game-config`'s
+ * `WeaponConfig` (only `damage`, `range`, and an optional `targetRadius`) so
+ * this module stays free of any shared-config dependency. Callers pass the
+ * matching fields straight through from the shared weapon definition.
+ */
+export interface HitscanWeapon {
+  /** Damage dealt on a hit, in health points. */
+  damage: number;
+  /** Maximum effective range in metres (hitscan stop distance). */
+  range: number;
+  /**
+   * Radius of each target collision sphere, metres. Defaults to
+   * {@link DEFAULT_TARGET_RADIUS} when omitted.
+   */
+  targetRadius?: number;
+}
+
+/** A single resolved hit from {@link hitscan}. */
+export interface HitscanHit {
+  /** Identifier of the target that was hit. */
+  targetId: string;
+  /** Damage the hit deals, in health points (from the weapon). */
+  damage: number;
+  /**
+   * Distance from the shooter origin to the hit point, in metres (true
+   * Euclidean distance, independent of direction magnitude).
+   */
+  distance: number;
+  /** World-space point (metres, Y-up) where the shot landed on the target. */
+  hitPoint: Vec3;
+  /**
+   * Whether this shot is allowed to continue past this target (penetration).
+   *
+   * Hitscan weapons do **not** penetrate: the shot stops at the first (nearest)
+   * target it reaches, so the resolver reports a single hit and this flag is
+   * always `false`. The field is carried on the result shape so a future
+   * penetrating weapon (or a client predicting penetration) can extend the
+   * contract without changing the result type.
+   */
+  penetrates: boolean;
+}
+
+/**
+ * Resolve an approved hitscan fire intent against a set of live targets.
+ *
+ * This is the authoritative, multi-target resolver the room invokes once the
+ * fire gate has approved a shot. It:
+ *  1. ray-casts the shooter's aim ray against every target's collision sphere
+ *     (via the pure {@link rayIntersectsCapsule} geometry — the core combat
+ *     math is *never* reimplemented here or in the room);
+ *  2. selects the *nearest* hit (the first target the ray reaches within
+ *     `weapon.range`) — the canonical hitscan "first-hit wins" rule;
+ *  3. returns the hit result: target id, the weapon's damage, the hit distance,
+ *     the world-space hit point, and the (always-`false`) penetration flag.
+ *
+ * The resolver performs **no** state mutation: it only reports *which* target
+ * is hit and *where*. Applying damage, updating health/shield, and triggering
+ * elimination are the room's responsibilities (see the authoritative combat
+ * room, and `docs/TECHNICAL_ARCHITECTURE.md` §3.4 for shield-before-health).
+ *
+ * @param origin - The shooter's aim origin, metres (Y-up).
+ * @param direction - The aim direction; any magnitude (unit or not).
+ * @param weapon - The weapon's `damage`, `range`, and optional `targetRadius`.
+ * @param targets - The set of live, aimable targets (id + sphere centre).
+ * @returns - An empty array on a miss (no target in range), or a single-element
+ *   array containing the nearest hit when a target is hit.
+ */
+export function hitscan(
+  origin: Readonly<Vec3>,
+  direction: Readonly<Vec3>,
+  weapon: HitscanWeapon,
+  targets: ReadonlyArray<HitscanTarget>,
+): HitscanHit[] {
+  const targetRadius =
+    weapon.targetRadius !== undefined ? weapon.targetRadius : DEFAULT_TARGET_RADIUS;
+
+  let bestTarget: HitscanTarget | null = null;
+  let bestDistance = 0;
+
+  for (const target of targets) {
+    const result = rayIntersectsCapsule(
+      origin,
+      direction,
+      target.position,
+      targetRadius,
+      weapon.range,
+    );
+    if (result.hit && (bestTarget === null || result.distance < bestDistance)) {
+      bestTarget = target;
+      bestDistance = result.distance;
+    }
+  }
+
+  // No target in range — the shot misses.
+  if (bestTarget === null) {
+    return [];
+  }
+
+  // Convert the Euclidean hit distance back to the ray parameter `t` so the
+  // hit point is correct regardless of the direction's magnitude:
+  //   P(t) = origin + t·direction,   distance = t·|direction|  →  t = d/|dir|.
+  const dirLen = Math.sqrt(lengthSq(direction));
+  const t = dirLen > 1e-12 ? bestDistance / dirLen : 0;
+  const hitPoint: Vec3 = {
+    x: origin.x + direction.x * t,
+    y: origin.y + direction.y * t,
+    z: origin.z + direction.z * t,
+  };
+
+  return [
+    {
+      targetId: bestTarget.id,
+      damage: weapon.damage,
+      distance: bestDistance,
+      hitPoint,
+      penetrates: false,
+    },
+  ];
+}

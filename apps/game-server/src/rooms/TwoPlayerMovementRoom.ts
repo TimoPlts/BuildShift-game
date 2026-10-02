@@ -3,17 +3,36 @@
  * deterministic movement AND server-authoritative hitscan combat.
  * The SINGLE authoritative gameplay loop: movement, prediction, reconciliation,
  * interpolation and combat all share this tick-driven path at 30 Hz.
+ *
+ * The fire-intent path is a thin orchestration over the shared, pure
+ * simulation math (see `docs/TECHNICAL_ARCHITECTURE.md` §3.4 and §7.4):
+ *
+ *   receive intent
+ *     → validate via the simulation `fireGate` (cooldown / alive / ammo);
+ *         on rejection, broadcast `FIRE_REJECTED` and stop;
+ *     → resolve the hit via the simulation `hitscan` (ray vs. every target's
+ *         collision sphere, first-hit wins);
+ *     → mutate authoritative state (shield absorbs first, then health;
+ *       if health reaches 0, mark eliminated);
+ *     → broadcast `HIT` + `HEALTH_UPDATE` (and `ELIMINATED` when health hits 0);
+ *     → record the fire sequence so the next `fireGate` call respects the
+ *         weapon cooldown.
+ *
+ * The room performs no damage / range math inline — all of that lives in
+ * `@buildshift/simulation` so the client can predict against the same rules.
  */
 import { Room, type Client } from "@colyseus/core";
 import {
   RoomStateSchema, PlayerStateSchema,
   type RoomStateSchemaInstance, type PlayerNetworkInput,
   type HitPoint, type HitResultEvent, type PlayerEliminatedEvent,
+  type FireRejectedEvent, type HealthUpdateEvent,
   type WeaponId, PLAYER_NETWORK_INPUT_LIMITS, EVENTS,
 } from "@buildshift/protocol";
 import {
-  stepPlayerMovement, movementInputToWorld, canFire, rayIntersectsCapsule,
+  stepPlayerMovement, movementInputToWorld, fireGate, hitscan,
   type PlayerMovementState, type PlayerMovementConfig, type Vec3,
+  type HitscanTarget,
 } from "@buildshift/simulation";
 import {
   PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, MAX_HEALTH, MAX_SHIELD,
@@ -150,34 +169,103 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
     p.y=res.y;p.velocityY=res.vy;p.grounded=res.onGround;
   }
 
+  /**
+   * Authoritatively resolve one fire intent.
+   *
+   * Orchestrates the shared simulation combat math (the room owns only the
+   * state mutation + event broadcast):
+   *   1. validate via {@link fireGate}; on rejection broadcast
+   *      `FIRE_REJECTED` and return;
+   *   2. spend a round + record the fire sequence (drives the cooldown);
+   *   3. resolve the hit via {@link hitscan} (first target in range wins);
+   *   4. apply damage (shield absorbs first, then health);
+   *   5. if health reaches 0, mutate the elimination state
+   *      (isEliminated = true, alive = false) so the subsequent
+   *      `HEALTH_UPDATE` event carries the final authoritative values;
+   *   6. broadcast `HIT` + `HEALTH_UPDATE`; on elimination also broadcast
+   *      `ELIMINATED` and arm the respawn timer.
+   */
   private resolveFire(sid:string,sh:PE,yaw:number,pitch:number):void{
-    if(!canFire(sh.lastFireSequence,sh.lastProcessedSequence,WEAPON.fireIntervalTicks,{isEliminated:sh.isEliminated}))return;
-    if(sh.ammo<=0)return;
-    sh.ammo--;sh.lastFireSequence=sh.lastProcessedSequence;
+    // 1. Authoritatively validate the fire request via the shared fire gate.
+    const gate=fireGate({
+      lastFireSequence:sh.lastFireSequence,
+      currentSequence:sh.lastProcessedSequence,
+      fireIntervalTicks:WEAPON.fireIntervalTicks,
+      isEliminated:sh.isEliminated,
+      ammo:sh.ammo,
+    });
+    if(!gate.approved){
+      const ev:FireRejectedEvent={shooterId:sid,reason:gate.reason};
+      this.broadcast(EVENTS.FIRE_REJECTED,ev);
+      console.log(`${LOG} fire rejected: ${sid} (${gate.reason})`);
+      return;
+    }
+
+    // 2. Gate approved — spend a round and record the fire sequence so the
+    //    next fireGate call respects the weapon cooldown.
+    sh.ammo--;
+    sh.lastFireSequence=sh.lastProcessedSequence;
+
+    // 3. Resolve the hit via the shared multi-target hitscan resolver. The
+    //    shooter aims from eye height; every live, non-shooter target is an
+    //    aimable sphere at its own eye height.
     const origin:Vec3={x:sh.x,y:sh.y+EYE_H,z:sh.z};
     const dir=aimDir(yaw,pitch);
-    let best:{id:string;tp:PE;d:number}|null=null;
+    const targets:HitscanTarget[]=[];
     for(const[tid,tp]of this.state.players){
       if(tid===sid||tp.isEliminated)continue;
-      const tc:Vec3={x:tp.x,y:tp.y+EYE_H,z:tp.z};
-      const r=rayIntersectsCapsule(origin,dir,tc,TARGET_R,WEAPON.range);
-      if(r.hit&&(!best||r.distance<best.d)){best={id:tid,tp,d:r.distance};}
+      targets.push({id:tid,position:{x:tp.x,y:tp.y+EYE_H,z:tp.z}});
     }
-    if(!best)return;
-    const dmg=WEAPON.damage;
-    let rem=dmg;
-    if(best.tp.shield>0){const ab=Math.min(best.tp.shield,rem);best.tp.shield-=ab;rem-=ab;}
-    if(rem>0){best.tp.health=Math.max(0,best.tp.health-rem);}
-    const hp:HitPoint={x:origin.x+dir.x*best.d,y:origin.y+dir.y*best.d,z:origin.z+dir.z*best.d};
-    this.broadcast(EVENTS.HIT,{shooterId:sid,targetId:best.id,damage:dmg,hitPoint:hp,weaponId:WEAPON_ID}as HitResultEvent);
-    if(best.tp.health<=0){
-      best.tp.health=0;best.tp.isEliminated=true;best.tp.alive=false;
-      this.respawnT.set(best.id,RESPAWN_TICKS);
-      const ev:PlayerEliminatedEvent={eliminatedId:best.id,eliminatedById:sid};
-      this.broadcast(EVENTS.ELIMINATED,ev);
-      console.log(`${LOG} eliminated: ${best.id} by ${sid}`);
+    const hits=hitscan(origin,dir,{damage:WEAPON.damage,range:WEAPON.range,targetRadius:TARGET_R},targets);
+    if(hits.length===0){
+      console.log(`${LOG} shot fired (miss): ${sid}`);
+      return;
     }
-    console.log(`${LOG} hit: ${sid}->${best.id} dmg=${dmg} dist=${best.d.toFixed(1)}`);
+
+    // 4. Apply damage to each hit target — shield absorbs first, overflow to
+    //    health (docs/TECHNICAL_ARCHITECTURE.md §3.4).
+    for(const hit of hits){
+      const tp=this.state.players.get(hit.targetId);
+      if(tp===undefined)continue;
+      let rem=hit.damage;
+      if(tp.shield>0){
+        const absorbed=Math.min(tp.shield,rem);
+        tp.shield-=absorbed;
+        rem-=absorbed;
+      }
+      if(rem>0){
+        tp.health=Math.max(0,tp.health-rem);
+      }
+
+      // 5. Elimination state mutation: if health reached 0, flip the
+      //    elimination flags BEFORE broadcasting events so that the
+      //    HEALTH_UPDATE event carries the correct final state.
+      let eliminated=false;
+      if(tp.health<=0){
+        tp.health=0;
+        tp.isEliminated=true;
+        tp.alive=false;
+        eliminated=true;
+        this.respawnT.set(hit.targetId,RESPAWN_TICKS);
+        console.log(`${LOG} eliminated: ${hit.targetId} by ${sid}`);
+      }
+
+      // 6. Broadcast events reflecting the authoritative state after mutation.
+      const hp:HitPoint={x:hit.hitPoint.x,y:hit.hitPoint.y,z:hit.hitPoint.z};
+      const hitEvent:HitResultEvent={shooterId:sid,targetId:hit.targetId,damage:hit.damage,hitPoint:hp,weaponId:WEAPON_ID};
+      this.broadcast(EVENTS.HIT,hitEvent);
+
+      // Health-update event reflecting the new authoritative combat values
+      // (including the elimination state if health reached 0).
+      const healthEvent:HealthUpdateEvent={playerId:hit.targetId,health:tp.health,shield:tp.shield,alive:tp.alive,isEliminated:tp.isEliminated};
+      this.broadcast(EVENTS.HEALTH_UPDATE,healthEvent);
+
+      if(eliminated){
+        const ev:PlayerEliminatedEvent={eliminatedId:hit.targetId,eliminatedById:sid};
+        this.broadcast(EVENTS.ELIMINATED,ev);
+      }
+      console.log(`${LOG} hit: ${sid}->${hit.targetId} dmg=${hit.damage} dist=${hit.distance.toFixed(1)}`);
+    }
   }
 
   private respawn(sid:string,p:PE):void{
