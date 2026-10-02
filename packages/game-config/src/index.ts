@@ -17,7 +17,16 @@ export {
 export { ARENA_COLLIDERS, PLAYER_SPAWN } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
 
-export { PLAYER, WEAPONS, getWeaponById } from "./weapons.js";
+export {
+  SHOTGUN,
+  ASSAULT_RIFLE,
+  BLASTER,
+  WEAPONS,
+  getWeaponById,
+  MAX_HEALTH,
+  MAX_SHIELD,
+  PLAYER,
+} from "./weapons.js";
 export type { WeaponConfig, WeaponKind } from "./weapons.js";
 
 export const GAME_CONFIG_VERSION = "0.1.0" as const;

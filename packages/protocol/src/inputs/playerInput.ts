@@ -1,6 +1,6 @@
 /**
- * PlayerInput — the plain-TypeScript per-tick player input for the combat
- * milestone.
+ * PlayerInput — the plain-TypeScript per-tick player input for the canonical
+ * hitscan combat contract.
  *
  * This is a one-shot client → server message payload sent via Colyseus
  * `client.send()`. It is deliberately a plain TypeScript interface (Colyseus
@@ -14,8 +14,8 @@
  * - `lookYaw` / `lookPitch` are in radians.
  *     - `lookYaw`: 0 faces -Z; positive rotates toward +X.
  *     - `lookPitch`: 0 = horizontal; positive = looking up.
- * - `jump` / `primaryFire` are per-tick intent edges (`true` on the tick the
- *   player acted).
+ * - `jump` is a per-tick boolean intent edge (`true` on the tick the player
+ *   acted); `primaryFire` is a per-tick `0`/`1` numeric edge.
  */
 export interface PlayerInput {
   /** Monotonically increasing input identity (non-negative safe integer). */
@@ -30,6 +30,15 @@ export interface PlayerInput {
   lookPitch: number;
   /** Jump intent edge (`true` on the tick the player pressed jump). */
   jump: boolean;
-  /** Primary fire intent edge (`true` on the tick the player fired). */
-  primaryFire: boolean;
+  /**
+   * Primary fire intent, encoded as a `0`/`1` numeric edge.
+   *
+   * `1` on the tick the player pressed the primary-fire trigger, `0`
+   * otherwise. It is a number (rather than a boolean) so the field is
+   * wire-compatible with the tick-based combat contract: the fire gate keys
+   * off the input `sequence` in which the `1` edge was observed
+   * (`lastFireSequence`) and the weapon `fireIntervalTicks` cooldown
+   * (see `canFire` in `@buildshift/simulation`).
+   */
+  primaryFire: number;
 }
