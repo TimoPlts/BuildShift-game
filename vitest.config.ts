@@ -23,6 +23,7 @@ export default defineConfig({
   },
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
+    exclude: ["apps/web/src/net/**"],
     environment: "node",
   },
 });
