@@ -28,7 +28,7 @@ import { MovementDebugHUD } from "../ui/MovementDebugHUD";
 const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
 const MAX_FRAME_DELTA = 0.1;
 const MAX_STEPS = 8;
-const MAX_2P_TICKS = 4;
+const MAX_SIM_TICKS = 4;
 const NEUTRAL: Readonly<SubstepInput> = { moveX: 0, moveZ: 0, lookYaw: 0, jumpPressed: false };
 
 export class GameRuntime {
@@ -50,8 +50,8 @@ export class GameRuntime {
   private readonly remoteInterpolation;
   private readonly debugHud: MovementDebugHUD;
   private readonly combatHud: HealthHud;
-  private twoPlayerAccumulator = 0;
-  private twoPlayerConnected = false;
+  private simAccumulator = 0;
+  private isConnected = false;
   private hudCleanup: (() => void) | null = null;
   private combatHudCleanup: (() => void) | null = null;
   private unsubscribeState: (() => void) | null = null;
@@ -90,7 +90,7 @@ export class GameRuntime {
     this.debugHud = new MovementDebugHUD(canvas); this.combatHud = new HealthHud();
     this.unsubscribeState = this.networkClient.onStateChange((state) => this.handleNetworkState(state));
     this.unsubscribeConnection = this.networkClient.onConnectionChange((connected) => {
-      this.twoPlayerConnected = connected;
+      this.isConnected = connected;
       if (connected) { this.predictionOrchestrator.reset(); this.inputBatcher.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
       this.debugHud.state.connectionState = connected ? "connected" : "disconnected";
     });
@@ -101,13 +101,13 @@ export class GameRuntime {
         const ld = this.inputManager.consumeLookDelta();
         this.cameraController.applyLook(ld.x, ld.y);
         const dt = Math.min(Math.max(this.engine.getDeltaTime() / 1000, 0), MAX_FRAME_DELTA);
-        if (this.twoPlayerConnected) {
-          this.twoPlayerAccumulator += dt;
+        if (this.isConnected) {
+          this.simAccumulator += dt;
           let t = 0;
-          while (this.twoPlayerAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_2P_TICKS) {
-            this.stepSimulationTick(); this.twoPlayerAccumulator -= SIMULATION_TICK_SECONDS; t++;
+          while (this.simAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_SIM_TICKS) {
+            this.stepSimulationTick(); this.simAccumulator -= SIMULATION_TICK_SECONDS; t++;
           }
-          if (t >= MAX_2P_TICKS) this.twoPlayerAccumulator = 0;
+          if (t >= MAX_SIM_TICKS) this.simAccumulator = 0;
         } else {
           this.accumulator += dt; let s = 0;
           while (this.accumulator >= FIXED_DT && s < MAX_STEPS) {
@@ -115,7 +115,7 @@ export class GameRuntime {
           }
           if (s >= MAX_STEPS) this.accumulator = 0;
         }
-        if (this.twoPlayerConnected) { this.updateRemotePlayers(); this.updateCombatHud(); }
+        if (this.isConnected) { this.updateRemotePlayers(); this.updateCombatHud(); }
         this.cameraController.update(this.playerController.getFeetPosition());
         this.aimController.getAimDirection(this.cameraController.getCamera(), this.currentAimDirection);
         this.updateDebugHud();
