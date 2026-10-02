@@ -1,27 +1,31 @@
 /**
  * Stage 2D (consolidated) — the canonical authoritative two-player Colyseus
- * movement room.
+ * room: deterministic movement PLUS full server-authoritative hitscan combat.
  *
- * This is the single, canonical implementation of the two-player multiplayer
- * movement system used by the BuildShift game runtime. It is wired into the
- * server under the `two-player-movement` route (see `server.ts`).
+ * This is the single, canonical implementation of the multiplayer
+ * movement + combat system used by the BuildShift game runtime. It is wired
+ * into the server under the `two-player-movement` route (see `server.ts`) and
+ * is the ONLY authoritative gameplay loop on the server. The earlier parallel
+ * `CombatRoom` (time-based cooldown, `lastFireTime`) has been retired in favour
+ * of this single tick-driven loop so that movement, prediction,
+ * reconciliation, interpolation and combat all share one authoritative path.
  *
  * Authority contract:
- *  - the client sends ONLY a {@link PlayerNetworkInput} intent (never a
- *    position or velocity);
- *  - the server owns every player's position / velocity / grounded state and
- *    advances it with the SHARED deterministic movement step
- *    (`stepPlayerMovement` from `@buildshift/simulation`) using the EXACT
- *    balance values from `@buildshift/game-config`;
+ *  - the client sends ONLY a {@link PlayerNetworkInput} intent (movement +
+ *    aim + fire); it NEVER claims a position, velocity, or damage value;
+ *  - the server owns every player's position / velocity / grounded state AND
+ *    its combat state (health, shield, ammo, fire gate, elimination) and
+ *    advances them on a single fixed 30 Hz tick;
+ *  - movement is advanced with the SHARED deterministic movement step
+ *    (`stepPlayerMovement` from `@buildshift/simulation`);
+ *  - combat is resolved with the SHARED combat math (`canFire`,
+ *    `rayIntersectsCapsule` from `@buildshift/simulation`) so the client's
+ *    local fire prediction and the server's authoritative validation agree;
  *  - the resulting state is written onto the synchronized
  *    {@link RoomStateSchema} so Colyseus' built-in state synchronisation
- *    patches every client.
- *
- * State model:
- *  - The room's logical state conforms to {@link GameStateSchema}
- *    (`{ players: Record<string, PlayerNetworkState> }`). The Colyseus
- *    wire form is `RoomStateSchema` (a `MapSchema` of `PlayerStateSchema`
- *    keyed by `sessionId`).
+ *    patches every client; fire-and-forget combat notifications
+ *    ({@link HitResultEvent}, {@link PlayerEliminatedEvent}) are broadcast in
+ *    addition to the state patch.
  *
  * Input model (sequence-validated, latest-wins):
  *  - each inbound `PlayerNetworkInput` is stored in a per-client buffer
@@ -32,15 +36,26 @@
  *        player's position is unchanged);
  *      - `moveX` / `moveZ` are clamped to [-1, 1];
  *      - `lookYaw` / `lookPitch` are clamped to [-π, π];
- *  - if valid, `stepPlayerMovement` advances the player and the player's
- *    `lastProcessedSequence` is updated.
+ *  - if valid, `stepPlayerMovement` advances the player, the player's
+ *    `lastProcessedSequence` is updated, and — when `primaryFire` is active —
+ *    the authoritative fire pipeline (fire gate → ammo → hitscan → damage →
+ *    elimination) runs for that player.
  *
- * Spawn:
- *  - The first player to join spawns at x = -5, y = ground, z = 0.
- *  - The second player to join spawns at x = +5, y = ground, z = 0.
+ * Combat model:
+ *  - every player holds the shared `ASSAULT_RIFLE` as its primary weapon;
+ *  - a shot is only accepted when the shared `canFire` gate passes (not
+ *    eliminated and the `fireIntervalTicks` cooldown has elapsed since
+ *    `lastFireSequence`) AND the player has ammo;
+ *  - a confirmed shot decrements `ammo`, records `lastFireSequence`, and casts
+ *    a hitscan ray from the shooter's eye along the camera yaw/pitch direction
+ *    against every other alive player's bounding sphere;
+ *  - damage is absorbed by `shield` first, then `health`; when `health`
+ *    reaches 0 the target is eliminated and a `PlayerEliminatedEvent` fires;
+ *  - eliminated players stop processing inputs and respawn after
+ *    {@link RESPAWN_TICKS} ticks with position/health/shield/ammo reset.
  *
  * Deliberately framework-light: no Babylon, no browser APIs, no Rapier —
- * just the pure shared simulation step driven by Colyseus' fixed-timestep
+ * just the pure shared simulation driven by Colyseus' fixed-timestep
  * mechanism at 30 Hz.
  */
 import { Room, type Client } from "@colyseus/core";
@@ -50,15 +65,29 @@ import {
   PlayerStateSchema,
   type RoomStateSchemaInstance,
   type PlayerNetworkInput,
+  type HitPoint,
+  type HitResultEvent,
+  type PlayerEliminatedEvent,
+  type WeaponId,
   PLAYER_NETWORK_INPUT_LIMITS,
+  EVENTS,
 } from "@buildshift/protocol";
 import {
   stepPlayerMovement,
   movementInputToWorld,
+  canFire,
+  rayIntersectsCapsule,
   type PlayerMovementState,
   type PlayerMovementConfig,
+  type Vec3,
 } from "@buildshift/simulation";
-import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "@buildshift/game-config";
+import {
+  PLAYER_MOVEMENT,
+  VERTICAL_MOVEMENT,
+  ASSAULT_RIFLE,
+  MAX_HEALTH,
+  MAX_SHIELD,
+} from "@buildshift/game-config";
 
 /** Log prefix. */
 const LOG = "[buildshift:two-player-movement]";
@@ -95,7 +124,41 @@ const MOVEMENT_CONFIG: PlayerMovementConfig = {
 };
 
 /**
- * Spawn positions for the two players.
+ * The player's primary weapon. All players carry the shared assault rifle; the
+ * server looks it up by the shared config (no client-claimed weapon data is
+ * trusted). Its `fireIntervalTicks` drives the `canFire` gate, `damage` drives
+ * the hitscan damage, `range` bounds the ray, and `maxAmmo` seeds the magazine.
+ */
+const COMBAT_WEAPON = ASSAULT_RIFLE;
+
+/**
+ * The weapon id broadcast on {@link HitResultEvent}. `COMBAT_WEAPON.id` is a
+ * plain `string` on `WeaponConfig`; the canonical roster guarantees it is one
+ * of the {@link WeaponId} literals.
+ */
+const COMBAT_WEAPON_ID: WeaponId = COMBAT_WEAPON.id as WeaponId;
+
+/**
+ * Eye / aim-origin height above the player's stored (feet) position, in
+ * metres. Sourced from the shared capsule half-height (0.9 m).
+ */
+const EYE_HEIGHT_OFFSET = VERTICAL_MOVEMENT.playerHalfHeight;
+
+/**
+ * Bounding-sphere radius used for hitscan target detection, in metres. The
+ * shared sphere is centred on each (alive) player at position + EYE_HEIGHT
+ * so a horizontal shot through the aim line connects.
+ */
+const TARGET_RADIUS = 0.4;
+
+/**
+ * Number of authoritative ticks an eliminated player waits before respawning
+ * (v1: 60 ticks ≈ 2 s at 30 Hz).
+ */
+const RESPAWN_TICKS = 60;
+
+/**
+ * Spawn positions for the players.
  * Player A (first to join): x = -5.
  * Player B (second to join): x = +5.
  * Both at ground level, z = 0.
@@ -105,11 +168,36 @@ const SPAWN_POSITIONS: ReadonlyArray<{ x: number; y: number; z: number }> = [
   { x: 5, y: VERTICAL_MOVEMENT.groundY, z: 0 },
 ];
 
+/** A schema instance for a player (the wire state we mutate authoritatively). */
+type PlayerEntry = InstanceType<typeof PlayerStateSchema>;
+
 /** Clamp a number to the inclusive [min, max] range. */
 function clamp(value: number, min: number, max: number): number {
   if (value < min) return min;
   if (value > max) return max;
   return value;
+}
+
+/**
+ * Compute the unit aim direction (metres, Y-up) for a camera yaw + pitch.
+ *
+ * Convention (shared with `movementInputToWorld`):
+ *  - `lookYaw`: 0 faces -Z; positive rotates toward +X;
+ *  - `lookPitch`: 0 = horizontal; positive = looking up.
+ *
+ * The horizontal forward vector at yaw `y` is `(sin y, 0, -cos y)`; pitching
+ * up by `p` tilts that forward vector toward +Y:
+ *   direction = ( sin y · cos p,  sin p,  -cos y · cos p ).
+ * This is a unit vector, so `distance` from `rayIntersectsCapsule` maps
+ * directly onto the aim line.
+ */
+function aimDirection(yaw: number, pitch: number): Vec3 {
+  const cosPitch = Math.cos(pitch);
+  return {
+    x: Math.sin(yaw) * cosPitch,
+    y: Math.sin(pitch),
+    z: -Math.cos(yaw) * cosPitch,
+  };
 }
 
 /**
@@ -160,17 +248,20 @@ function parseInput(message: unknown): PlayerNetworkInput | null {
 }
 
 /**
- * The Stage 2D canonical two-player authoritative movement room.
+ * The Stage 2D canonical two-player authoritative movement + combat room.
  *
  * Extends Colyseus' `Room` typed on {@link RoomStateSchemaInstance} so the
- * `players` map is synchronised to every client automatically.
+ * `players` map (position, facing, AND combat fields) is synchronised to
+ * every client automatically.
  */
 export class TwoPlayerMovementRoom extends Room<{
   state: RoomStateSchemaInstance;
 }> {
   /**
    * The synchronized room state (a `players` map keyed by client `sessionId`).
-   * Populated in `onJoin`, emptied in `onLeave`; Colyseus patches it to clients.
+   * Populated in `onJoin`, emptied in `onLeave`; Colyseus patches it to
+   * clients. Each entry carries movement AND combat fields (health, shield,
+   * energy, ammo, lastFireSequence, isEliminated).
    *
    * The logical state conforms to `GameStateSchema` from `@buildshift/protocol`
    * (`{ players: Record<string, PlayerNetworkState> }`).
@@ -194,6 +285,18 @@ export class TwoPlayerMovementRoom extends Room<{
   private joinCount = 0;
 
   /**
+   * The spawn slot index each player was assigned on join, so a respawn can
+   * restore the player to their original spawn point. Keyed by sessionId.
+   */
+  private readonly spawnSlots = new Map<string, number>();
+
+  /**
+   * Per-player respawn countdown for eliminated players: remaining ticks until
+   * the player respawns. Only present while a player is eliminated.
+   */
+  private readonly respawnTimers = new Map<string, number>();
+
+  /**
    * Invoked by the matchmaker once, after the room is instantiated and before
    * any client joins. Wires the inbound message handler and starts the
    * authoritative fixed-timestep simulation loop at 30 Hz.
@@ -206,20 +309,22 @@ export class TwoPlayerMovementRoom extends Room<{
     });
 
     // Begin the authoritative 30 Hz simulation using Colyseus' fixed-timestep
-    // mechanism. Each tick steps every player's simulation once with
-    // `TICK_DELTA_SECONDS` (1/30 second).
+    // mechanism. Each tick steps every player's movement once and resolves
+    // any fire intents (hitscan combat) authoritatively.
     this.setFixedTimestep(() => this.tick(), TICK_RATE_HZ);
   }
 
   /**
    * A new client joined: create its authoritative player entry at the
-   * assigned spawn point and register it in the synchronized map.
+   * assigned spawn point, seed its combat state, and register it in the
+   * synchronized map.
    */
   onJoin(client: Client): void {
     // Assign spawn slot based on join order (0 → x=-5, 1 → x=+5).
     const slotIndex = this.joinCount % SPAWN_POSITIONS.length;
     const spawn = SPAWN_POSITIONS[slotIndex];
     this.joinCount++;
+    this.spawnSlots.set(client.sessionId, slotIndex);
 
     const player = new PlayerStateSchema();
     player.x = spawn.x;
@@ -229,6 +334,16 @@ export class TwoPlayerMovementRoom extends Room<{
     player.velocityY = 0;
     player.grounded = true;
     player.lastProcessedSequence = -1; // no input processed yet
+
+    // Authoritative combat state seeded at full.
+    player.health = MAX_HEALTH;
+    player.shield = MAX_SHIELD;
+    player.energy = 0;
+    player.ammo = COMBAT_WEAPON.maxAmmo;
+    player.lastFireSequence = -1; // no shot fired yet
+    player.alive = true;
+    player.isEliminated = false;
+
     this.state.players.set(client.sessionId, player);
 
     console.log(
@@ -238,11 +353,13 @@ export class TwoPlayerMovementRoom extends Room<{
 
   /**
    * A client left: remove its player from the synchronized map and drop its
-   * buffered input so neither leaks.
+   * buffered input, spawn slot, and respawn timer so nothing leaks.
    */
   onLeave(client: Client, code?: number): void {
     this.state.players.delete(client.sessionId);
     this.inputBuffers.delete(client.sessionId);
+    this.spawnSlots.delete(client.sessionId);
+    this.respawnTimers.delete(client.sessionId);
 
     console.log(
       `${LOG} client left (sessionId=${client.sessionId}, code=${code ?? "n/a"}, clients=${this.clients.length})`,
@@ -252,140 +369,20 @@ export class TwoPlayerMovementRoom extends Room<{
   /**
    * The room is being disposed (all clients left / server shutting down):
    * Colyseus' fixed-timestep loop is stopped automatically on dispose.
-   * We clear the input buffers to prevent leaks.
+   * We clear all per-client bookkeeping to prevent leaks.
    */
   onDispose(): void {
     this.inputBuffers.clear();
+    this.spawnSlots.clear();
+    this.respawnTimers.clear();
     console.log(`${LOG} room disposed (roomId=${this.roomId})`);
   }
 
   /**
    * One authoritative simulation tick (30 Hz).
    *
-   * For every player, check for a pending buffered input:
-   *  1. If present, validate: `sequence` must be > player's last processed
-   *     sequence (otherwise reject — position unchanged).
-   *  2. If valid, call `stepPlayerMovement` to advance the player.
-   *  3. Write the result back to the synchronized schema so Colyseus
-   *     propagates the change to all clients.
-   *
-   * If no buffered input exists, the player steps with a neutral (no-movement)
-   * intent (gravity still applies so falling/jump arcs are maintained).
-   */
-  private tick(): void {
-    for (const [sessionId, player] of this.state.players) {
-      const buffered = this.inputBuffers.get(sessionId);
-
-      if (buffered !== undefined) {
-        // Validate sequence: must be strictly greater than last processed.
-        if (buffered.sequence > player.lastProcessedSequence) {
-          // Valid input — consume it and step the simulation.
-          this.stepPlayer(player, buffered);
-          // Update the player's processed sequence on the wire.
-          player.lastProcessedSequence = buffered.sequence;
-          // Clear the consumed input.
-          this.inputBuffers.delete(sessionId);
-        } else {
-          // Out-of-order (lower or equal sequence): reject.
-          // Position is unchanged; just clear the stale buffer.
-          this.inputBuffers.delete(sessionId);
-          console.warn(
-            `${LOG} rejected out-of-order input (sessionId=${sessionId}, seq=${buffered.sequence} <= last=${player.lastProcessedSequence})`,
-          );
-        }
-      } else {
-        // No buffered input: step with a neutral intent (no movement, no jump)
-        // so gravity still integrates (keeps airborne players falling).
-        this.stepPlayer(player, {
-          sequence: player.lastProcessedSequence,
-          moveX: 0,
-          moveZ: 0,
-          lookYaw: player.yaw,
-          lookPitch: 0,
-          jump: false,
-          sprint: false,
-          crouch: false,
-          primaryFire: false,
-          secondaryFire: false,
-        });
-      }
-    }
-  }
-
-  /**
-   * Advance one player's simulation by one tick using the shared
-   * `stepPlayerMovement` and write the result back to the wire schema.
-   */
-  private stepPlayer(
-    player: InstanceType<typeof PlayerStateSchema>,
-    input: PlayerNetworkInput,
-  ): void {
-    // Convert local movement to world space using the player's current yaw.
-    const worldInput = movementInputToWorld(
-      { x: input.moveX, z: input.moveZ },
-      input.lookYaw,
-    );
-
-    // Build the current PlayerMovementState from the wire schema fields.
-    const currentState: PlayerMovementState = {
-      x: player.x,
-      y: player.y,
-      z: player.z,
-      vx: 0, // horizontal velocity is recomputed each tick by stepPlayerMovement
-      vy: player.velocityY,
-      vz: 0,
-      onGround: player.grounded,
-    };
-
-    // Step the shared deterministic simulation.
-    const next = stepPlayerMovement(
-      currentState,
-      {
-        moveX: worldInput.x,
-        moveZ: worldInput.z,
-        jump: input.jump,
-      },
-      TICK_DELTA_SECONDS,
-      MOVEMENT_CONFIG,
-    );
-
-    // Write the authoritative result back so Colyseus' state synchronisation
-    // emits a patch to every client in the room.
-    player.x = next.x;
-    player.y = next.y;
-    player.z = next.z;
-    player.velocityY = next.vy;
-    player.grounded = next.onGround;
-    // Update the player's facing from the latest input's absolute camera yaw.
-    player.yaw = input.lookYaw;
-  }
-
-  /**
-   * Handle one inbound {@link PlayerNetworkInput} frame.
-   *
-   * Validates the message structure and clamps fields. If valid, stores it in
-   * the per-client buffer (latest wins). The authoritative tick consumes the
-   * buffer and enforces the sequence rule.
-   */
-  private handleMovementInput(client: Client, message: unknown): void {
-    const player = this.state.players.get(client.sessionId);
-    if (!player) {
-      // Input from a client with no player entry — nowhere to store it.
-      console.warn(
-        `${LOG} movement input from sessionId=${client.sessionId} with no player; ignored`,
-      );
-      return;
-    }
-
-    const input = parseInput(message);
-    if (input === null) {
-      console.warn(
-        `${LOG} malformed movement input from sessionId=${client.sessionId}; ignored`,
-      );
-      return;
-    }
-
-    // Store in per-client buffer (latest wins).
-    this.inputBuffers.set(client.sessionId, input);
-  }
-}
+   * For every player:
+   *  1. If eliminated — advance the respawn countdown (and perform the respawn
+   *     when it reaches zero). Eliminated players do NOT process inputs
+   *     (movement or fire); any buffered frame is dropped.
+   *  2. Otherwise, if there is a buffered input, validate it: `sequence` must
