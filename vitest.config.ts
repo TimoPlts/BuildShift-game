@@ -25,12 +25,11 @@ export default defineConfig({
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     exclude: [
       // Retired legacy networking test stubs — physically empty (export {} only).
-      // These files should be deleted once the legacy directories are removed
-      // (apps/web/src/net/, apps/web/src/network/twoPlayer/, CombatRoom.ts).
+      // These files should be deleted once the legacy web directories are removed
+      // (apps/web/src/net/, apps/web/src/network/twoPlayer/).
       "apps/web/src/net/**",
       "apps/web/src/network/**",
       "apps/web/src/game/GameRuntime.twoPlayer.integration.test.ts",
-      "apps/game-server/src/rooms/combatRoom.test.ts",
       "**/node_modules/**",
     ],
     environment: "node",
