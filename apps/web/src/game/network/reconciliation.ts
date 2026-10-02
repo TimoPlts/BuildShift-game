@@ -17,7 +17,7 @@
  * corrected by the authoritative server values.
  */
 import type { PredictionOrchestrator } from "./predictionOrchestrator";
-import type { HealthHud } from "../HealthHud";
+import type { HealthHud } from "./HealthHud";
 import { MAX_HEALTH, MAX_SHIELD } from "@buildshift/game-config";
 
 /**
