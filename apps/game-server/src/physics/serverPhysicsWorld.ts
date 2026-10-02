@@ -19,7 +19,7 @@
  * one player's collider by a desired translation and report the resulting
  * grounded state. It does NOT decide *what* a player wants to move — that is
  * the shared deterministic movement math driven by the room's authoritative
- * tick (see `rooms/FoundationRoom.ts`).
+ * tick (see `rooms/TwoPlayerMovementRoom.ts`).
  *
  * Per-substep contract (docs/TECHNICAL_ARCHITECTURE.md §7.4 / task §8): the
  * caller applies EVERY player's desired movement for a substep (via
