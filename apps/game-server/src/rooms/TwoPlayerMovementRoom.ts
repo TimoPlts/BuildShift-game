@@ -1,33 +1,35 @@
 /**
  * Stage 2D — canonical authoritative two-player Colyseus room with
- * deterministic movement AND server-authoritative hitscan combat.
- * The SINGLE authoritative gameplay loop: movement, prediction, reconciliation,
+ * deterministic movement AND server-authoritative hitscan combat, plus the
+ * authoritative first-to-`ROUNDS_TO_WIN` round lifecycle. The SINGLE
+ * authoritative gameplay loop: movement, prediction, reconciliation,
  * interpolation and combat all share this tick-driven path at 30 Hz.
  *
- * The fire-intent path is a thin orchestration over the shared, pure
- * simulation math (see `docs/TECHNICAL_ARCHITECTURE.md` §3.4 and §7.4):
+ * Fire-intent path is a thin orchestration over shared, pure simulation math
+ * (see `docs/TECHNICAL_ARCHITECTURE.md` §3.4 and §7.4): validate via
+ * `fireGate` (reject → `FIRE_REJECTED`), resolve via `hitscan` (first-hit
+ * wins), mutate state (shield absorbs first, then health; elimination at 0),
+ * broadcast `HIT` + `HEALTH_UPDATE` (and `ELIMINATED`), record the fire
+ * sequence for the cooldown. No damage / range math is inline — it lives in
+ * `@buildshift/simulation` so the client predicts against the same rules.
  *
- *   receive intent
- *     → validate via the simulation `fireGate` (cooldown / alive / ammo);
- *         on rejection, broadcast `FIRE_REJECTED` and stop;
- *     → resolve the hit via the simulation `hitscan` (ray vs. every target's
- *         collision sphere, first-hit wins);
- *     → mutate authoritative state (shield absorbs first, then health;
- *       if health reaches 0, mark eliminated);
- *     → broadcast `HIT` + `HEALTH_UPDATE` (and `ELIMINATED` when health hits 0);
- *     → record the fire sequence so the next `fireGate` call respects the
- *         weapon cooldown.
- *
- * The room performs no damage / range math inline — all of that lives in
- * `@buildshift/simulation` so the client can predict against the same rules.
+ * Match lifecycle: the room starts in `IN_PROGRESS` (round 1) so a seated
+ * room is immediately playable. Each authoritative elimination ends the round:
+ *   IN_PROGRESS ─(elimination)─▶ ROUND_ENDED ─(reset delay)─▶
+ *   COUNTDOWN ─(countdown)─▶ IN_PROGRESS (next round)
+ * Input and combat are gated to `IN_PROGRESS`; every other phase returns early
+ * so no movement or fire intent is applied. `endRound` is phase-guarded so a
+ * single elimination awards exactly one win; at `ROUNDS_TO_WIN` the match goes
+ * to terminal `MATCH_ENDED`. Leaving / disconnecting only removes a player —
+ * it can never award a win.
  */
 import { Room, type Client } from "@colyseus/core";
 import {
-  RoomStateSchema, PlayerStateSchema,
+  RoomStateSchema, PlayerStateSchema, RoundScoreSchema,
   type RoomStateSchemaInstance, type PlayerNetworkInput,
   type HitPoint, type HitResultEvent, type PlayerEliminatedEvent,
   type FireRejectedEvent, type HealthUpdateEvent,
-  type WeaponId, PLAYER_NETWORK_INPUT_LIMITS, EVENTS,
+  type WeaponId, PLAYER_NETWORK_INPUT_LIMITS, EVENTS, MatchPhase,
 } from "@buildshift/protocol";
 import {
   stepPlayerMovement, movementInputToWorld, fireGate, hitscan,
@@ -36,6 +38,7 @@ import {
 } from "@buildshift/simulation";
 import {
   PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, MAX_HEALTH, MAX_SHIELD,
+  ROUNDS_TO_WIN, ROUND_COUNTDOWN_SECONDS, ROUND_RESET_DELAY_SECONDS,
 } from "@buildshift/game-config";
 
 const LOG = "[buildshift:two-player-movement]";
@@ -57,7 +60,11 @@ const WEAPON = ASSAULT_RIFLE;
 const WEAPON_ID: WeaponId = WEAPON.id as WeaponId;
 const EYE_H = VERTICAL_MOVEMENT.playerHalfHeight;
 const TARGET_R = 0.4;
-const RESPAWN_TICKS = 60;
+
+/** Pre-round countdown, in ticks. */
+const COUNTDOWN_TICKS = Math.max(1, Math.round(ROUND_COUNTDOWN_SECONDS * TICK_RATE_HZ));
+/** Round-end reset pause, in ticks. */
+const RESET_DELAY_TICKS = Math.max(1, Math.round(ROUND_RESET_DELAY_SECONDS * TICK_RATE_HZ));
 
 const SPAWNS: ReadonlyArray<{x:number;y:number;z:number}> = [
   { x: -5, y: VERTICAL_MOVEMENT.groundY, z: 0 },
@@ -94,11 +101,16 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
   private readonly inputBuf = new Map<string,PlayerNetworkInput>();
   private joinCount = 0;
   private readonly spawnSlots = new Map<string,number>();
-  private readonly respawnT = new Map<string,number>();
+  /** Remaining ticks in the current timed phase (COUNTDOWN / ROUND_ENDED). */
+  private phaseTicksLeft = 0;
 
   onCreate():void{
     console.log(`${LOG} room created (roomId=${this.roomId})`);
     this.onMessage(TWO_PLAYER_MOVEMENT_INPUT,(c,m)=>{this.handleInput(c,m);});
+    // Begin round 1 immediately; later rounds go ROUND_ENDED → COUNTDOWN → IN_PROGRESS.
+    this.state.matchPhase = MatchPhase.IN_PROGRESS;
+    this.state.currentRound = 1;
+    this.phaseTicksLeft = 0;
     this.setFixedTimestep(()=>this.tick(),TICK_RATE_HZ);
   }
 
@@ -114,19 +126,23 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
     p.ammo=WEAPON.maxAmmo;p.lastFireSequence=-1;
     p.alive=true;p.isEliminated=false;
     this.state.players.set(client.sessionId,p);
+    const score=new RoundScoreSchema();
+    score.value=0;
+    this.state.roundScore.set(client.sessionId,score);
     console.log(`${LOG} joined (sid=${client.sessionId}, slot=${si}, clients=${this.clients.length})`);
   }
 
   onLeave(client:Client,code?:number):void{
     this.state.players.delete(client.sessionId);
+    this.state.roundScore.delete(client.sessionId);
     this.inputBuf.delete(client.sessionId);
     this.spawnSlots.delete(client.sessionId);
-    this.respawnT.delete(client.sessionId);
+    // Leaving / disconnecting only removes the player — it never awards a win.
     console.log(`${LOG} left (sid=${client.sessionId}, code=${code??"n/a"})`);
   }
 
   onDispose():void{
-    this.inputBuf.clear();this.spawnSlots.clear();this.respawnT.clear();
+    this.inputBuf.clear();this.spawnSlots.clear();
     console.log(`${LOG} disposed (roomId=${this.roomId})`);
   }
 
@@ -137,13 +153,38 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
   }
 
   private tick():void{
+    const phase=this.state.matchPhase as MatchPhase;
+
+    // Non-IN_PROGRESS phases lock both players in: no movement, no combat.
+    if(phase===MatchPhase.COUNTDOWN){
+      if(this.phaseTicksLeft>0){
+        this.phaseTicksLeft--;
+        if(this.phaseTicksLeft===0){this.beginRound();}
+      }
+      return;
+    }
+    if(phase===MatchPhase.ROUND_ENDED){
+      if(this.phaseTicksLeft>0){
+        this.phaseTicksLeft--;
+        if(this.phaseTicksLeft===0){this.beginCountdown();}
+      }
+      return;
+    }
+    // MATCH_ENDED is terminal (and any unexpected value is treated as locked).
+    if(phase!==MatchPhase.IN_PROGRESS){
+      return;
+    }
+
+    // IN_PROGRESS: the canonical movement + hitscan loop.
     for(const[sid,p]of this.state.players){
       if(p.isEliminated){
         this.inputBuf.delete(sid);
-        const rem=this.respawnT.get(sid);
-        if(rem===undefined)continue;
-        if(rem<=1){this.respawn(sid,p);}
-        else{this.respawnT.set(sid,rem-1);}
+        continue;
+      }
+      // A shot earlier this tick may have ended the round; once the phase has
+      // left IN_PROGRESS, freeze every remaining player for the rest of the tick.
+      if(this.state.matchPhase!==MatchPhase.IN_PROGRESS){
+        this.inputBuf.delete(sid);
         continue;
       }
       const buf=this.inputBuf.get(sid);
@@ -169,24 +210,84 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
     p.y=res.y;p.velocityY=res.vy;p.grounded=res.onGround;
   }
 
+  /** Reset pause elapsed: reset both players cleanly, then lock in for the countdown. */
+  private beginCountdown():void{
+    this.resetPlayers();
+    this.inputBuf.clear();
+    this.state.matchPhase=MatchPhase.COUNTDOWN;
+    this.phaseTicksLeft=COUNTDOWN_TICKS;
+    console.log(`${LOG} countdown started (next round in ${ROUND_COUNTDOWN_SECONDS}s)`);
+  }
+
+  /** Countdown elapsed: unlock input/combat and advance to the next round. */
+  private beginRound():void{
+    this.inputBuf.clear();
+    this.state.currentRound+=1;
+    this.state.matchPhase=MatchPhase.IN_PROGRESS;
+    this.phaseTicksLeft=0;
+    console.log(`${LOG} round ${this.state.currentRound} started`);
+  }
+
   /**
-   * Authoritatively resolve one fire intent.
-   *
-   * Orchestrates the shared simulation combat math (the room owns only the
-   * state mutation + event broadcast):
-   *   1. validate via {@link fireGate}; on rejection broadcast
-   *      `FIRE_REJECTED` and return;
-   *   2. spend a round + record the fire sequence (drives the cooldown);
-   *   3. resolve the hit via {@link hitscan} (first target in range wins);
-   *   4. apply damage (shield absorbs first, then health);
-   *   5. if health reaches 0, mutate the elimination state
-   *      (isEliminated = true, alive = false) so the subsequent
-   *      `HEALTH_UPDATE` event carries the final authoritative values;
-   *   6. broadcast `HIT` + `HEALTH_UPDATE`; on elimination also broadcast
-   *      `ELIMINATED` and arm the respawn timer.
+   * Reset both players cleanly between rounds: restore spawn position, facing,
+   * vertical state, and full combat resources. Round-win score + round counter
+   * are preserved; only per-round transient state is cleared.
+   */
+  private resetPlayers():void{
+    for(const[sid,p]of this.state.players){
+      const sl=this.spawnSlots.get(sid)??0;
+      const sp=SPAWNS[sl];
+      p.x=sp.x;p.y=sp.y;p.z=sp.z;p.yaw=0;p.velocityY=0;p.grounded=true;
+      p.health=MAX_HEALTH;p.shield=MAX_SHIELD;p.ammo=WEAPON.maxAmmo;
+      p.lastFireSequence=-1;p.alive=true;p.isEliminated=false;
+    }
+    console.log(`${LOG} players reset between rounds`);
+  }
+
+  /**
+   * Authoritatively end the current round after an elimination. Awards exactly
+   * one win to `winnerId`, records the result, then transitions: to
+   * `MATCH_ENDED` once `ROUNDS_TO_WIN` is reached, otherwise to `ROUND_ENDED`.
+   * Phase-guarded so it can only fire once per round.
+   */
+  private endRound(winnerId:string,loserId:string):void{
+    if(this.state.matchPhase!==MatchPhase.IN_PROGRESS)return;
+
+    const winnerScore=this.state.roundScore.get(winnerId);
+    if(winnerScore!==undefined){
+      winnerScore.value+=1;
+    }else{
+      const s=new RoundScoreSchema();
+      s.value=1;
+      this.state.roundScore.set(winnerId,s);
+    }
+    const wins=this.state.roundScore.get(winnerId)?.value??0;
+
+    this.state.lastRoundResult.winnerId=winnerId;
+    this.state.lastRoundResult.roundNumber=this.state.currentRound;
+    this.inputBuf.clear();
+
+    if(wins>=ROUNDS_TO_WIN){
+      this.state.matchPhase=MatchPhase.MATCH_ENDED;
+      this.phaseTicksLeft=0;
+      console.log(`${LOG} MATCH ENDED: ${winnerId} reached ${wins}/${ROUNDS_TO_WIN} round wins`);
+      return;
+    }
+
+    this.state.matchPhase=MatchPhase.ROUND_ENDED;
+    this.phaseTicksLeft=RESET_DELAY_TICKS;
+    console.log(`${LOG} round ${this.state.currentRound} ended: ${winnerId} beat ${loserId} (${wins}/${ROUNDS_TO_WIN})`);
+  }
+
+  /**
+   * Authoritatively resolve one fire intent. Orchestrates the shared combat
+   * math (the room owns only state mutation + event broadcast + the round
+   * transition): validate via `fireGate` (reject → `FIRE_REJECTED`), spend a
+   * round + record the fire sequence, resolve via `hitscan`, apply damage
+   * (shield first, then health), and on elimination mutate state and end the
+   * round. Emits `HIT` + `HEALTH_UPDATE` (and `ELIMINATED` on elimination).
    */
   private resolveFire(sid:string,sh:PE,yaw:number,pitch:number):void{
-    // 1. Authoritatively validate the fire request via the shared fire gate.
     const gate=fireGate({
       lastFireSequence:sh.lastFireSequence,
       currentSequence:sh.lastProcessedSequence,
@@ -201,14 +302,13 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
       return;
     }
 
-    // 2. Gate approved — spend a round and record the fire sequence so the
-    //    next fireGate call respects the weapon cooldown.
+    // Gate approved — spend a round and record the fire sequence (cooldown).
     sh.ammo--;
     sh.lastFireSequence=sh.lastProcessedSequence;
 
-    // 3. Resolve the hit via the shared multi-target hitscan resolver. The
-    //    shooter aims from eye height; every live, non-shooter target is an
-    //    aimable sphere at its own eye height.
+    // Resolve the hit via the shared multi-target hitscan resolver. The shooter
+    // aims from eye height; every live, non-shooter target is an aimable sphere
+    // at its own eye height.
     const origin:Vec3={x:sh.x,y:sh.y+EYE_H,z:sh.z};
     const dir=aimDir(yaw,pitch);
     const targets:HitscanTarget[]=[];
@@ -222,8 +322,6 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
       return;
     }
 
-    // 4. Apply damage to each hit target — shield absorbs first, overflow to
-    //    health (docs/TECHNICAL_ARCHITECTURE.md §3.4).
     for(const hit of hits){
       const tp=this.state.players.get(hit.targetId);
       if(tp===undefined)continue;
@@ -231,50 +329,4 @@ export class TwoPlayerMovementRoom extends Room<{state:RoomStateSchemaInstance}>
       if(tp.shield>0){
         const absorbed=Math.min(tp.shield,rem);
         tp.shield-=absorbed;
-        rem-=absorbed;
-      }
-      if(rem>0){
-        tp.health=Math.max(0,tp.health-rem);
-      }
-
-      // 5. Elimination state mutation: if health reached 0, flip the
-      //    elimination flags BEFORE broadcasting events so that the
-      //    HEALTH_UPDATE event carries the correct final state.
-      let eliminated=false;
-      if(tp.health<=0){
-        tp.health=0;
-        tp.isEliminated=true;
-        tp.alive=false;
-        eliminated=true;
-        this.respawnT.set(hit.targetId,RESPAWN_TICKS);
-        console.log(`${LOG} eliminated: ${hit.targetId} by ${sid}`);
-      }
-
-      // 6. Broadcast events reflecting the authoritative state after mutation.
-      const hp:HitPoint={x:hit.hitPoint.x,y:hit.hitPoint.y,z:hit.hitPoint.z};
-      const hitEvent:HitResultEvent={shooterId:sid,targetId:hit.targetId,damage:hit.damage,hitPoint:hp,weaponId:WEAPON_ID};
-      this.broadcast(EVENTS.HIT,hitEvent);
-
-      // Health-update event reflecting the new authoritative combat values
-      // (including the elimination state if health reached 0).
-      const healthEvent:HealthUpdateEvent={playerId:hit.targetId,health:tp.health,shield:tp.shield,alive:tp.alive,isEliminated:tp.isEliminated};
-      this.broadcast(EVENTS.HEALTH_UPDATE,healthEvent);
-
-      if(eliminated){
-        const ev:PlayerEliminatedEvent={eliminatedId:hit.targetId,eliminatedById:sid};
-        this.broadcast(EVENTS.ELIMINATED,ev);
-      }
-      console.log(`${LOG} hit: ${sid}->${hit.targetId} dmg=${hit.damage} dist=${hit.distance.toFixed(1)}`);
-    }
-  }
-
-  private respawn(sid:string,p:PE):void{
-    const sl=this.spawnSlots.get(sid)??0;
-    const sp=SPAWNS[sl];
-    p.x=sp.x;p.y=sp.y;p.z=sp.z;p.velocityY=0;p.grounded=true;
-    p.health=MAX_HEALTH;p.shield=MAX_SHIELD;p.ammo=WEAPON.maxAmmo;
-    p.lastFireSequence=-1;p.isEliminated=false;p.alive=true;
-    this.respawnT.delete(sid);
-    console.log(`${LOG} respawned: ${sid} at (${sp.x},${sp.y},${sp.z})`);
-  }
-}
+        rem-=absorbed
