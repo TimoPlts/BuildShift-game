@@ -1,6 +1,8 @@
 /**
- * @deprecated REMOVED — This file is a stale duplicate. The canonical
- * RemotePlayerManager (interpolation buffer) lives at:
+ * @deprecated REMOVED — The duplicate RemotePlayerManager module path has
+ * been resolved.
+ *
+ * The canonical RemotePlayerManager (interpolation buffer) lives at:
  *   `apps/web/src/game/network/RemotePlayerManager.ts`
  *
  * This Babylon-mesh-lifecycle variant was never wired into the production
@@ -11,3 +13,4 @@
  * This file is intentionally left as an empty module so that the
  * companion `remotePlayerSet.ts` (and its tests) remain compilable.
  */
+export {};
