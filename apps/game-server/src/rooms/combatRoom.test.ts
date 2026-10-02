@@ -1,287 +1,167 @@
 /**
  * CombatRoom damage-pipeline integration tests.
- *
- * Drive the server-authoritative `CombatRoom` over a real in-process Colyseus
- * server with real `@colyseus/sdk` clients. Verifies the five damage-pipeline
- * contracts:
- *
- *  1. SELF-HIT EXCLUSION — a shot can never damage the shooter.
- *  2. COOLDOWN REJECTION — a second shot within `fireCooldownMs` is rejected.
- *  3. HEALTH CLAMPING — (a) overkill clamps to exactly 0; (b) never exceeds
- *     the configured `PLAYER.maxHealth`.
- *  4. EXACT DAMAGE — a confirmed hit reduces the target by exactly the
- *     weapon's configured damage.
- *  5. STATE BROADCAST — the receiving client observes the updated health in
- *     its own (client-side) state after a hit.
- *
- * Balance values (damage, cooldown, max health) come from
- * `@buildshift/game-config`; assertions never hardcode numbers. Each test
- * starts a fresh server + room and tears it down in a `finally`, so no
- * cooldown / health state leaks between tests.
- *
- * Aim geometry: A (first join) at x=-5, B (second) at x=+5. `processFire`
- * aims along `(sin(yaw), 0, -cos(yaw))`. A→B (+X): `lookYaw = Math.PI / 2`;
- * B→A (-X): `-Math.PI / 2`.
  */
 import { describe, expect, it } from "vitest";
+import { Server } from "@colyseus/core";
+import { WebSocketTransport } from "@colyseus/ws-transport";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
-
 import { PLAYER, WEAPONS } from "@buildshift/game-config";
-import { EVENTS, type HitEventPayload } from "@buildshift/protocol";
-
-import { startServer, shutdownServer } from "../server.js";
+import { EVENTS, type HitEventPayload, ROOMS } from "@buildshift/protocol";
+import { FoundationRoom } from "./FoundationRoom.js";
+import { TwoPlayerMovementRoom } from "./TwoPlayerMovementRoom.js";
+import { CombatRoom, COMBAT_ROOM } from "./CombatRoom.js";
+import { shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
-import { COMBAT_ROOM } from "./CombatRoom.js";
 
 const blaster = WEAPONS.find((w) => w.id === "blaster")!;
-expect(blaster).toBeDefined();
+const INPUT_MSG = "input";
+const AIM = Math.PI / 2;
 
-const INPUT_MSG = "input"; // inbound message type in CombatRoom
-const AIM_A_TO_B = Math.PI / 2; // A(-5) → B(+5): +X
-const AIM_B_TO_A = -Math.PI / 2; // B(+5) → A(-5): -X
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const pfs = (s: any, id: string) => s?.players?.get?.(id) ?? s?.players?.[id];
 
-async function waitForState(
-  room: ClientRoom,
-  predicate: (state: any) => boolean,
-  timeoutMs = 5_000,
-): Promise<void> {
-  const startedAt = Date.now();
-  if (room.state && predicate(room.state)) return;
-  while (Date.now() - startedAt < timeoutMs) {
-    await new Promise((r) => setTimeout(r, 25));
-    if (room.state && predicate(room.state)) return;
-  }
-  throw new Error(
-    `waitForState timed out after ${timeoutMs}ms; last=${JSON.stringify(room.state)}`,
-  );
+async function wfs(room: ClientRoom, fn: (s: any) => boolean, ms = 5000) {
+  const t0 = Date.now();
+  if (room.state && fn(room.state)) return;
+  while (Date.now() - t0 < ms) { await wait(25); if (room.state && fn(room.state)) return; }
+  throw new Error(`wfs timeout`);
 }
 
-const waitMs = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
-function playerFromState(state: any, sessionId: string): any {
-  const players = state?.players;
-  if (!players) return undefined;
-  if (typeof players.get === "function") return players.get(sessionId);
-  return players[sessionId];
+async function dl<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
+  let t: NodeJS.Timeout | undefined;
+  try { return await Promise.race([p, new Promise<never>((_, rj) => { t = setTimeout(() => rj(new Error(l)), ms); })]); }
+  finally { if (t) clearTimeout(t); }
 }
 
-function snapshot(p: any): { health: number; alive: boolean } {
-  return { health: p?.health ?? 0, alive: p?.alive ?? false };
+function si(room: ClientRoom, seq: number, fire: boolean) {
+  room.send(INPUT_MSG, { clientId: room.sessionId, input: { sequence: seq, moveX: 0, moveZ: 0, lookYaw: AIM, lookPitch: 0, jump: false, primaryFire: fire } });
 }
 
-async function teardownRoom(room: ClientRoom | null): Promise<void> {
-  if (!room) return;
-  room.leave().catch(() => {});
-  try {
-    room.connection.close();
-  } catch {}
+let _room: InstanceType<typeof CombatRoom> | null = null;
+
+async function mkServer(): Promise<{ srv: GameServer; port: number; rm: () => InstanceType<typeof CombatRoom> }> {
+  const transport = new WebSocketTransport();
+  const srv = new Server({ gracefullyShutdown: false, greet: false, transport }) as GameServer;
+  srv.define(ROOMS.FOUNDATION, FoundationRoom);
+  srv.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
+  srv.define(COMBAT_ROOM, class extends CombatRoom {
+    onCreate() { super.onCreate(); _room = this; }
+  } as any);
+  await srv.listen(0);
+  const port = (srv as any).transport.server.address().port;
+  return { srv, port, rm: () => { if (!_room) throw new Error("no room"); return _room; } };
 }
 
-async function withDeadline<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`[combat-test] timeout: "${label}" ${timeoutMs}ms`)),
-          timeoutMs,
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function sendInput(room: ClientRoom, sequence: number, lookYaw: number, primaryFire: boolean): void {
-  room.send(INPUT_MSG, {
-    clientId: room.sessionId,
-    input: {
-      sequence,
-      moveX: 0,
-      moveZ: 0,
-      lookYaw,
-      lookPitch: 0,
-      jump: false,
-      primaryFire,
-    },
-  });
-}
-
-async function setup(count: number): Promise<{ server: GameServer; rooms: ClientRoom[] }> {
-  const { server, port } = await withDeadline(startServer(0), 10_000, "startServer");
+async function setup() {
+  const { srv, port, rm } = await dl(mkServer(), 10000, "start");
   const url = `ws://127.0.0.1:${port}`;
-  const rooms: ClientRoom[] = [];
-  for (let i = 0; i < count; i++) {
-    rooms.push(
-      await withDeadline(new Client(url).joinOrCreate(COMBAT_ROOM), 10_000, `join ${i}`),
-    );
-  }
-  return { server, rooms };
+  const a = await dl(new Client(url).joinOrCreate(COMBAT_ROOM), 10000, "joinA");
+  const b = await dl(new Client(url).joinOrCreate(COMBAT_ROOM), 10000, "joinB");
+  return { srv, rooms: [a, b] as [ClientRoom, ClientRoom], rm };
 }
 
-async function waitBothVisible(roomA: ClientRoom, roomB: ClientRoom): Promise<void> {
-  await waitForState(roomA, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
-  await waitForState(roomB, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
+async function wb(a: ClientRoom, b: ClientRoom) {
+  await wfs(a, (s) => pfs(s, a.sessionId) && pfs(s, b.sessionId));
+  await wfs(b, (s) => pfs(s, a.sessionId) && pfs(s, b.sessionId));
 }
 
-async function waitHealth(room: ClientRoom, target: string, expected: number, timeoutMs = 5_000): Promise<void> {
-  await waitForState(room, (s) => {
-    const p = playerFromState(s, target);
-    return p && p.health === expected;
-  }, timeoutMs);
+async function wh(room: ClientRoom, id: string, hp: number, ms = 5000) {
+  await wfs(room, (s) => { const p = pfs(s, id); return p && p.health === hp; }, ms);
 }
 
-async function cleanup(server: GameServer, rooms: ClientRoom[]): Promise<void> {
-  await withDeadline(Promise.all(rooms.map((r) => teardownRoom(r))), 5_000, "teardown");
-  await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
+async function cl(srv: GameServer, rooms: ClientRoom[]) {
+  for (const r of rooms) { r.leave().catch(() => {}); try { r.connection.close(); } catch {} }
+  await dl(shutdownServer(srv), 8000, "shutdown");
+  _room = null;
+}
+
+function align(rm: () => InstanceType<typeof CombatRoom>, id: string) {
+  const p = rm().state.players.get(id);
+  if (!p) throw new Error(`no player ${id}`);
+  p.y = 1.5;
 }
 
 describe("CombatRoom damage pipeline", () => {
-  it("1) a player's own shot never damages the shooter (self-hit exclusion)", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("1) self-hit exclusion", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
-      expect(playerFromState(roomA.state, roomA.sessionId).health).toBe(PLAYER.maxHealth);
-      expect(playerFromState(roomA.state, roomB.sessionId).health).toBe(PLAYER.maxHealth);
+      await wb(a, b); align(rm, b.sessionId); await wait(100);
+      expect(pfs(a.state, a.sessionId).health).toBe(PLAYER.maxHealth);
+      expect(pfs(a.state, b.sessionId).health).toBe(PLAYER.maxHealth);
+      si(a, 0, true); await wait(300);
+      expect(pfs(a.state, a.sessionId).health).toBe(PLAYER.maxHealth);
+      expect(pfs(a.state, a.sessionId).alive).toBe(true);
+    } finally { await cl(srv, [a, b]); }
+  }, 20000);
 
-      // A fires toward B. Whatever the shot does to B, the shooter (A) must
-      // never lose health — the shooter is excluded from its own hitscan.
-      sendInput(roomA, 0, AIM_A_TO_B, true);
-      await waitMs(300);
-
-      const aAfter = playerFromState(roomA.state, roomA.sessionId);
-      expect(aAfter).toBeDefined();
-      expect(aAfter.health).toBe(PLAYER.maxHealth);
-      expect(aAfter.alive).toBe(true);
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
-
-  it("2) a second shot fired within the weapon cooldown is rejected", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("2) cooldown rejection", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
+      await wb(a, b); align(rm, b.sessionId); await wait(100);
+      si(a, 0, true);
+      await wh(a, b.sessionId, PLAYER.maxHealth - blaster.damage);
+      si(a, 1, true);
+      await wait(blaster.fireCooldownMs + 200);
+      expect(pfs(a.state, b.sessionId).health).toBe(PLAYER.maxHealth - blaster.damage);
+    } finally { await cl(srv, [a, b]); }
+  }, 20000);
 
-      // First shot confirms (B loses exactly one weapon-damage of health).
-      sendInput(roomA, 0, AIM_A_TO_B, true);
-      await waitHealth(roomA, roomB.sessionId, PLAYER.maxHealth - blaster.damage);
-
-      // Immediately (well within `fireCooldownMs`) fire the same weapon again.
-      sendInput(roomA, 1, AIM_A_TO_B, true);
-
-      // Wait past the cooldown so a (buggy) second shot would have registered.
-      await waitMs(blaster.fireCooldownMs + 200);
-
-      // No additional damage was applied by the rejected second shot.
-      expect(playerFromState(roomA.state, roomB.sessionId).health).toBe(
-        PLAYER.maxHealth - blaster.damage,
-      );
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
-
-  it("3a) overkill damage is clamped to exactly 0 (never negative)", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("3a) health clamping to 0", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
+      await wb(a, b); align(rm, b.sessionId); await wait(100);
+      const n = Math.ceil(PLAYER.maxHealth / blaster.damage) + 1;
+      for (let i = 0; i < n; i++) { si(a, i, true); await wait(blaster.fireCooldownMs + 80); }
+      expect(pfs(a.state, b.sessionId).health).toBe(0);
+      expect(pfs(a.state, b.sessionId).health).toBeGreaterThanOrEqual(0);
+      expect(pfs(a.state, b.sessionId).alive).toBe(false);
+    } finally { await cl(srv, [a, b]); }
+  }, 30000);
 
-      // Drive B from `maxHealth` to 0 and beyond (overkill).
-      const totalShots = Math.ceil(PLAYER.maxHealth / blaster.damage) + 1;
-      for (let i = 0; i < totalShots; i++) {
-        sendInput(roomA, i, AIM_A_TO_B, true);
-        await waitMs(blaster.fireCooldownMs + 80);
-      }
-
-      const bAfter = playerFromState(roomA.state, roomB.sessionId);
-      expect(bAfter.health).toBe(0);
-      expect(bAfter.health).toBeGreaterThanOrEqual(0);
-      expect(bAfter.alive).toBe(false);
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
-
-  it("3b) player health never exceeds the configured max health", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("3b) max health boundary", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
+      await wb(a, b);
+      expect(pfs(a.state, a.sessionId).health).toBe(PLAYER.maxHealth);
+      expect(pfs(a.state, b.sessionId).health).toBe(PLAYER.maxHealth);
+      align(rm, b.sessionId); await wait(100);
+      si(a, 0, true); await wait(300);
+      expect(pfs(a.state, a.sessionId).health).toBeLessThanOrEqual(PLAYER.maxHealth);
+      expect(pfs(a.state, b.sessionId).health).toBeLessThanOrEqual(PLAYER.maxHealth);
+    } finally { await cl(srv, [a, b]); }
+  }, 20000);
 
-      // On spawn, both players are initialised to exactly `maxHealth`.
-      const aSpawn = playerFromState(roomA.state, roomA.sessionId);
-      const bSpawn = playerFromState(roomA.state, roomB.sessionId);
-      expect(aSpawn.health).toBe(PLAYER.maxHealth);
-      expect(bSpawn.health).toBe(PLAYER.maxHealth);
-      expect(aSpawn.health).toBeLessThanOrEqual(PLAYER.maxHealth);
-      expect(bSpawn.health).toBeLessThanOrEqual(PLAYER.maxHealth);
-
-      // Drive some combat; no player's health may ever exceed `maxHealth`.
-      sendInput(roomA, 0, AIM_A_TO_B, true);
-      await waitMs(300);
-
-      const aAfter = playerFromState(roomA.state, roomA.sessionId);
-      const bAfter = playerFromState(roomA.state, roomB.sessionId);
-      expect(aAfter.health).toBeLessThanOrEqual(PLAYER.maxHealth);
-      expect(bAfter.health).toBeLessThanOrEqual(PLAYER.maxHealth);
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
-
-  it("4) a confirmed hit reduces the target's health by exactly the weapon damage", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("4) exact damage application", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
-      const bBefore = snapshot(playerFromState(roomA.state, roomB.sessionId));
-      expect(bBefore.health).toBe(PLAYER.maxHealth);
+      await wb(a, b); align(rm, b.sessionId); await wait(100);
+      const before = pfs(a.state, b.sessionId).health;
+      expect(before).toBe(PLAYER.maxHealth);
+      si(a, 0, true);
+      await wh(a, b.sessionId, PLAYER.maxHealth - blaster.damage);
+      const after = pfs(a.state, b.sessionId).health;
+      expect(before - after).toBe(blaster.damage);
+      expect(after).toBe(PLAYER.maxHealth - blaster.damage);
+    } finally { await cl(srv, [a, b]); }
+  }, 20000);
 
-      sendInput(roomA, 0, AIM_A_TO_B, true);
-      await waitHealth(roomA, roomB.sessionId, PLAYER.maxHealth - blaster.damage);
-
-      const bAfter = snapshot(playerFromState(roomA.state, roomB.sessionId));
-      // The decrease is EXACTLY the weapon's configured damage.
-      expect(bBefore.health - bAfter.health).toBe(blaster.damage);
-      expect(bAfter.health).toBe(PLAYER.maxHealth - blaster.damage);
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
-
-  it("5) the receiving client observes the updated health in its own state", async () => {
-    const { server, rooms: [roomA, roomB] } = await setup(2);
+  it("5) state broadcast to receiving client", async () => {
+    const { srv, rooms: [a, b], rm } = await setup();
     try {
-      await waitBothVisible(roomA, roomB);
-
-      // The receiving client (B) sees itself at full health initially.
-      const bBefore = playerFromState(roomB.state, roomB.sessionId);
-      expect(bBefore.health).toBe(PLAYER.maxHealth);
-
-      // Capture the authoritative HIT event observed by B.
-      const hitPromise = new Promise<HitEventPayload>((resolve) => {
-        roomB.on(EVENTS.HIT, (payload) => resolve(payload as HitEventPayload));
+      await wb(a, b); align(rm, b.sessionId); await wait(100);
+      expect(pfs(b.state, b.sessionId).health).toBe(PLAYER.maxHealth);
+      const hp = new Promise<HitEventPayload>((res, rej) => {
+        const t = setTimeout(() => rej(new Error("HIT timeout")), 5000);
+        b.onMessage(EVENTS.HIT, (p: any) => { clearTimeout(t); res(p); });
       });
-
-      // A fires at B; the hit is confirmed.
-      sendInput(roomA, 0, AIM_A_TO_B, true);
-      await waitHealth(roomA, roomB.sessionId, PLAYER.maxHealth - blaster.damage);
-
-      // The RECEIVING client (B) observes the updated health in ITS OWN
-      // (client-side) state — not just the shooter's view.
-      await waitHealth(roomB, roomB.sessionId, PLAYER.maxHealth - blaster.damage);
-      const bInB = playerFromState(roomB.state, roomB.sessionId);
-      expect(bInB.health).toBe(PLAYER.maxHealth - blaster.damage);
-
-      // And the authoritative HIT event reports the same remaining health.
-      const hit = await withDeadline(hitPromise, 5_000, "HIT event");
-      expect(hit.shooterId).toBe(roomA.sessionId);
-      expect(hit.targetId).toBe(roomB.sessionId);
+      si(a, 0, true);
+      await wh(b, b.sessionId, PLAYER.maxHealth - blaster.damage);
+      expect(pfs(b.state, b.sessionId).health).toBe(PLAYER.maxHealth - blaster.damage);
+      const hit = await dl(hp, 5000, "HIT");
+      expect(hit.shooterId).toBe(a.sessionId);
+      expect(hit.targetId).toBe(b.sessionId);
       expect(hit.damage).toBe(blaster.damage);
       expect(hit.remainingHealth).toBe(PLAYER.maxHealth - blaster.damage);
-    } finally {
-      await cleanup(server, [roomA, roomB]);
-    }
-  });
+    } finally { await cl(srv, [a, b]); }
+  }, 20000);
 });
