@@ -23,6 +23,11 @@
  * shared protocol contract so the entry point, clients, and tests share one
  * identifier.
  *
+ * Combat milestone: the server-authoritative hitscan combat room
+ * (`CombatRoom`) is registered under the `"combat"` route. Two players can
+ * aim and fire; the server validates, detects hits, and applies damage
+ * authoritatively.
+ *
  * Deliberately NOT implemented here (later stages): authentication,
  * reconnection policy, database/persistence. (Room capacity IS now expressed
  * per-room via `maxPlayers`.)
@@ -35,6 +40,7 @@ import { ROOMS, type RoomType } from "@buildshift/protocol";
 
 import { FoundationRoom } from "./rooms/FoundationRoom.js";
 import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
+import { CombatRoom, COMBAT_ROOM } from "./rooms/index.js";
 
 export type GameServer = Server;
 
@@ -58,8 +64,8 @@ export const TWO_PLAYER_ROOM: RoomType = ROOMS.TWO_PLAYER_MOVEMENT;
 
 /**
  * Create a Colyseus server configured with the WebSocket transport and the
- * registered rooms (foundation + two-player movement). The server is NOT
- * listening yet — call `startServer` to bind a port.
+ * registered rooms (foundation + two-player movement + combat). The server is
+ * NOT listening yet — call `startServer` to bind a port.
  */
 export function createServer(options: ServerOptions = {}): GameServer {
   const transport = new WebSocketTransport();
@@ -77,6 +83,8 @@ export function createServer(options: ServerOptions = {}): GameServer {
   });
   server.define(ROOMS.FOUNDATION, FoundationRoom);
   server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
+  server.define(COMBAT_ROOM, CombatRoom);
+  console.log(`[buildshift:game-server] combat room registered ("${COMBAT_ROOM}")`);
   return server;
 }
 
