@@ -15,8 +15,8 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
-import type { SubstepInput } from "../network/inputBatcher";
-import type { PredictionState } from "../network/predictionState";
+import type { SubstepInput } from "./substepInput";
+import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
 
@@ -179,6 +179,23 @@ export class PlayerController {
   }
 
   /**
+   * Sets the mesh position and rotation directly, bypassing the physics
+   * world entirely. Used by the Stage 2D multiplayer prediction system
+   * which drives the local player mesh from the shared deterministic
+   * `stepFullMovement` state (not from Rapier physics).
+   *
+   * This does NOT update the Rapier body — in the multiplayer mode the
+   * physics world is inert (no `step()` calls are made).
+   */
+  public setMeshTransform(
+    position: Readonly<{ x: number; y: number; z: number }>,
+    yaw: number,
+  ): void {
+    this.mesh.position.set(position.x, position.y, position.z);
+    this.mesh.rotation.y = yaw;
+  }
+
+  /**
    * Captures the complete local prediction state as a plain-data
    * {@link PredictionState} (Stage 2C2B reconciliation checkpoint).
    *
@@ -297,4 +314,3 @@ export class PlayerController {
     this.disposed = true;
   }
 }
-

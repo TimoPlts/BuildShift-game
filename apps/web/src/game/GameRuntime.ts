@@ -1,322 +1,245 @@
 import { Engine } from "@babylonjs/core/Engines/engine";
 import type { Scene } from "@babylonjs/core/scene";
+import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { PHYSICS_TIMING } from "@buildshift/game-config";
+import type { HitResultEvent, PlayerEliminatedEvent } from "@buildshift/protocol";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
-import { PredictionOrchestrator } from "./network/predictionOrchestrator";
-import { PredictionHistory } from "./network/predictionHistory";
-import { ReconciliationEngine } from "./network/reconciliation";
-import { ReconciliationCoordinator } from "./network/reconciliationCoordinator";
-import { RemotePlayerManager } from "./remote/RemotePlayerManager";
+import { AimController } from "./aim/AimController";
 import { PlayerController } from "./player/PlayerController";
-import { getFoundationNetwork } from "../network/networkInstance";
 import { createFoundationScene } from "./scene/createFoundationScene";
+import { HealthHud } from "./network/HealthHud";
+import type { SubstepInput } from "./player/substepInput";
+import {
+  createGameNetworking,
+  COMBAT_HIT_EVENT,
+  COMBAT_ELIMINATED_EVENT,
+  SIMULATION_TICK_SECONDS,
+  reconcileHealthDisplay,
+  type ParsedRoomState,
+  type InputSample,
+} from "./network";
+import { MovementDebugHUD } from "../ui/MovementDebugHUD";
 
-/** Fixed physics timestep (s), from the shared config — 60 Hz. */
 const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
-/** Hard cap on a single frame's delta (s) — protects against stalled tabs. */
-const MAX_FRAME_DELTA_SECONDS = 0.1;
-/**
- * Hard cap on fixed steps per frame (the "spiral of death" guard). After this
- * many catch-up steps in one frame we drop the remaining accumulated time so
- * a long hitch never freezes the render loop.
- */
-const MAX_FIXED_STEPS_PER_FRAME = 8;
+const MAX_FRAME_DELTA = 0.1;
+const MAX_STEPS = 8;
+const MAX_SIM_TICKS = 4;
+const NEUTRAL: Readonly<SubstepInput> = { moveX: 0, moveZ: 0, lookYaw: 0, jumpPressed: false };
 
-/**
- * Owns the Babylon engine, scene, render loop, and browser lifecycle hooks.
- *
- * Per-frame update order (avoids a one-frame lag between movement and
- * camera follow):
- *
- * 1. consume input (accumulated mouse delta) and apply it to the camera —
- *    the visual camera always runs at render rate, never 30 Hz
- * 2. fixed-step prediction in two-substep batches: at the first 1/60
- *    substep of a batch capture ONE input sample (movement axes, yaw, pitch,
- *    jump edge — each read once) and send it to the network exactly once;
- *    both substeps then simulate with that same sample (second substep with
- *    jumpPressed forced false), matching the server's "one PlayerInputFrame
- *    = two 1/60 physics substeps" semantics
- * 3. update the camera position from the new player position
- * 4. render the scene
- */
 export class GameRuntime {
   private readonly engine: Engine;
   private readonly scene: Scene;
   private readonly inputManager: InputManager;
   private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
-  private readonly prediction: PredictionOrchestrator;
-  /**
-   * The single, runtime-owned prediction history. Shared by BOTH the
-   * prediction orchestrator (which records completed batches) and the live
-   * reconciliation engine (which reads/rewinds them) — one source of truth.
-   */
-  private readonly predictionHistory = new PredictionHistory();
-  /**
-   * Pure coordinator that observes the network, tracks the local session, and
-   * drives the reconciliation engine at the safe batch boundary.
-   */
-  private readonly reconciliationCoordinator: ReconciliationCoordinator;
-  /**
-   * Presentation-only manager for REMOTE player meshes. Owns one capsule per
-   * remote player (keyed by playerId) and is driven by the SAME network
-   * UI-state observer as the reconciliation coordinator. The local player is
-   * never rendered here — it stays owned by PlayerController.
-   */
-  private readonly remotePlayerManager: RemotePlayerManager;
-  /** Unsubscribe for the page-lifetime network UI-state observer. */
-  private readonly unsubscribeNetwork: () => void;
-  private readonly foundationNetwork = getFoundationNetwork();
-  private readonly unsubscribeInputCleared: () => void;
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
-  /** Time accumulator (seconds) for the fixed physics step. */
   private accumulator = 0;
   private started = false;
   private disposed = false;
+  private readonly aimController = new AimController();
+  public readonly currentAimDirection = new Vector3(0, 0, -1);
+  private readonly networkClient;
+  private readonly inputBatcher;
+  private readonly predictionOrchestrator;
+  private readonly remoteInterpolation;
+  private readonly debugHud: MovementDebugHUD;
+  private readonly combatHud: HealthHud;
+  private simAccumulator = 0;
+  private isConnected = false;
+  private hudCleanup: (() => void) | null = null;
+  private combatHudCleanup: (() => void) | null = null;
+  private unsubscribeState: (() => void) | null = null;
+  private unsubscribeConnection: (() => void) | null = null;
+  private unsubscribeHitEvent: (() => void) | null = null;
+  private unsubscribeEliminatedEvent: (() => void) | null = null;
+  private remoteMesh: AbstractMesh | null = null;
+  private remoteMaterial: StandardMaterial | null = null;
+  private remoteMarker: AbstractMesh | null = null;
+  private remoteMarkerMat: StandardMaterial | null = null;
+  private remoteWasEliminated = false;
+  private remoteHitFlashFrames = 0;
 
-  /**
-   * Creates a ready-to-run runtime. This is async because the player's physics
-   * world must finish loading the Rapier WASM (compat build) before the
-   * character can be constructed. On any failure the partially-built Babylon
-   * objects are disposed before the error is rethrown.
-   */
   public static async create(canvas: HTMLCanvasElement): Promise<GameRuntime> {
     const engine = new Engine(canvas, true);
     try {
       const scene = createFoundationScene(engine);
       const inputManager = new InputManager(canvas);
-      let cameraController: ThirdPersonCameraController | undefined;
+      let cam: ThirdPersonCameraController | undefined;
       try {
-        cameraController = new ThirdPersonCameraController(scene);
-        const playerController = await PlayerController.create(scene);
-        return new GameRuntime(
-          engine,
-          scene,
-          inputManager,
-          cameraController,
-          playerController,
-        );
-      } catch (error) {
-        cameraController?.dispose();
-        inputManager.dispose();
-        scene.dispose();
-        throw error;
-      }
-    } catch (error) {
-      engine.dispose();
-      throw error;
-    }
+        cam = new ThirdPersonCameraController(scene);
+        const pc = await PlayerController.create(scene);
+        return new GameRuntime(engine, scene, inputManager, cam, pc, canvas);
+      } catch (e) { cam?.dispose(); inputManager.dispose(); scene.dispose(); throw e; }
+    } catch (e) { engine.dispose(); throw e; }
   }
 
-  private constructor(
-    engine: Engine,
-    scene: Scene,
-    inputManager: InputManager,
-    cameraController: ThirdPersonCameraController,
-    playerController: PlayerController,
-  ) {
-    this.engine = engine;
-    this.scene = scene;
-    this.inputManager = inputManager;
-    this.cameraController = cameraController;
-    this.playerController = playerController;
-    // Presentation-only remote-player meshes. The local player is never
-    // rendered here (it is owned by PlayerController); only the OTHER sessions
-    // in NetworkUiState.players get a remote capsule.
-    this.remotePlayerManager = new RemotePlayerManager(scene);
-    // The orchestrator owns the batch bookkeeping for local prediction. Each
-    // substep it captures ONE sample (driving both local prediction and the
-    // single network frame) and simulates with the batch's explicit input —
-    // the same semantics the server applies to one PlayerInputFrame.
-    this.prediction = new PredictionOrchestrator({
-      captureInput: () => {
-        const movement = this.inputManager.getMovementInput();
-        return {
-          moveX: movement.x,
-          moveZ: movement.z,
-          lookYaw: this.cameraController.getYaw(),
-          lookPitch: this.cameraController.getPitch(),
-          jump: this.inputManager.pollJumpPressed(),
-        };
-      },
-      sendSample: (sample) =>
-        this.foundationNetwork.sendSequencedPlayerInput(sample),
-      simulateSubstep: (input) => this.playerController.update(FIXED_DT, input),
-      // Completed successfully-sent batches are checkpointed into the shared
-      // history, captured from the local PlayerController after substep B.
-      history: this.predictionHistory,
-      capturePredictionState: () =>
-        this.playerController.capturePredictionState(),
+  private constructor(engine: Engine, scene: Scene, inputManager: InputManager, cameraController: ThirdPersonCameraController, playerController: PlayerController, canvas: HTMLCanvasElement) {
+    this.engine = engine; this.scene = scene; this.inputManager = inputManager;
+    this.cameraController = cameraController; this.playerController = playerController;
+    const networking = createGameNetworking();
+    this.networkClient = networking.client;
+    this.inputBatcher = networking.inputBatcher;
+    this.predictionOrchestrator = networking.predictionOrchestrator;
+    this.remoteInterpolation = networking.remotePlayerManager;
+    this.debugHud = new MovementDebugHUD(canvas); this.combatHud = new HealthHud();
+    this.unsubscribeState = this.networkClient.onStateChange((state) => this.handleNetworkState(state));
+    this.unsubscribeConnection = this.networkClient.onConnectionChange((connected) => {
+      this.isConnected = connected;
+      if (connected) { this.predictionOrchestrator.reset(); this.inputBatcher.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
+      this.debugHud.state.connectionState = connected ? "connected" : "disconnected";
     });
-
-    // Live reconciliation engine, rebuilt FRESH per session by the coordinator.
-    // Its replay path is LOCAL-ONLY: it drives the same PlayerController.update
-    // seam as prediction and never touches the network.
-    this.reconciliationCoordinator = new ReconciliationCoordinator({
-      history: this.predictionHistory,
-      createEngine: () =>
-        new ReconciliationEngine({
-          history: this.predictionHistory,
-          capturePredictionState: () =>
-            this.playerController.capturePredictionState(),
-          restorePredictionState: (state) =>
-            this.playerController.restorePredictionState(state),
-          setAuthoritativePosition: (position, yaw) =>
-            this.playerController.setAuthoritativePosition(position, yaw),
-          simulateSubstep: (input) =>
-            this.playerController.update(FIXED_DT, input),
-        }),
-      hasActiveBatch: () => this.prediction.hasActiveBatch(),
-    });
-
-    // Observe the page-lifetime network. A SINGLE subscription feeds both
-    // consumers, so reconciliation and remote rendering always see the same
-    // UI-state snapshot:
-    //  - the coordinator tracks the local session and coalesces the latest
-    //    local authoritative snapshot (reconciliation itself is deferred to
-    //    the safe batch boundary — never mid-batch), and
-    //  - the remote manager creates/updates/removes presentation-only remote
-    //    meshes for every OTHER session (the local player is excluded and
-    //    stays driven by PlayerController).
-    this.unsubscribeNetwork = this.foundationNetwork.subscribe(() => {
-      const state = this.foundationNetwork.getUiState();
-      this.reconciliationCoordinator.onNetworkState(state);
-      this.remotePlayerManager.sync(state.players, state.sessionId);
-    });
-    // Prime BOTH consumers with the CURRENT UI state. `subscribe` only fires
-    // on FUTURE changes, so an already-connected / already-in-session network
-    // (the FoundationNetwork is page-lifetime and may have joined before the
-    // runtime was constructed) would otherwise be missed until the next state
-    // change. Feeding the snapshot once here establishes the initial session
-    // (and a fresh engine) up front and spawns any already-present remotes.
-    const primedState = this.foundationNetwork.getUiState();
-    this.reconciliationCoordinator.onNetworkState(primedState);
-    this.remotePlayerManager.sync(primedState.players, primedState.sessionId);
-
-    this.unsubscribeInputCleared = this.inputManager.subscribeInputCleared(
-      this.handleInputCleared,
-    );
-
+    this.unsubscribeHitEvent = this.networkClient.onEvent(COMBAT_HIT_EVENT, (p) => this.handleHitEvent(p as HitResultEvent));
+    this.unsubscribeEliminatedEvent = this.networkClient.onEvent(COMBAT_ELIMINATED_EVENT, (p) => this.handleEliminatedEvent(p as PlayerEliminatedEvent));
     this.renderFrame = () => {
       if (!this.scene.isDisposed) {
-        // 1. Camera look (consumed once per frame, independent of physics).
-        // The visual third-person camera keeps updating every render frame;
-        // only movement *prediction* is sampled at 30 Hz (per batch).
-        const lookDelta = this.inputManager.consumeLookDelta();
-        this.cameraController.applyLook(lookDelta.x, lookDelta.y);
-
-        // 2. Fixed-step prediction: advance the character by whole 60 Hz
-        // substeps, batched two per input sample (30 Hz cadence) so the local
-        // prediction matches the server's authoritative semantics exactly —
-        // one PlayerInputFrame feeds two 1/60 substeps.
-        const deltaSeconds = Math.min(
-          Math.max(this.engine.getDeltaTime() / 1000, 0),
-          MAX_FRAME_DELTA_SECONDS,
-        );
-        this.accumulator += deltaSeconds;
-        let steps = 0;
-        while (
-          this.accumulator >= FIXED_DT &&
-          steps < MAX_FIXED_STEPS_PER_FRAME
-        ) {
-          // Safe batch boundary: authoritative reconciliation NEVER happens
-          // mid-batch. When no prediction batch is in progress (the moment a
-          // fresh one is about to start), apply the latest pending local
-          // authoritative snapshot. A snapshot that arrived during substep A
-          // stays pending and is reconciled here, once substep B has finished
-          // and the batch is idle.
-          if (!this.prediction.hasActiveBatch()) {
-            this.reconciliationCoordinator.reconcileAtSafeBoundary();
+        const ld = this.inputManager.consumeLookDelta();
+        this.cameraController.applyLook(ld.x, ld.y);
+        const dt = Math.min(Math.max(this.engine.getDeltaTime() / 1000, 0), MAX_FRAME_DELTA);
+        if (this.isConnected) {
+          this.simAccumulator += dt;
+          let t = 0;
+          while (this.simAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_SIM_TICKS) {
+            this.stepSimulationTick(); this.simAccumulator -= SIMULATION_TICK_SECONDS; t++;
           }
-          this.prediction.stepSubstep();
-          this.accumulator -= FIXED_DT;
-          steps += 1;
+          if (t >= MAX_SIM_TICKS) this.simAccumulator = 0;
+        } else {
+          this.accumulator += dt; let s = 0;
+          while (this.accumulator >= FIXED_DT && s < MAX_STEPS) {
+            this.playerController.update(FIXED_DT, NEUTRAL); this.accumulator -= FIXED_DT; s++;
+          }
+          if (s >= MAX_STEPS) this.accumulator = 0;
         }
-        if (steps >= MAX_FIXED_STEPS_PER_FRAME) {
-          // Spiral-of-death guard: drop the un-simulated remainder so a long
-          // hitch can't stall the render loop. Any half-finished batch is
-          // discarded so the next substep starts a fresh capture — no stale
-          // sample survives the hitch.
-          this.accumulator = 0;
-          this.prediction.resetBatch();
-        }
-
-        // 3. Camera follows the character's feet (centre - half height).
+        if (this.isConnected) { this.updateRemotePlayers(); this.updateCombatHud(); }
         this.cameraController.update(this.playerController.getFeetPosition());
-
-        // 4. Render.
+        this.aimController.getAimDirection(this.cameraController.getCamera(), this.currentAimDirection);
+        this.updateDebugHud();
         this.scene.render();
       }
     };
-    this.resizeEngine = () => {
-      this.engine.resize();
-    };
+    this.resizeEngine = () => { this.engine.resize(); };
   }
 
-  /**
-   * Clear local buffered state and stop authoritative held movement without
-   * waiting for another render/fixed step (hidden tabs may throttle both).
-   *
-   * The player's jump state (buffer + coyote) and the prediction batch are
-   * both reset synchronously, then one neutral authoritative intent is sent
-   * so the server stops applying the last held movement. After the reset the
-   * next physics substep starts a FRESH prediction batch — no stale sample
-   * survives.
-   */
-  private readonly handleInputCleared = (): void => {
-    this.playerController.resetJumpState();
-    this.prediction.clearAndSendNeutral({
-      moveX: 0,
-      moveZ: 0,
-      lookYaw: this.cameraController.getYaw(),
-      lookPitch: this.cameraController.getPitch(),
-      jump: false,
-    });
-  };
+  private stepSimulationTick(): void {
+    const m = this.inputManager.getMovementInput();
+    const fireIntent = this.inputManager.isFiring();
+    const seq = this.inputBatcher.nextSequence;
+    const sample: InputSample = { moveX: m.x, moveZ: m.z, yaw: this.cameraController.getYaw(), pitch: this.cameraController.getPitch(), jump: this.inputManager.pollJumpPressed(), crouch: false, primaryFire: fireIntent };
+    const predicted = this.predictionOrchestrator.predict({ moveX: sample.moveX, moveZ: sample.moveZ, yaw: sample.yaw, pitch: sample.pitch, jump: sample.jump, crouch: false });
+    this.predictionOrchestrator.predictFire(seq, fireIntent);
+    this.inputBatcher.send(sample, this.networkClient, { x: predicted.x, y: predicted.y, z: predicted.z, velocityY: predicted.velocityY, grounded: predicted.grounded });
+    this.playerController.setMeshTransform({ x: predicted.x, y: predicted.y, z: predicted.z }, predicted.yaw);
+  }
+
+  private handleNetworkState(state: ParsedRoomState): void {
+    const sid = this.networkClient.sessionId;
+    if (!sid) return;
+    const pids = Object.keys(state.players);
+    const local = state.players[sid];
+    if (local) {
+      this.predictionOrchestrator.onServerState({ x: local.x, y: local.y, z: local.z, yaw: local.yaw, velocityY: local.vy, grounded: local.vy === 0, sequence: local.sequence, health: local.health, shield: local.shield, energy: local.energy, ammo: local.ammo, lastFireSequence: local.lastFireSequence, isEliminated: local.isEliminated }, this.inputBatcher.getInputsAfter(local.sequence));
+      this.inputBatcher.pruneUpTo(local.sequence);
+    }
+    for (const pid of pids) {
+      if (pid === sid) continue;
+      const r = state.players[pid];
+      if (r) {
+        this.remoteInterpolation.addState({ x: r.x, y: r.y, z: r.z, yaw: r.yaw, velocityY: r.vy, grounded: false }, performance.now());
+        if (r.isEliminated) this.remoteWasEliminated = true;
+      }
+    }
+    if (!pids.some((p) => p !== sid) && this.remoteInterpolation.hasData) { this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
+  }
+
+  private handleHitEvent(event: HitResultEvent): void {
+    const sid = this.networkClient.sessionId;
+    if (!sid) return;
+    if (event.targetId !== sid) this.remoteHitFlashFrames = 6;
+  }
+
+  private handleEliminatedEvent(event: PlayerEliminatedEvent): void {
+    const sid = this.networkClient.sessionId;
+    if (!sid) return;
+    if (event.eliminatedId === sid) { this.combatHud.showEliminationOverlay(); }
+    else {
+      this.remoteWasEliminated = true;
+      if (this.remoteMesh && !this.remoteMesh.isDisposed() && this.remoteMaterial) { this.remoteMaterial.diffuseColor = new Color3(0.3, 0.3, 0.3); this.remoteMaterial.emissiveColor = new Color3(0, 0, 0); }
+    }
+  }
+
+  private updateRemotePlayers(): void {
+    if (!this.remoteInterpolation.hasData) {
+      if (this.remoteMesh && !this.remoteMesh.isDisposed()) this.remoteMesh.setEnabled(false);
+      this.debugHud.state.remotePresent = false; return;
+    }
+    const pos = this.remoteInterpolation.getInterpolated(performance.now());
+    if (!this.remoteMesh || this.remoteMesh.isDisposed()) this.createRemoteMesh();
+    if (this.remoteMesh) {
+      this.remoteMesh.setEnabled(true); this.remoteMesh.position.set(pos.x, pos.y, pos.z); this.remoteMesh.rotation.y = pos.yaw;
+      if (this.remoteHitFlashFrames > 0) { this.remoteHitFlashFrames--; if (this.remoteMaterial) this.remoteMaterial.emissiveColor = new Color3(0.8, 0.2, 0.1); }
+      else if (this.remoteMaterial) {
+        if (this.remoteWasEliminated) { this.remoteMaterial.emissiveColor = new Color3(0, 0, 0); this.remoteMaterial.diffuseColor = new Color3(0.3, 0.3, 0.3); }
+        else { this.remoteMaterial.emissiveColor = new Color3(0, 0.1, 0.2); this.remoteMaterial.diffuseColor = new Color3(0.2, 0.62, 0.95); }
+      }
+    }
+    this.debugHud.state.remotePresent = true;
+    this.debugHud.state.remoteX = pos.x; this.debugHud.state.remoteY = pos.y; this.debugHud.state.remoteZ = pos.z;
+  }
+
+  private updateCombatHud(): void {
+    const c = this.predictionOrchestrator.getCombatState();
+    reconcileHealthDisplay(this.combatHud, { health: c.health, shield: c.shield, ammo: c.ammo, isEliminated: c.isEliminated });
+  }
+
+  private createRemoteMesh(): void {
+    this.disposeRemoteMesh();
+    this.remoteMaterial = new StandardMaterial("remote-material", this.scene);
+    this.remoteMaterial.diffuseColor = new Color3(0.2, 0.62, 0.95); this.remoteMaterial.emissiveColor = new Color3(0, 0.1, 0.2);
+    this.remoteMesh = MeshBuilder.CreateCapsule("remote-player", { height: 1.8, radius: 0.35, tessellation: 16 }, this.scene);
+    this.remoteMesh.material = this.remoteMaterial;
+    this.remoteMarkerMat = new StandardMaterial("remote-marker-mat", this.scene); this.remoteMarkerMat.diffuseColor = new Color3(1, 1, 1);
+    this.remoteMarker = MeshBuilder.CreateBox("remote-marker", { width: 0.22, height: 0.08, depth: 0.06 }, this.scene);
+    this.remoteMarker.material = this.remoteMarkerMat; this.remoteMarker.parent = this.remoteMesh;
+    this.remoteMarker.position.set(0, 0.2, -0.35); this.remoteMarker.isPickable = false;
+  }
+
+  private disposeRemoteMesh(): void {
+    if (this.remoteMarker) { this.remoteMarker.dispose(); this.remoteMarker = null; }
+    if (this.remoteMesh) { this.remoteMesh.dispose(); this.remoteMesh = null; }
+    if (this.remoteMaterial) { this.remoteMaterial.dispose(); this.remoteMaterial = null; }
+    if (this.remoteMarkerMat) { this.remoteMarkerMat.dispose(); this.remoteMarkerMat = null; }
+  }
+
+  private updateDebugHud(): void {
+    const s = this.debugHud.state; const pred = this.predictionOrchestrator.getCurrentState();
+    s.localX = pred.x; s.localY = pred.y; s.localZ = pred.z;
+    s.sequence = this.inputBatcher.nextSequence; s.lastCorrectionDistance = this.predictionOrchestrator.lastCorrectionDistance;
+  }
 
   public start(): void {
-    if (this.disposed) {
-      throw new Error("Cannot start a disposed GameRuntime.");
-    }
-
-    if (this.started) {
-      return;
-    }
-
+    if (this.disposed) throw new Error("Cannot start a disposed GameRuntime.");
+    if (this.started) return;
     window.addEventListener("resize", this.resizeEngine);
-    this.engine.runRenderLoop(this.renderFrame);
-    this.engine.resize();
-    this.started = true;
+    this.engine.runRenderLoop(this.renderFrame); this.engine.resize(); this.started = true;
+    this.hudCleanup = this.debugHud.attach(); this.combatHudCleanup = this.combatHud.attach();
+    this.networkClient.start().catch((err) => { console.warn("[buildshift] failed to connect:", err); });
   }
 
   public dispose(): void {
-    if (this.disposed) {
-      return;
-    }
-
-    if (this.started) {
-      window.removeEventListener("resize", this.resizeEngine);
-      this.engine.stopRenderLoop(this.renderFrame);
-      this.started = false;
-    }
-
-    // InputManager.dispose() clears input, synchronously sending one final
-    // neutral frame while the clear subscription and controllers still live.
+    if (this.disposed) return;
+    if (this.started) { window.removeEventListener("resize", this.resizeEngine); this.engine.stopRenderLoop(this.renderFrame); this.started = false; }
     this.inputManager.dispose();
-    this.unsubscribeInputCleared();
-    // Stop observing the page-lifetime network so no listener leaks after the
-    // runtime is gone (the network itself lives on for the page).
-    this.unsubscribeNetwork();
-    this.playerController.dispose();
-    this.cameraController.dispose();
-    // Dispose every remote-player mesh (and its material) while the scene is
-    // still live — after the network observer is gone, so no remote is ever
-    // (re)created during teardown.
-    this.remotePlayerManager.dispose();
-    this.scene.dispose();
-    this.engine.dispose();
+    this.unsubscribeState?.(); this.unsubscribeConnection?.();
+    this.unsubscribeHitEvent?.(); this.unsubscribeEliminatedEvent?.();
+    this.networkClient.dispose(); this.disposeRemoteMesh();
+    this.hudCleanup?.(); this.combatHudCleanup?.(); this.combatHud.dispose();
+    this.debugHud.dispose(); this.playerController.dispose(); this.cameraController.dispose();
+    this.scene.dispose(); this.engine.dispose();
     this.disposed = true;
   }
 }

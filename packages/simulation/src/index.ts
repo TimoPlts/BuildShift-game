@@ -14,22 +14,67 @@ import { GAME_CONFIG_VERSION } from "@buildshift/game-config";
 export { movementInputToWorld } from "./movement/movementInputToWorld.js";
 export { stepHorizontalMovement } from "./movement/stepHorizontalMovement.js";
 export { stepVerticalMovement } from "./movement/stepVerticalMovement.js";
+export { integrateVerticalMovement } from "./movement/integrateVerticalMovement.js";
 export { JumpController } from "./movement/jumpController.js";
+export { stepFullMovement } from "./movement/verticalMovement.js";
+// The full-state vertical step is aliased to avoid a name collision with the
+// legacy velocity-only `stepVerticalMovement` (kept for the existing
+// game-server / web-app integrations).
+export { stepVerticalMovement as stepVerticalState } from "./movement/verticalMovement.js";
+
+// ───── Canonical player movement step (Stage 2D consolidated) ─────
+
+export {
+  stepPlayerMovement,
+  type PlayerMovementState,
+  type PlayerMovementInput,
+  type PlayerMovementConfig,
+} from "./movement/stepPlayerMovement.js";
+
 export type {
+  FullMovementState,
   HorizontalMovementConfig,
+  IntegrateVerticalConfig,
+  IntegrateVerticalResult,
   JumpControllerConfig,
   JumpControllerState,
   LocalMovementInput,
   Position2D,
+  VerticalInput,
   VerticalMovementConfig,
+  VerticalState,
+  VerticalStepResult,
   WorldMovementInput,
 } from "./movement/types.js";
+
+// ───── Combat (canonical hitscan contract) ─────
+
+export {
+  rayIntersectsCapsule,
+  distance3d,
+  hitscan,
+  DEFAULT_TARGET_RADIUS,
+  type Vec3,
+  type RayIntersectionResult,
+  type HitscanTarget,
+  type HitscanWeapon,
+  type HitscanHit,
+} from "./combat/hitscan.js";
+
+export {
+  canFire,
+  fireGate,
+  type CanFireConfig,
+  type FireGateInput,
+  type FireGateResult,
+  type FireGateRejectionReason,
+} from "./combat/fireGate.js";
 
 /**
  * Version of the simulation rules. Client and server must stay synchronized on
  * this (see docs/TECHNICAL_ARCHITECTURE.md §18 "Physics and Prediction Rule").
  */
-export const SIMULATION_VERSION = "0.1.0" as const;
+export const SIMULATION_VERSION = "0.2.0" as const;
 
 /**
  * Resolves the shared game-config version used by the simulation.

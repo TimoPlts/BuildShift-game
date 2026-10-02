@@ -16,7 +16,7 @@ import {
 
 describe("simulation scaffold", () => {
   it("exposes a simulation version", () => {
-    expect(SIMULATION_VERSION).toBe("0.1.0");
+    expect(SIMULATION_VERSION).toBe("0.2.0");
   });
 
   it("resolves the shared game-config version across the workspace", () => {

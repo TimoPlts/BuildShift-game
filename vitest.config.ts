@@ -23,6 +23,17 @@ export default defineConfig({
   },
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
+    exclude: [
+      // Retired legacy networking test stubs — physically empty (export {} only).
+      // These directories/files are scheduled for physical deletion; the vitest
+      // exclude prevents them from being discovered as test files in the
+      // interim.
+      "apps/web/src/net/**",
+      "apps/web/src/network/**",
+      "apps/web/src/game/remote/**",
+      "apps/web/src/game/GameRuntime.twoPlayer.integration.test.ts",
+      "**/node_modules/**",
+    ],
     environment: "node",
   },
 });

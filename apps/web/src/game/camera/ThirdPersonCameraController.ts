@@ -96,6 +96,11 @@ export class ThirdPersonCameraController {
     this.camera.setTarget(this.lookTarget);
   }
 
+  /** Exposes the underlying Babylon camera for aim/combat systems. */
+  public getCamera(): UniversalCamera {
+    return this.camera;
+  }
+
   public dispose(): void {
     if (this.disposed) {
       return;

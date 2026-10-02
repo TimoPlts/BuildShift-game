@@ -1,127 +1,194 @@
-import type { PlayerInputFrame } from "@buildshift/protocol";
+/**
+ * InputBatcher — manages the local input sequence and sends PlayerNetworkInput
+ * frames to the server each simulation tick.
+ *
+ * Responsibilities:
+ *  - Maintains a monotonically increasing sequence counter starting at 0.
+ *  - Each simulation tick, constructs a PlayerNetworkInput from the captured
+ *    input sample and sends it via the NetworkClient.
+ *  - Stores the sent input in a local ring buffer for reconciliation
+ *    (re-applying unacknowledged inputs after a server correction).
+ *
+ * The InputBatcher is a pure networking concern: it reads a plain input
+ * sample handed to it by the caller and converts it into a protocol
+ * PlayerNetworkInput. It does NOT read the browser keyboard or mouse directly.
+ */
+import type { PlayerNetworkInput } from "@buildshift/protocol";
+import type { NetworkClient } from "./NetworkClient";
 
 /**
- * One authoritative input sample — the exact client meaning of one server
- * `PlayerInputFrame` (docs/TECHNICAL_ARCHITECTURE.md §11):
- *
- *     sample N
- *     ├── physics substep A (1/60, uses this sample)
- *     └── physics substep B (1/60, uses the SAME sample; jump edge = false)
- *
- * The runtime captures ONE sample at the start of every batch of two 1/60
- * physics substeps and feeds that *same* sample to both local prediction and
- * the single network send. Stage 2C2B will later store these samples keyed
- * by the sequence assigned at send time.
+ * Ring buffer capacity: number of recent inputs retained for reconciliation.
+ * At 30 Hz, 30 entries ≈ 1 second of inputs — more than enough for any
+ * reasonable RTT.
  */
-export type InputSample = Omit<PlayerInputFrame, "sequence">;
+export const INPUT_BUFFER_SIZE = 30;
 
 /**
- * The explicit per-substep input handed to the local simulation. `jumpPressed`
- * is the *edge* for this substep only: `true` on the first substep of a batch
- * whose captured sample has `jump: true`, always `false` on the second
- * substep — so a Space press that arrives between the two substeps is never
- * consumed on substep B (the browser latch stays intact for the next batch).
+ * A plain input sample — the fields the caller captures from the input
+ * system and hands to the batcher each tick. The batcher adds the sequence
+ * to produce the full PlayerNetworkInput.
  */
-export interface SubstepInput {
+export interface InputSample {
+  /** Local movement X, normalised to [-1, 1] (+X is right). */
   moveX: number;
+  /** Local movement Z, normalised to [-1, 1] (-Z is forward). */
   moveZ: number;
-  lookYaw: number;
-  jumpPressed: boolean;
+  /** Camera yaw in radians (0 faces -Z, positive → +X). */
+  yaw: number;
+  /** Camera pitch in radians (0 = horizontal, positive = looking up). */
+  pitch: number;
+  /** Jump intent edge (true on the tick the player pressed jump). */
+  jump: boolean;
+  /** Crouch intent (true while holding crouch). */
+  crouch: boolean;
+  /**
+   * Primary fire intent (true while the player is holding the fire button).
+   * The batcher treats a missing value as `false` (no fire intent this tick).
+   */
+  primaryFire?: boolean;
 }
 
 /**
- * Pure two-substep batch tracker for prediction input samples.
- *
- * The runtime drives it once per 1/60 physics substep:
- *
- * 1. if `hasActiveBatch()` is false, capture a fresh sample (movement axes,
- *    yaw, pitch, and the raw jump edge — each polled ONCE), call
- *    `beginBatch(sample)`, and send the sample to the network exactly once;
- * 2. read `currentSubstepInput()` and feed it to the local simulation;
- * 3. call `finishSubstep()`.
- *
- * State machine: idle → first substep → second substep → idle → …
- *
- * The object holds no browser state and never reads input itself, so it is
- * deterministic and unit-testable. `reset()` discards any active batch so the
- * next substep starts a fresh capture (Stage 2C1 input-clear contract: no
- * stale sample may survive).
+ * A buffered entry: the full PlayerNetworkInput that was sent, plus the
+ * predicted state after applying it (for reconciliation comparison).
+ */
+export interface BufferedInput {
+  /** The full PlayerNetworkInput that was sent to the server. */
+  input: PlayerNetworkInput;
+  /** Predicted position after this input was applied (x, y, z). */
+  predictedX: number;
+  /** Predicted Y after this input was applied. */
+  predictedY: number;
+  /** Predicted Z after this input was applied. */
+  predictedZ: number;
+  /** Predicted vertical velocity after this input. */
+  predictedVelocityY: number;
+  /** Predicted grounded state after this input was applied. */
+  predictedGrounded: boolean;
+}
+
+/**
+ * Sends sequenced PlayerNetworkInput messages to the server and maintains a
+ * buffer of the last N sent inputs for reconciliation.
  */
 export class InputBatcher {
-  /** The sample captured at the start of the active batch, if any. */
-  private active: InputSample | null = null;
-  /** Which substep of the active batch is currently running. */
-  private substep: "first" | "second" = "first";
-
-  /** True while a batch has started but not yet completed both substeps. */
-  public hasActiveBatch(): boolean {
-    return this.active !== null;
-  }
-
+  private sequence = 0;
   /**
-   * Starts a fresh batch with the sample the runtime just captured. Must be
-   * called from the idle state (no active batch).
+   * Ring buffer of the most recently sent inputs (newest last).
+   * Entries are removed once they exceed INPUT_BUFFER_SIZE.
    */
-  public beginBatch(sample: InputSample): void {
-    if (this.active !== null) {
-      throw new Error(
-        "InputBatcher.beginBatch() called while a batch is still active.",
-      );
-    }
-    this.active = { ...sample };
-    this.substep = "first";
-  }
+  private buffer: BufferedInput[] = [];
 
   /**
-   * The explicit input for the substep currently running. The movement axes
-   * and yaw are reused from the captured sample on BOTH substeps; only the
-   * jump edge differs (first substep only).
-   */
-  public currentSubstepInput(): SubstepInput {
-    const sample = this.requireActiveBatch();
-    return {
-      moveX: sample.moveX,
-      moveZ: sample.moveZ,
-      lookYaw: sample.lookYaw,
-      jumpPressed: sample.jump && this.substep === "first",
-    };
-  }
-
-  /** The raw captured sample (as sent to the network) for the active batch. */
-  public currentSample(): InputSample {
-    return this.requireActiveBatch();
-  }
-
-  /**
-   * Marks the current substep as finished and advances the batch:
-   * first → second, second → idle (fresh capture on the next substep).
-   */
-  public finishSubstep(): void {
-    this.requireActiveBatch();
-    if (this.substep === "first") {
-      this.substep = "second";
-      return;
-    }
-    this.active = null;
-    this.substep = "first";
-  }
-
-  /**
-   * Discards any active batch. The next substep starts a fresh first substep,
-   * so no stale sample can survive an input-clear event (unlock / blur /
-   * hidden tab / disposal).
+   * Reset the sequence counter and input buffer. Called on (re)connect so
+   * sequences restart from 0 for the new session.
    */
   public reset(): void {
-    this.active = null;
-    this.substep = "first";
+    this.sequence = 0;
+    this.buffer = [];
   }
 
-  private requireActiveBatch(): InputSample {
-    if (this.active === null) {
-      throw new Error(
-        "InputBatcher: no active batch; call beginBatch() before reading a substep.",
-      );
+  /**
+   * The sequence number that will be assigned to the NEXT input.
+   */
+  public get nextSequence(): number {
+    return this.sequence;
+  }
+
+  /**
+   * The most recently sent input's sequence, or -1 if none has been sent.
+   */
+  public get lastSentSequence(): number {
+    return this.buffer.length > 0
+      ? this.buffer[this.buffer.length - 1].input.sequence
+      : -1;
+  }
+
+  /**
+   * Capture an input sample, assign the next sequence, build the
+   * PlayerNetworkInput, send it to the server, and store it in the buffer.
+   *
+   * @param sample the captured input (without sequence).
+   * @param client the NetworkClient to send through.
+   * @param predictedState the predicted state after applying this input
+   *        (captured by the caller right after prediction).
+   * @returns the full PlayerNetworkInput that was sent (with sequence).
+   */
+  public send(
+    sample: InputSample,
+    client: NetworkClient,
+    predictedState: {
+      x: number;
+      y: number;
+      z: number;
+      velocityY: number;
+      grounded: boolean;
+    },
+  ): PlayerNetworkInput {
+    const input: PlayerNetworkInput = {
+      sequence: this.sequence,
+      moveX: sample.moveX,
+      moveZ: sample.moveZ,
+      lookYaw: sample.yaw,
+      lookPitch: sample.pitch,
+      jump: sample.jump,
+      sprint: false,
+      crouch: sample.crouch,
+      primaryFire: sample.primaryFire === true,
+      secondaryFire: false,
+    };
+    this.sequence += 1;
+
+    // Store in buffer, evicting the oldest when full.
+    this.buffer.push({
+      input,
+      predictedX: predictedState.x,
+      predictedY: predictedState.y,
+      predictedZ: predictedState.z,
+      predictedVelocityY: predictedState.velocityY,
+      predictedGrounded: predictedState.grounded,
+    });
+    if (this.buffer.length > INPUT_BUFFER_SIZE) {
+      this.buffer.shift();
     }
-    return this.active;
+
+    // Send to the server (no-op when disconnected).
+    client.sendInput(input);
+
+    return input;
+  }
+
+  /**
+   * Return all buffered inputs with sequence > afterSequence, in ascending
+   * order. Used by the PredictionOrchestrator for reconciliation (re-applying
+   * unacknowledged inputs).
+   */
+  public getInputsAfter(afterSequence: number): BufferedInput[] {
+    return this.buffer.filter((entry) => entry.input.sequence > afterSequence);
+  }
+
+  /**
+   * Discard all buffered entries with sequence <= acknowledgedSequence.
+   * Returns the number of entries removed.
+   */
+  public pruneUpTo(acknowledgedSequence: number): number {
+    const first = this.buffer.findIndex(
+      (entry) => entry.input.sequence > acknowledgedSequence,
+    );
+    if (first === 0) {
+      return 0;
+    }
+    const kept = first === -1 ? [] : this.buffer.slice(first);
+    const removed = this.buffer.length - kept.length;
+    this.buffer.length = 0;
+    for (const entry of kept) {
+      this.buffer.push(entry);
+    }
+    return removed;
+  }
+
+  /** The number of buffered inputs currently retained. */
+  public get bufferLength(): number {
+    return this.buffer.length;
   }
 }

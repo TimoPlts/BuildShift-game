@@ -15,6 +15,9 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@colyseus/schema": "^5.0.33"
+  },
   "devDependencies": {
     "typescript": "^5.5.4"
   }

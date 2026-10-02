@@ -19,12 +19,61 @@ export interface HorizontalMovementConfig {
   moveSpeed: number;
 }
 
-/** Shared gravity / jump tuning for vertical movement. */
+/**
+ * Shared gravity / jump tuning for vertical movement.
+ *
+ * The legacy velocity-only `stepVerticalMovement` historically required
+ * `jumpSpeed`. The full-state `stepVerticalMovement` in `verticalMovement.ts`
+ * introduced `jumpVelocity` as the preferred name. Both are now optional:
+ * callers must provide at least one, and the implementation resolves the
+ * effective jump velocity as `jumpVelocity ?? jumpSpeed`.
+ *
+ * The optional fields (`maxFallSpeed`, `groundY`, `playerHalfHeight`) are used
+ * by the full-state `stepVerticalMovement` in `verticalMovement.ts` and are
+ * expected to be provided by the shared `VERTICAL_MOVEMENT` config.
+ */
 export interface VerticalMovementConfig {
   /** Gravity acceleration in m/s² (negative = downward). */
   gravity: number;
+  /**
+   * Initial upward velocity applied on a grounded jump (legacy name, m/s).
+   * Use `jumpVelocity` as the preferred field; this is kept for backward
+   * compatibility with configs that only have the legacy name.
+   */
+  jumpSpeed?: number;
+  /** Initial upward velocity (preferred name for the full-state step, m/s). */
+  jumpVelocity?: number;
+  /** Terminal velocity clamp in m/s (negative = maximum downward speed). */
+  maxFallSpeed?: number;
+  /** Ground reference Y coordinate (meters). */
+  groundY?: number;
+  /** Capsule half-height in meters, used for ground-check tolerance. */
+  playerHalfHeight?: number;
+}
+
+/**
+ * Configuration for the full vertical-position integrator
+ * ({@link integrateVerticalMovement}). Unlike {@link VerticalMovementConfig}
+ * (velocity-only step), this includes a ground reference so the integrator
+ * can clamp position and report landing.
+ */
+export interface IntegrateVerticalConfig {
+  /** Gravity acceleration in m/s² (negative = downward). */
+  gravity: number;
   /** Initial upward velocity applied on a grounded jump, in m/s. */
-  jumpSpeed: number;
+  jumpVelocity: number;
+  /** Ground reference Y coordinate (meters). */
+  groundY: number;
+}
+
+/** Result of a single vertical position-velocity integration step. */
+export interface IntegrateVerticalResult {
+  /** New Y position (meters) after the step. */
+  y: number;
+  /** New Y velocity (m/s) after the step. */
+  velocity: number;
+  /** True if the entity is on (or was clamped to) the ground at end of step. */
+  landed: boolean;
 }
 
 /**
@@ -55,4 +104,37 @@ export interface JumpControllerState {
   jumpBufferRemaining: number;
   /** Remaining (s) that the coyote window is active. */
   coyoteRemaining: number;
+}
+
+/** Vertical kinematic state (position + velocity + ground contact). */
+export interface VerticalState {
+  y: number;
+  velocityY: number;
+  grounded: boolean;
+}
+
+/** Vertical input for one simulation step. */
+export interface VerticalInput {
+  jump: boolean;
+}
+
+/** Result of a single full-state vertical movement step. */
+export interface VerticalStepResult {
+  y: number;
+  velocityY: number;
+  grounded: boolean;
+}
+
+/**
+ * Full player movement state combining horizontal position, orientation,
+ * and vertical kinematics. Used by {@link stepFullMovement} to step both
+ * horizontal and vertical axes in one call.
+ */
+export interface FullMovementState {
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  velocityY: number;
+  grounded: boolean;
 }
