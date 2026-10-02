@@ -3,7 +3,7 @@
  * ReconciliationCoordinator with the FoundationNetwork's current UI state.
  *
  * The FoundationNetwork-based prediction/reconciliation path has been
- * retired in favour of the canonical TwoPlayerClient path. The priming
+ * retired in favour of the canonical game/network/ path. The priming
  * contract no longer applies.
  */
 import { describe, it } from "vitest";
