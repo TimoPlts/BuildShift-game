@@ -1,7 +1,6 @@
 /**
- * @deprecated REMOVED — Tests for the retired `CombatRoom` stack.
+ * @deprecated RETIRED — Placeholder for a previously-removed room test suite.
  *
- * `CombatRoom` was a competing gameplay room that has been removed.
  * The canonical authoritative gameplay path is now
  * {@link TwoPlayerMovementRoom} (see `twoPlayerMovementRoom.test.ts`).
  *
