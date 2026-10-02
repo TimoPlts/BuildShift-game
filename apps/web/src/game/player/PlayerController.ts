@@ -15,8 +15,8 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
-import type { SubstepInput } from "../network/inputBatcher";
-import type { PredictionState } from "../network/predictionState";
+import type { SubstepInput } from "./substepInput";
+import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
 

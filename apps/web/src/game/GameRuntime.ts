@@ -13,8 +13,8 @@ import { AimController } from "./aim/AimController";
 import { RemotePlayerManager } from "./remote/RemotePlayerManager";
 import { PlayerController } from "./player/PlayerController";
 import { createFoundationScene } from "./scene/createFoundationScene";
-import { HealthHud } from "./network/HealthHud";
-import type { SubstepInput } from "./network/inputBatcher";
+import { HealthHud } from "./HealthHud";
+import type { SubstepInput } from "./player/substepInput";
 import {
   createGameNetworking,
   TwoPlayerClient, InputSender, LocalPlayerPrediction,
