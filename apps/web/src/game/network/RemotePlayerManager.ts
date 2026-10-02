@@ -92,7 +92,7 @@ export class RemotePlayerManager {
     }
 
     // Remove meshes whose owner is no longer in the authoritative state.
-    for (const [clientId, mesh] of this.meshes) {
+    for (const clientId of [...this.meshes.keys()]) {
       if (!present.has(clientId)) {
         this.disposeRemote(clientId);
       }
@@ -108,7 +108,7 @@ export class RemotePlayerManager {
       return;
     }
     this.disposed = true;
-    for (const clientId of this.meshes.keys()) {
+    for (const clientId of [...this.meshes.keys()]) {
       this.disposeRemote(clientId);
     }
   }
@@ -164,7 +164,7 @@ export class RemotePlayerManager {
     this.meshes.delete(clientId);
 
     const material = this.materials.get(clientId);
-    if (material && !material.isDisposed()) {
+    if (material) {
       material.dispose();
     }
     this.materials.delete(clientId);

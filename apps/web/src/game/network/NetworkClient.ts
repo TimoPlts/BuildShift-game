@@ -82,7 +82,6 @@ export interface CombatRoomLike {
  * ```
  */
 export class NetworkClient {
-  private client: Client | null = null;
   private room: CombatRoomLike | null = null;
   private _localClientId: string | null = null;
   private disposed = false;
@@ -127,7 +126,6 @@ export class NetworkClient {
 
     const client = new Client(url);
     const sdkRoom = await client.joinOrCreate(COMBAT_ROOM_TYPE);
-    this.client = client;
     this.attachRoom(sdkRoom as unknown as CombatRoomLike);
   }
 
@@ -210,21 +208,13 @@ export class NetworkClient {
     if (this.disposed) {
       return;
     }
-    this.detachedRoom();
-    if (this.client) {
-      try {
-        this.client.disconnect();
-      } catch {
-        // Socket may already be closed — nothing to do.
-      }
-      this.client = null;
-    }
+    this.detachRoom();
     this.room = null;
     this._localClientId = null;
     this.disposed = true;
   }
 
-  // ── internals ────────────────────────────────────────────────────────────
+  // ── internals ──────────────────────────────────────────────────────────────
 
   private attachRoom(room: CombatRoomLike): void {
     this.room = room;
@@ -279,7 +269,7 @@ export class NetworkClient {
   }
 
   /** Unsubscribe SDK handlers and best-effort leave the room. */
-  private detachedRoom(): void {
+  private detachRoom(): void {
     if (this.stateHandler) {
       this.stateHandler();
       this.stateHandler = null;
