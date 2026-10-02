@@ -3,11 +3,12 @@
  * authoritative state broadcast to all clients in the room.
  *
  * This is the canonical player state schema. It started life as the Stage 2D
- * two-player movement schema and was extended for the first combat milestone
- * with the authoritative `health` / `alive` combat fields. It is the Colyseus
- * `Schema` class (via the decorator-free `schema()` factory from
- * `@colyseus/schema` v5) that the authoritative server populates each tick
- * and that Colyseus' built-in state synchronisation delivers to clients.
+ * two-player movement schema and was extended for the canonical hitscan combat
+ * contract with the authoritative combat fields: `health`, `shield`, `energy`,
+ * `ammo`, `lastFireSequence`, and `isEliminated`. It is the Colyseus `Schema`
+ * class (via the decorator-free `schema()` factory from `@colyseus/schema` v5)
+ * that the authoritative server populates each tick and that Colyseus' built-in
+ * state synchronisation delivers to clients.
  *
  * Fields:
  *  - x, y, z       — world position in metres, Y-up, capsule-centre semantic.
@@ -20,9 +21,23 @@
  *                    authoritatively processed for this player; used by the
  *                    owning client for reconciliation (rollback + replay).
  *  - health        — authoritative current health in points. The server sets
- *                    this to `PLAYER.maxHealth` on join and decreases it
+ *                    this to `MAX_HEALTH` on join and decreases it
  *                    authoritatively on a confirmed hit.
- *  - alive         — authoritative flag; `false` once health reaches 0.
+ *  - shield        — authoritative current shield in points. Shield absorbs
+ *                    damage before health; initialised to `0` on join.
+ *  - energy        — authoritative current energy in points (used by later
+ *                    abilities); defaults to `0`.
+ *  - ammo          — authoritative current magazine ammo for the active
+ *                    weapon; the server sets this to the weapon's `maxAmmo`
+ *                    on join and decrements it on each confirmed shot.
+ *  - lastFireSequence — the highest input sequence at which this player last
+ *                    fired; combined with the weapon `fireIntervalTicks`
+ *                    cooldown it drives both local fire prediction and
+ *                    server-side validation (see `canFire`).
+ *  - alive         — authoritative liveness flag; `false` once the player can
+ *                    no longer act.
+ *  - isEliminated  — authoritative elimination flag; `true` once the player is
+ *                    eliminated (health reached 0 and not yet respawned).
  *
  * Coordinate convention matches `PlayerPositionSemantic` (capsule-centre)
  * and the shared `@buildshift/simulation` movement step.
@@ -53,16 +68,51 @@ export const PlayerStateSchema = schema(
     lastProcessedSequence: t.number(),
     /**
      * Authoritative current health in points. The server initialises this to
-     * `PLAYER.maxHealth` on join and decreases it on a confirmed hit. Defaults
-     * to `0` until the server assigns a value (Colyseus numeric default).
+     * `MAX_HEALTH` on join and decreases it on a confirmed hit. Defaults to
+     * `0` until the server assigns a value (Colyseus numeric default).
      */
     health: t.number(),
+    /**
+     * Authoritative current shield in points. Shield absorbs damage before
+     * health; the server initialises it to `0` on join. Defaults to `0` until
+     * the server assigns a value (Colyseus numeric default).
+     */
+    shield: t.number(),
+    /**
+     * Authoritative current energy in points. Used by later game-mode
+     * abilities; the server initialises it on join. Defaults to `0` until the
+     * server assigns a value (Colyseus numeric default).
+     */
+    energy: t.number(),
+    /**
+     * Authoritative current magazine ammo for the active weapon. The server
+     * initialises this to the weapon's `maxAmmo` on join and decrements it on
+     * each confirmed shot. Defaults to `0` until the server assigns a value
+     * (Colyseus numeric default).
+     */
+    ammo: t.number(),
+    /**
+     * Highest input sequence at which this player last fired. Combined with
+     * the weapon `fireIntervalTicks` cooldown it drives the fire gate
+     * (`canFire`) on both the predicting client and the authoritative server.
+     * `-1` means the player has not fired yet. Defaults to `0` until the
+     * server assigns a value (Colyseus numeric default).
+     */
+    lastFireSequence: t.number(),
     /**
      * Authoritative liveness flag. `true` while the player can act; the server
      * flips it to `false` once health reaches `0`. Defaults to `false` until
      * the server assigns a value (Colyseus boolean default).
      */
     alive: t.boolean(),
+    /**
+     * Authoritative elimination flag. The server flips this to `true` once the
+     * player is eliminated (health reached `0`). It is the combat-facing
+     * counterpart of `alive` and is what client prediction and the fire gate
+     * read to decide whether a local player may still fire. Defaults to
+     * `false` until the server assigns a value (Colyseus boolean default).
+     */
+    isEliminated: t.boolean(),
   },
   "PlayerStateSchema",
 );

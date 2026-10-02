@@ -20,11 +20,13 @@
  * movement contract: `PlayerNetworkInput`, `PlayerNetworkState`,
  * `GameStateSchema`, and the `GAME_MODES` / `GameModeId` identifiers.
  *
- * The first combat milestone adds the server-authoritative hitscan contract:
- * the `PlayerInput` per-tick input payload, the combat `EVENTS`
- * (`HIT` / `ELIMINATED` / `HEALTH_UPDATE`) and the `HitEventPayload` message
- * type, and the authoritative `health` / `alive` fields on
- * `PlayerStateSchema`.
+ * The canonical hitscan combat milestone adds the full combat contract:
+ * the `PlayerInput` per-tick input payload (with a `0`/`1` `primaryFire`
+ * edge), the combat `EVENTS` (`HIT` / `ELIMINATED` / `HEALTH_UPDATE`) with
+ * the `HitResultEvent` / `PlayerEliminatedEvent` payloads and the legacy
+ * `HitEventPayload`, the shared `WeaponId` vocabulary, and the authoritative
+ * `health` / `shield` / `energy` / `ammo` / `lastFireSequence` /
+ * `isEliminated` fields on `PlayerStateSchema`.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -57,14 +59,24 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ─── Event identifiers + combat payloads (single source of truth) ────────
+// ─── Weapon vocabulary (canonical hitscan combat) ────────────────────────────
+export {
+  WEAPON_IDS,
+  isWeaponId,
+  type WeaponId,
+} from "./weapons.js";
+
+// ─── Event identifiers + combat payloads (single source of truth) ────────────
 export {
   EVENTS,
   type EventName,
+  type HitPoint,
+  type HitResultEvent,
+  type PlayerEliminatedEvent,
   type HitEventPayload,
 } from "./events/index.js";
 
-// ─── Stage 2D: Colyseus wire schemas ───────────────────────────────────────
+// ─── Stage 2D: Colyseus wire schemas ─────────────────────────────────────────
 
 export {
   PlayerStateSchema,
@@ -74,7 +86,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ─── Stage 2D (consolidated): canonical movement contract ─────────────────
+// ─── Stage 2D (consolidated): canonical movement contract ───────────────────
 
 export {
   type PlayerNetworkState,
