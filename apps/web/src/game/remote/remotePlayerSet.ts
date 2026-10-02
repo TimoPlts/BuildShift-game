@@ -1,4 +1,16 @@
-import type { ClientPlayerSnapshot } from "../../network/colyseus/playerSnapshot";
+/**
+ * A client-side, plain-object snapshot of one player's authoritative state.
+ * Mirrors the accepted AuthoritativePlayerState contract field-for-field.
+ */
+export interface ClientPlayerSnapshot {
+  playerId: string;
+  position: { x: number; y: number; z: number };
+  yaw: number;
+  acknowledgedSequence: number;
+}
+
+/** A plain map of `playerId` → {@link ClientPlayerSnapshot}. */
+export type PlayerSnapshotMap = Record<string, ClientPlayerSnapshot>;
 
 /**
  * A presentation-only view of one remote player's authoritative position +

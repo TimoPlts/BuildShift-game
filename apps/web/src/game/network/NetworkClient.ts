@@ -20,7 +20,7 @@ import type {
   PlayerNetworkInput,
   PlayerNetworkState,
 } from "@buildshift/protocol";
-import { resolveGameServerUrl } from "../../network/colyseus/serverUrl";
+import { resolveGameServerUrl } from "./serverUrl";
 
 /**
  * The room name for the two-player movement room. Must match the server's

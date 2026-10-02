@@ -1,10 +1,10 @@
 import { Color3, MeshBuilder, Scene, StandardMaterial, type AbstractMesh } from "@babylonjs/core";
 import { PLAYER_COLLIDER, PLAYER_COLLIDER_TOTAL_HEIGHT } from "@buildshift/game-config";
 
-import type { PlayerSnapshotMap } from "../../network/colyseus/playerSnapshot";
 import {
   mapPlayersToRemoteViews,
   reconcileRemotePlayers,
+  type PlayerSnapshotMap,
   type RemotePlayerView,
 } from "./remotePlayerSet";
 
@@ -38,12 +38,11 @@ interface RemotePlayerMesh {
  *
  * It owns one Babylon capsule per remote player, keyed by `playerId`, and
  * creates/updates/removes them in response to the authoritative snapshot map
- * from the existing `FoundationNetwork` (`NetworkUiState.players`). It is
- * driven exclusively by {@link reconcileRemotePlayers}, which decides the
- * create/update/remove set — keeping the decision logic pure and node-testable
- * while this class owns only the Babylon side-effects.
+ * from the network layer. It is driven exclusively by {@link reconcileRemotePlayers},
+ * which decides the create/update/remove set — keeping the decision logic pure
+ * and node-testable while this class owns only the Babylon side-effects.
  *
- * Deliberate non-goals (see Stage 2D-1):
+ * Deliberate non-goals:
  *  - The LOCAL player is NEVER rendered here; it stays driven by
  *    `PlayerController` prediction/reconciliation. The local session id is
  *    excluded from every operation.
@@ -71,7 +70,7 @@ export class RemotePlayerManager {
   /**
    * Reconcile the live remote-mesh set against the authoritative snapshot map.
    *
-   * `players` is the `NetworkUiState.players` root (playerId → validated
+   * `players` is the authoritative player snapshot root (playerId → validated
    * snapshot). `localSessionId` is the current local session (the key that is
    * NEVER rendered as a remote player). Calling this on every network-state
    * emit keeps meshes in sync: new players spawn, moved players move, and

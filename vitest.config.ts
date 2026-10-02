@@ -24,10 +24,11 @@ export default defineConfig({
   test: {
     include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
     exclude: [
-      // Retired competing client networking stack — no longer part of the
+      // Retired competing client networking stacks — no longer part of the
       // production import graph. The canonical networking stack lives in
-      // apps/web/src/network/.
+      // apps/web/src/game/network/.
       "apps/web/src/net/**",
+      "apps/web/src/network/**",
       "**/node_modules/**",
     ],
     environment: "node",
