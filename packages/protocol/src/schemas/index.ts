@@ -18,7 +18,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./roomStateSchema.js";
 
-// ─── Canonical plain-TypeScript network contracts ──────────────────────
+// ───── Canonical plain-TypeScript network contracts ─────────────────────────────
 
 export { type PlayerNetworkState } from "./playerNetworkState.js";
 
