@@ -5,36 +5,38 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
-import { PHYSICS_TIMING, MAX_HEALTH, MAX_SHIELD } from "@buildshift/game-config";
+import { PHYSICS_TIMING } from "@buildshift/game-config";
 import type { HitResultEvent, PlayerEliminatedEvent } from "@buildshift/protocol";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { AimController } from "./aim/AimController";
-import { RemotePlayerManager } from "./remote/RemotePlayerManager";
 import { PlayerController } from "./player/PlayerController";
 import { createFoundationScene } from "./scene/createFoundationScene";
 import { HealthHud } from "./HealthHud";
 import type { SubstepInput } from "./player/substepInput";
 import {
   createGameNetworking,
-  TwoPlayerClient, InputSender, LocalPlayerPrediction,
-  RemotePlayerInterpolation, SIMULATION_TICK_SECONDS,
-  COMBAT_HIT_EVENT, COMBAT_ELIMINATED_EVENT,
-  type ParsedRoomState, type InputSample,
-} from "../network/twoPlayer";
+  COMBAT_HIT_EVENT,
+  COMBAT_ELIMINATED_EVENT,
+  SIMULATION_TICK_SECONDS,
+  reconcileHealthDisplay,
+  type ParsedRoomState,
+  type InputSample,
+} from "./network";
 import { MovementDebugHUD } from "../ui/MovementDebugHUD";
+
 const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
 const MAX_FRAME_DELTA = 0.1;
 const MAX_STEPS = 8;
 const MAX_2P_TICKS = 4;
 const NEUTRAL: Readonly<SubstepInput> = { moveX: 0, moveZ: 0, lookYaw: 0, jumpPressed: false };
+
 export class GameRuntime {
   private readonly engine: Engine;
   private readonly scene: Scene;
   private readonly inputManager: InputManager;
   private readonly cameraController: ThirdPersonCameraController;
   private readonly playerController: PlayerController;
-  private readonly remotePlayerManager: RemotePlayerManager;
   private readonly renderFrame: () => void;
   private readonly resizeEngine: () => void;
   private accumulator = 0;
@@ -42,18 +44,18 @@ export class GameRuntime {
   private disposed = false;
   private readonly aimController = new AimController();
   public readonly currentAimDirection = new Vector3(0, 0, -1);
-  private readonly twoPlayerClient: TwoPlayerClient;
-  private readonly inputSender: InputSender;
-  private readonly localPrediction: LocalPlayerPrediction;
-  private readonly remoteInterpolation: RemotePlayerInterpolation;
+  private readonly networkClient;
+  private readonly inputBatcher;
+  private readonly predictionOrchestrator;
+  private readonly remoteInterpolation;
   private readonly debugHud: MovementDebugHUD;
   private readonly combatHud: HealthHud;
   private twoPlayerAccumulator = 0;
   private twoPlayerConnected = false;
   private hudCleanup: (() => void) | null = null;
   private combatHudCleanup: (() => void) | null = null;
-  private unsubscribeTwoPlayerState: (() => void) | null = null;
-  private unsubscribeTwoPlayerConnection: (() => void) | null = null;
+  private unsubscribeState: (() => void) | null = null;
+  private unsubscribeConnection: (() => void) | null = null;
   private unsubscribeHitEvent: (() => void) | null = null;
   private unsubscribeEliminatedEvent: (() => void) | null = null;
   private remoteMesh: AbstractMesh | null = null;
@@ -62,6 +64,7 @@ export class GameRuntime {
   private remoteMarkerMat: StandardMaterial | null = null;
   private remoteWasEliminated = false;
   private remoteHitFlashFrames = 0;
+
   public static async create(canvas: HTMLCanvasElement): Promise<GameRuntime> {
     const engine = new Engine(canvas, true);
     try {
@@ -75,28 +78,24 @@ export class GameRuntime {
       } catch (e) { cam?.dispose(); inputManager.dispose(); scene.dispose(); throw e; }
     } catch (e) { engine.dispose(); throw e; }
   }
+
   private constructor(engine: Engine, scene: Scene, inputManager: InputManager, cameraController: ThirdPersonCameraController, playerController: PlayerController, canvas: HTMLCanvasElement) {
     this.engine = engine; this.scene = scene; this.inputManager = inputManager;
     this.cameraController = cameraController; this.playerController = playerController;
-    // Wire the canonical two-player networking stack through the single
-    // production factory so the runtime is guaranteed exactly ONE network
-    // client. This is the wiring the single-client contract test asserts on
-    // (see GameRuntime.singleClient.contract.test.ts).
     const networking = createGameNetworking();
-    this.twoPlayerClient = networking.client;
-    this.inputSender = networking.inputSender;
-    this.localPrediction = networking.localPrediction;
-    this.remoteInterpolation = networking.remoteInterpolation;
+    this.networkClient = networking.client;
+    this.inputBatcher = networking.inputBatcher;
+    this.predictionOrchestrator = networking.predictionOrchestrator;
+    this.remoteInterpolation = networking.remotePlayerManager;
     this.debugHud = new MovementDebugHUD(canvas); this.combatHud = new HealthHud();
-    this.remotePlayerManager = new RemotePlayerManager(scene);
-    this.unsubscribeTwoPlayerState = this.twoPlayerClient.onStateChange((state) => this.handleTwoPlayerState(state));
-    this.unsubscribeTwoPlayerConnection = this.twoPlayerClient.onConnectionChange((connected) => {
+    this.unsubscribeState = this.networkClient.onStateChange((state) => this.handleNetworkState(state));
+    this.unsubscribeConnection = this.networkClient.onConnectionChange((connected) => {
       this.twoPlayerConnected = connected;
-      if (connected) { this.localPrediction.reset(); this.inputSender.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
+      if (connected) { this.predictionOrchestrator.reset(); this.inputBatcher.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
       this.debugHud.state.connectionState = connected ? "connected" : "disconnected";
     });
-    this.unsubscribeHitEvent = this.twoPlayerClient.onEvent(COMBAT_HIT_EVENT, (p) => this.handleHitEvent(p as HitResultEvent));
-    this.unsubscribeEliminatedEvent = this.twoPlayerClient.onEvent(COMBAT_ELIMINATED_EVENT, (p) => this.handleEliminatedEvent(p as PlayerEliminatedEvent));
+    this.unsubscribeHitEvent = this.networkClient.onEvent(COMBAT_HIT_EVENT, (p) => this.handleHitEvent(p as HitResultEvent));
+    this.unsubscribeEliminatedEvent = this.networkClient.onEvent(COMBAT_ELIMINATED_EVENT, (p) => this.handleEliminatedEvent(p as PlayerEliminatedEvent));
     this.renderFrame = () => {
       if (!this.scene.isDisposed) {
         const ld = this.inputManager.consumeLookDelta();
@@ -106,7 +105,7 @@ export class GameRuntime {
           this.twoPlayerAccumulator += dt;
           let t = 0;
           while (this.twoPlayerAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_2P_TICKS) {
-            this.stepTwoPlayerTick(); this.twoPlayerAccumulator -= SIMULATION_TICK_SECONDS; t++;
+            this.stepSimulationTick(); this.twoPlayerAccumulator -= SIMULATION_TICK_SECONDS; t++;
           }
           if (t >= MAX_2P_TICKS) this.twoPlayerAccumulator = 0;
         } else {
@@ -125,25 +124,26 @@ export class GameRuntime {
     };
     this.resizeEngine = () => { this.engine.resize(); };
   }
-  private stepTwoPlayerTick(): void {
+
+  private stepSimulationTick(): void {
     const m = this.inputManager.getMovementInput();
     const fireIntent = this.inputManager.isFiring();
-    const seq = this.inputSender.nextSequence;
+    const seq = this.inputBatcher.nextSequence;
     const sample: InputSample = { moveX: m.x, moveZ: m.z, yaw: this.cameraController.getYaw(), pitch: this.cameraController.getPitch(), jump: this.inputManager.pollJumpPressed(), crouch: false, primaryFire: fireIntent };
-    const predicted = this.localPrediction.predict(sample);
-    this.localPrediction.predictFire(seq, fireIntent);
-    this.inputSender.send(sample, this.twoPlayerClient, { x: predicted.x, y: predicted.y, z: predicted.z, velocityY: predicted.velocityY, grounded: predicted.grounded });
+    const predicted = this.predictionOrchestrator.predict({ moveX: sample.moveX, moveZ: sample.moveZ, yaw: sample.yaw, pitch: sample.pitch, jump: sample.jump, crouch: false });
+    this.predictionOrchestrator.predictFire(seq, fireIntent);
+    this.inputBatcher.send(sample, this.networkClient, { x: predicted.x, y: predicted.y, z: predicted.z, velocityY: predicted.velocityY, grounded: predicted.grounded });
     this.playerController.setMeshTransform({ x: predicted.x, y: predicted.y, z: predicted.z }, predicted.yaw);
   }
-  private handleTwoPlayerState(state: ParsedRoomState): void {
-    const sid = this.twoPlayerClient.sessionId;
+
+  private handleNetworkState(state: ParsedRoomState): void {
+    const sid = this.networkClient.sessionId;
     if (!sid) return;
     const pids = Object.keys(state.players);
     const local = state.players[sid];
     if (local) {
-      this.localPrediction.onServerState({ x: local.x, y: local.y, z: local.z, yaw: local.yaw, velocityY: local.vy, grounded: local.vy === 0, sequence: local.sequence, health: local.health, shield: local.shield, energy: local.energy, ammo: local.ammo, lastFireSequence: local.lastFireSequence, isEliminated: local.isEliminated }, this.inputSender.getInputsAfter(local.sequence));
-      this.inputSender.pruneUpTo(local.sequence);
-      if (this.localPrediction.isEliminated) this.combatHud.showEliminationOverlay();
+      this.predictionOrchestrator.onServerState({ x: local.x, y: local.y, z: local.z, yaw: local.yaw, velocityY: local.vy, grounded: local.vy === 0, sequence: local.sequence, health: local.health, shield: local.shield, energy: local.energy, ammo: local.ammo, lastFireSequence: local.lastFireSequence, isEliminated: local.isEliminated }, this.inputBatcher.getInputsAfter(local.sequence));
+      this.inputBatcher.pruneUpTo(local.sequence);
     }
     for (const pid of pids) {
       if (pid === sid) continue;
@@ -155,13 +155,15 @@ export class GameRuntime {
     }
     if (!pids.some((p) => p !== sid) && this.remoteInterpolation.hasData) { this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
   }
+
   private handleHitEvent(event: HitResultEvent): void {
-    const sid = this.twoPlayerClient.sessionId;
+    const sid = this.networkClient.sessionId;
     if (!sid) return;
     if (event.targetId !== sid) this.remoteHitFlashFrames = 6;
   }
+
   private handleEliminatedEvent(event: PlayerEliminatedEvent): void {
-    const sid = this.twoPlayerClient.sessionId;
+    const sid = this.networkClient.sessionId;
     if (!sid) return;
     if (event.eliminatedId === sid) { this.combatHud.showEliminationOverlay(); }
     else {
@@ -169,6 +171,7 @@ export class GameRuntime {
       if (this.remoteMesh && !this.remoteMesh.isDisposed() && this.remoteMaterial) { this.remoteMaterial.diffuseColor = new Color3(0.3, 0.3, 0.3); this.remoteMaterial.emissiveColor = new Color3(0, 0, 0); }
     }
   }
+
   private updateRemotePlayers(): void {
     if (!this.remoteInterpolation.hasData) {
       if (this.remoteMesh && !this.remoteMesh.isDisposed()) this.remoteMesh.setEnabled(false);
@@ -187,51 +190,56 @@ export class GameRuntime {
     this.debugHud.state.remotePresent = true;
     this.debugHud.state.remoteX = pos.x; this.debugHud.state.remoteY = pos.y; this.debugHud.state.remoteZ = pos.z;
   }
+
   private updateCombatHud(): void {
-    const c = this.localPrediction.getCombatState();
-    this.combatHud.setHealth(c.health, MAX_HEALTH); this.combatHud.setShield(c.shield, MAX_SHIELD);
-    this.combatHud.setAmmo(c.ammo); this.combatHud.setWeapon("Assault Rifle");
+    const c = this.predictionOrchestrator.getCombatState();
+    reconcileHealthDisplay(this.combatHud, { health: c.health, shield: c.shield, ammo: c.ammo, isEliminated: c.isEliminated });
   }
+
   private createRemoteMesh(): void {
     this.disposeRemoteMesh();
-    this.remoteMaterial = new StandardMaterial("remote-2d-material", this.scene);
+    this.remoteMaterial = new StandardMaterial("remote-material", this.scene);
     this.remoteMaterial.diffuseColor = new Color3(0.2, 0.62, 0.95); this.remoteMaterial.emissiveColor = new Color3(0, 0.1, 0.2);
-    this.remoteMesh = MeshBuilder.CreateCapsule("remote-player-2d", { height: 1.8, radius: 0.35, tessellation: 16 }, this.scene);
+    this.remoteMesh = MeshBuilder.CreateCapsule("remote-player", { height: 1.8, radius: 0.35, tessellation: 16 }, this.scene);
     this.remoteMesh.material = this.remoteMaterial;
-    this.remoteMarkerMat = new StandardMaterial("remote-2d-marker-mat", this.scene); this.remoteMarkerMat.diffuseColor = new Color3(1, 1, 1);
-    this.remoteMarker = MeshBuilder.CreateBox("remote-2d-marker", { width: 0.22, height: 0.08, depth: 0.06 }, this.scene);
+    this.remoteMarkerMat = new StandardMaterial("remote-marker-mat", this.scene); this.remoteMarkerMat.diffuseColor = new Color3(1, 1, 1);
+    this.remoteMarker = MeshBuilder.CreateBox("remote-marker", { width: 0.22, height: 0.08, depth: 0.06 }, this.scene);
     this.remoteMarker.material = this.remoteMarkerMat; this.remoteMarker.parent = this.remoteMesh;
     this.remoteMarker.position.set(0, 0.2, -0.35); this.remoteMarker.isPickable = false;
   }
+
   private disposeRemoteMesh(): void {
     if (this.remoteMarker) { this.remoteMarker.dispose(); this.remoteMarker = null; }
     if (this.remoteMesh) { this.remoteMesh.dispose(); this.remoteMesh = null; }
     if (this.remoteMaterial) { this.remoteMaterial.dispose(); this.remoteMaterial = null; }
     if (this.remoteMarkerMat) { this.remoteMarkerMat.dispose(); this.remoteMarkerMat = null; }
   }
+
   private updateDebugHud(): void {
-    const s = this.debugHud.state; const pred = this.localPrediction.getCurrentState();
+    const s = this.debugHud.state; const pred = this.predictionOrchestrator.getCurrentState();
     s.localX = pred.x; s.localY = pred.y; s.localZ = pred.z;
-    s.sequence = this.inputSender.nextSequence; s.lastCorrectionDistance = this.localPrediction.lastCorrectionDistance;
+    s.sequence = this.inputBatcher.nextSequence; s.lastCorrectionDistance = this.predictionOrchestrator.lastCorrectionDistance;
   }
+
   public start(): void {
     if (this.disposed) throw new Error("Cannot start a disposed GameRuntime.");
     if (this.started) return;
     window.addEventListener("resize", this.resizeEngine);
     this.engine.runRenderLoop(this.renderFrame); this.engine.resize(); this.started = true;
     this.hudCleanup = this.debugHud.attach(); this.combatHudCleanup = this.combatHud.attach();
-    this.twoPlayerClient.start().catch((err) => { console.warn("[buildshift:2d] failed to connect:", err); });
+    this.networkClient.start().catch((err) => { console.warn("[buildshift] failed to connect:", err); });
   }
+
   public dispose(): void {
     if (this.disposed) return;
     if (this.started) { window.removeEventListener("resize", this.resizeEngine); this.engine.stopRenderLoop(this.renderFrame); this.started = false; }
     this.inputManager.dispose();
-    this.unsubscribeTwoPlayerState?.(); this.unsubscribeTwoPlayerConnection?.();
+    this.unsubscribeState?.(); this.unsubscribeConnection?.();
     this.unsubscribeHitEvent?.(); this.unsubscribeEliminatedEvent?.();
-    this.twoPlayerClient.dispose(); this.disposeRemoteMesh();
+    this.networkClient.dispose(); this.disposeRemoteMesh();
     this.hudCleanup?.(); this.combatHudCleanup?.(); this.combatHud.dispose();
     this.debugHud.dispose(); this.playerController.dispose(); this.cameraController.dispose();
-    this.remotePlayerManager.dispose(); this.scene.dispose(); this.engine.dispose();
+    this.scene.dispose(); this.engine.dispose();
     this.disposed = true;
   }
 }
