@@ -60,7 +60,7 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ───── Weapon vocabulary (canonical hitscan combat) ─────
+// ───── Weapon vocabulary (canonical hitscan combat) ─────────────
 export {
   WEAPON_IDS,
   isWeaponId,
@@ -80,7 +80,7 @@ export {
   type HitEventPayload,
 } from "./events/index.js";
 
-// ───── Stage 2D: Colyseus wire schemas ─────
+// ───── Stage 2D: Colyseus wire schemas ─────────────
 
 export {
   PlayerStateSchema,
@@ -90,7 +90,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ───── Stage 2D (consolidated): canonical movement contract ─────
+// ───── Stage 2D (consolidated): canonical movement contract ─────────────
 
 export {
   type PlayerNetworkState,
@@ -105,6 +105,17 @@ export {
   GAME_MODE_IDS,
   type GameModeId,
 } from "./gameModes.js";
+
+// ───── Match / round protocol (1v1 match loop) ─────────────
+
+export {
+  MatchPhase,
+  type RoundResult,
+  RoundResultSchema,
+  type RoundResultSchemaInstance,
+  RoundScoreSchema,
+  type RoundScoreSchemaInstance,
+} from "./match.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";
