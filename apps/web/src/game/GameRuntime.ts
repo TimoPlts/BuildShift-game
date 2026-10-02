@@ -12,7 +12,7 @@ import { InputManager } from "./input/InputManager";
 import { AimController } from "./aim/AimController";
 import { PlayerController } from "./player/PlayerController";
 import { createFoundationScene } from "./scene/createFoundationScene";
-import { HealthHud } from "./HealthHud";
+import { HealthHud } from "./network/HealthHud";
 import type { SubstepInput } from "./player/substepInput";
 import {
   createGameNetworking,
