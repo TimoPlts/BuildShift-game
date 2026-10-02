@@ -8,7 +8,7 @@
  * Kept separate from `NetworkClient` so the parsing rules (and their edge
  * cases) are directly unit-testable without a Colyseus room.
  */
-import type { MatchPhase, RoundResult } from "@buildshift/protocol";
+import { MatchPhase, type RoundResult } from "@buildshift/protocol";
 
 /** The valid authoritative match lifecycle phase values. */
 const MATCH_PHASE_VALUES: readonly string[] = [
@@ -38,27 +38,13 @@ export interface ParsedMatchState {
   lastRoundResult: RoundResult | null;
   /**
    * The session ID of the player who won the match, or `null` while the match
-   * is still in progress. Derived from the authoritative `roundScore`: when
-   * the match has ended, the winner is the player whose round-win count is
-   * the highest (i.e. reached `ROUNDS_TO_WIN`).
+   * is still in progress.
    */
   matchWinnerId: string | null;
 }
 
 /**
  * Parse the authoritative match/round state off the raw room state.
- *
- * The room state carries (see `RoomStateSchema`):
- *  - `matchPhase`      — `t.string()` holding a {@link MatchPhase} value;
- *  - `roundScore`      — `t.map(RoundScoreSchema)` keyed by `sessionId`, each
- *    value a schema instance with a numeric `value`;
- *  - `currentRound`    — `t.number()`;
- *  - `lastRoundResult` — a nested {@link RoundResultSchema} ref with
- *    `winnerId` / `roundNumber` (auto-instantiated with sentinel defaults
- *    `winnerId = ""`, `roundNumber = 0`).
- *
- * Every field falls back to a safe default when the wire value is missing or
- * malformed, so callers can rely on {@link parseMatchState} never throwing.
  */
 export function parseMatchState(raw: unknown): ParsedMatchState {
   const record =
@@ -72,28 +58,36 @@ export function parseMatchState(raw: unknown): ParsedMatchState {
   );
 
   const matchWinnerId =
-    matchPhase === "MATCH_ENDED" ? deriveMatchWinner(roundScore) : null;
+    matchPhase === MatchPhase.MATCH_ENDED ? deriveMatchWinner(roundScore) : null;
 
   return { matchPhase, roundScore, currentRound, lastRoundResult, matchWinnerId };
 }
 
 /**
  * Coerce a raw wire value into a known {@link MatchPhase}, defaulting to
- * `COUNTDOWN` when the value is missing or unrecognized (the natural initial
- * phase of a fresh match).
+ * `COUNTDOWN` when the value is missing or unrecognized.
  */
 function coerceMatchPhase(value: unknown): MatchPhase {
   if (typeof value === "string" && MATCH_PHASE_VALUES.includes(value)) {
     return value as MatchPhase;
   }
-  return "COUNTDOWN";
+  return MatchPhase.COUNTDOWN;
+}
+
+/**
+ * Coerce the raw `currentRound` wire value into a non-negative integer,
+ * defaulting to 0 when missing or malformed.
+ */
+function coerceCurrentRound(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(value));
 }
 
 /**
  * Parse the authoritative `roundScore` map into a plain `sessionId → wins`
- * record. Accepts both a Colyseus MapSchema (iterable of `[key, value]`
- * pairs, where each value carries a numeric `value`) and a plain object
- * (used in tests and by lightweight fakes).
+ * record.
  */
 function parseRoundScore(raw: unknown): Record<string, number> {
   const result: Record<string, number> = {};
@@ -130,8 +124,7 @@ function parseRoundScore(raw: unknown): Record<string, number> {
 }
 
 /**
- * Coerce one round-score entry into a non-negative integer, returning `null`
- * when it cannot be interpreted as a score.
+ * Coerce one round-score entry into a non-negative integer.
  */
 function coerceScore(raw: unknown): number | null {
   const value =
@@ -145,9 +138,7 @@ function coerceScore(raw: unknown): number | null {
 }
 
 /**
- * Parse the nested `lastRoundResult` ref into a plain {@link RoundResult}
- * (or `null` when the sentinel `winnerId === ""` indicates no completed
- * round).
+ * Parse the nested `lastRoundResult` ref into a plain {@link RoundResult}.
  */
 function parseLastRoundResult(raw: unknown): RoundResult | null {
   if (raw == null || typeof raw !== "object") {
@@ -166,14 +157,9 @@ function parseLastRoundResult(raw: unknown): RoundResult | null {
 }
 
 /**
- * Derive the match winner from the authoritative `roundScore`: the player
- * with the highest round-win count. Returns `null` when no player has any
- * wins. On a real match end exactly one player holds the winning total, so
- * the "highest score" rule identifies the winner unambiguously.
+ * Derive the match winner from the authoritative `roundScore`.
  */
-function deriveMatchWinner(
-  roundScore: Record<string, number>,
-): string | null {
+function deriveMatchWinner(roundScore: Record<string, number>): string | null {
   let bestId: string | null = null;
   let bestWins = -1;
   for (const [id, wins] of Object.entries(roundScore)) {

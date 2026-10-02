@@ -5,12 +5,8 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
-import { PHYSICS_TIMING } from "@buildshift/game-config";
-import {
-  MatchPhase,
-  type HitResultEvent,
-  type PlayerEliminatedEvent,
-} from "@buildshift/protocol";
+import { PHYSICS_TIMING, PLAYER_COLLIDER, PLAYER_COLLIDER_TOTAL_HEIGHT } from "@buildshift/game-config";
+import { MatchPhase, type HitResultEvent, type PlayerEliminatedEvent } from "@buildshift/protocol";
 import { ThirdPersonCameraController } from "./camera/ThirdPersonCameraController";
 import { InputManager } from "./input/InputManager";
 import { AimController } from "./aim/AimController";
@@ -19,18 +15,10 @@ import { createFoundationScene } from "./scene/createFoundationScene";
 import { HealthHud } from "./network/HealthHud";
 import type { SubstepInput } from "./player/substepInput";
 import {
-  createGameNetworking,
-  parseMatchState,
-  computeMatchReset,
-  INITIAL_MATCH_SNAPSHOT,
-  COMBAT_HIT_EVENT,
-  COMBAT_ELIMINATED_EVENT,
-  SIMULATION_TICK_SECONDS,
-  reconcileHealthDisplay,
-  type ParsedRoomState,
-  type ParsedMatchState,
-  type MatchStateSnapshot,
-  type InputSample,
+  createGameNetworking, parseMatchState, computeMatchReset,
+  INITIAL_MATCH_SNAPSHOT, COMBAT_HIT_EVENT, COMBAT_ELIMINATED_EVENT,
+  SIMULATION_TICK_SECONDS, reconcileHealthDisplay,
+  type ParsedRoomState, type ParsedMatchState, type MatchStateSnapshot, type InputSample,
 } from "./network";
 import { MovementDebugHUD } from "../ui/MovementDebugHUD";
 
@@ -73,13 +61,8 @@ export class GameRuntime {
   private remoteMarkerMat: StandardMaterial | null = null;
   private remoteWasEliminated = false;
   private remoteHitFlashFrames = 0;
-
-  // ── Authoritative match/round state (consumed from the network path) ──
-  /** Latest authoritative match/round state snapshot observed from the server. */
   private matchState: ParsedMatchState = parseMatchState({});
-  /** Previous match snapshot, used to diff round-boundary transitions. */
   private prevMatchSnapshot: MatchStateSnapshot = { ...INITIAL_MATCH_SNAPSHOT };
-  /** Level flag: true once the authoritative match has finished. */
   private matchOver = false;
 
   public static async create(canvas: HTMLCanvasElement): Promise<GameRuntime> {
@@ -108,7 +91,7 @@ export class GameRuntime {
     this.unsubscribeState = this.networkClient.onStateChange((state) => this.handleNetworkState(state));
     this.unsubscribeConnection = this.networkClient.onConnectionChange((connected) => {
       this.isConnected = connected;
-      if (connected) { this.predictionOrchestrator.reset(); this.inputBatcher.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; this.remoteHitFlashFrames = 0; this.matchOver = false; }
+      if (connected) { this.predictionOrchestrator.reset(); this.inputBatcher.reset(); this.remoteInterpolation.reset(); this.remoteWasEliminated = false; this.remoteHitFlashFrames = 0; this.matchOver = false; this.prevMatchSnapshot = { ...INITIAL_MATCH_SNAPSHOT }; }
       this.debugHud.state.connectionState = connected ? "connected" : "disconnected";
     });
     this.unsubscribeHitEvent = this.networkClient.onEvent(COMBAT_HIT_EVENT, (p) => this.handleHitEvent(p as HitResultEvent));
@@ -119,17 +102,12 @@ export class GameRuntime {
         this.cameraController.applyLook(ld.x, ld.y);
         const dt = Math.min(Math.max(this.engine.getDeltaTime() / 1000, 0), MAX_FRAME_DELTA);
         if (this.isConnected) {
-          this.simAccumulator += dt;
-          let t = 0;
-          while (this.simAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_SIM_TICKS) {
-            this.stepSimulationTick(); this.simAccumulator -= SIMULATION_TICK_SECONDS; t++;
-          }
+          this.simAccumulator += dt; let t = 0;
+          while (this.simAccumulator >= SIMULATION_TICK_SECONDS && t < MAX_SIM_TICKS) { this.stepSimulationTick(); this.simAccumulator -= SIMULATION_TICK_SECONDS; t++; }
           if (t >= MAX_SIM_TICKS) this.simAccumulator = 0;
         } else {
           this.accumulator += dt; let s = 0;
-          while (this.accumulator >= FIXED_DT && s < MAX_STEPS) {
-            this.playerController.update(FIXED_DT, NEUTRAL); this.accumulator -= FIXED_DT; s++;
-          }
+          while (this.accumulator >= FIXED_DT && s < MAX_STEPS) { this.playerController.update(FIXED_DT, NEUTRAL); this.accumulator -= FIXED_DT; s++; }
           if (s >= MAX_STEPS) this.accumulator = 0;
         }
         if (this.isConnected) { this.updateRemotePlayers(); this.updateCombatHud(); }
@@ -140,6 +118,16 @@ export class GameRuntime {
       }
     };
     this.resizeEngine = () => { this.engine.resize(); };
+  }
+
+  public start(): void {
+    if (this.started || this.disposed) return;
+    this.started = true;
+    this.hudCleanup = this.debugHud.attach();
+    this.combatHudCleanup = this.combatHud.attach();
+    window.addEventListener("resize", this.resizeEngine);
+    this.engine.runRenderLoop(this.renderFrame);
+    void this.networkClient.start().catch((err: unknown) => { console.error("GameRuntime: network connection failed", err); });
   }
 
   private stepSimulationTick(): void {
@@ -156,8 +144,6 @@ export class GameRuntime {
   private handleNetworkState(state: ParsedRoomState): void {
     const sid = this.networkClient.sessionId;
     if (!sid) return;
-    // Consume the authoritative match/round state and clear stale per-round
-    // client state across round resets and finished matches.
     this.handleMatchState(state.match);
     const pids = Object.keys(state.players);
     const local = state.players[sid];
@@ -168,54 +154,20 @@ export class GameRuntime {
     for (const pid of pids) {
       if (pid === sid) continue;
       const r = state.players[pid];
-      if (r) {
-        this.remoteInterpolation.addState({ x: r.x, y: r.y, z: r.z, yaw: r.yaw, velocityY: r.vy, grounded: false }, performance.now());
-        if (r.isEliminated) this.remoteWasEliminated = true;
-      }
+      if (r) { this.remoteInterpolation.addState({ x: r.x, y: r.y, z: r.z, yaw: r.yaw, velocityY: r.vy, grounded: false }, performance.now()); if (r.isEliminated) this.remoteWasEliminated = true; }
     }
     if (!pids.some((p) => p !== sid) && this.remoteInterpolation.hasData) { this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
   }
 
-  /**
-   * Consume the authoritative match/round state and drive the match-loop
-   * lifecycle: track the latest snapshot, and clear stale per-round client
-   * state when the server crosses a round boundary or finishes the match.
-   *
-   * This runs BEFORE the per-state reconciliation / interpolation below, so a
-   * reset clears stale state and the fresh authoritative values are then
-   * applied on top of a clean slate.
-   */
   private handleMatchState(match: ParsedMatchState): void {
     this.matchState = match;
-    const snapshot: MatchStateSnapshot = {
-      matchPhase: match.matchPhase,
-      currentRound: match.currentRound,
-      roundScore: match.roundScore,
-      lastRoundResult: match.lastRoundResult,
-    };
+    const snapshot: MatchStateSnapshot = { matchPhase: match.matchPhase, currentRound: match.currentRound, roundScore: match.roundScore, lastRoundResult: match.lastRoundResult };
     const decision = computeMatchReset(this.prevMatchSnapshot, snapshot);
     this.prevMatchSnapshot = snapshot;
     if (decision.matchEnded) this.matchOver = true;
-    if (decision.shouldReset) {
-      this.clearRoundState();
-    }
+    if (decision.shouldReset) this.clearRoundState();
   }
 
-  /**
-   * Clear the stale per-round client state the server resets between rounds
-   * (and on a finished match):
-   *  - local movement **prediction** and **reconciliation** (the ack sequence,
-   *    buffered re-application, and correction smoothing live in the
-   *    PredictionOrchestrator);
-   *  - local **combat** prediction (ammo / health / shield / eliminated /
-   *    lastFireSequence, also reset by the orchestrator);
-   *  - the sequenced **input** buffer and sequence counter;
-   *  - remote **interpolation** buffer;
-   *  - transient remote combat flags (eliminated / hit flash).
-   *
-   * No presentation work is done here: the combat HUD re-derives its display
-   * from the (now clean) prediction state on the next frame.
-   */
   private clearRoundState(): void {
     this.predictionOrchestrator.reset();
     this.inputBatcher.reset();
@@ -224,24 +176,93 @@ export class GameRuntime {
     this.remoteHitFlashFrames = 0;
   }
 
-  /**
-   * The latest authoritative match/round state the client has consumed
-   * (phase, round score, current round, last round result, match winner).
-   */
-  public getMatchState(): ParsedMatchState {
-    return this.matchState;
+  public getMatchState(): ParsedMatchState { return this.matchState; }
+  public isMatchOver(): boolean { return this.matchOver || this.matchState.matchPhase === MatchPhase.MATCH_ENDED; }
+
+  private handleHitEvent(event: HitResultEvent): void {
+    const sid = this.networkClient.sessionId;
+    if (!sid) return;
+    if (event.targetId !== sid) this.remoteHitFlashFrames = 6;
   }
 
-  /**
-   * Whether the authoritative match has finished (a player reached the win
-   * threshold). Level flag: stays true once `MATCH_ENDED` is observed until
-   * the next (re)connection.
-   */
-  public isMatchOver(): boolean {
-    return (
-      this.matchOver ||
-      this.matchState.matchPhase === MatchPhase.MATCH_ENDED
-    );
+  private handleEliminatedEvent(event: PlayerEliminatedEvent): void {
+    const sid = this.networkClient.sessionId;
+    if (!sid) return;
+    if (event.eliminatedId !== sid) this.remoteWasEliminated = true;
   }
 
-  private handleHitEvent(event
+  private updateRemotePlayers(): void {
+    if (!this.remoteInterpolation.hasData) { this.setRemoteVisible(false); return; }
+    this.ensureRemoteMesh();
+    const pos = this.remoteInterpolation.getInterpolated(performance.now());
+    this.remoteMesh!.position.set(pos.x, pos.y, pos.z);
+    this.remoteMesh!.rotation.y = pos.yaw;
+    if (this.remoteMaterial) {
+      if (this.remoteWasEliminated) {
+        this.remoteMaterial.emissiveColor = new Color3(0.1, 0.0, 0.0);
+        this.remoteMaterial.diffuseColor = new Color3(0.3, 0.1, 0.1);
+      } else if (this.remoteHitFlashFrames > 0) {
+        this.remoteHitFlashFrames--;
+        this.remoteMaterial.emissiveColor = new Color3(1.0, 0.3, 0.0);
+      } else {
+        this.remoteMaterial.emissiveColor = new Color3(0.05, 0.02, 0.15);
+        this.remoteMaterial.diffuseColor = new Color3(0.9, 0.25, 0.25);
+      }
+    }
+  }
+
+  private updateCombatHud(): void {
+    const c = this.predictionOrchestrator.getCombatState();
+    reconcileHealthDisplay(this.combatHud, { health: c.health, shield: c.shield, ammo: c.ammo, isEliminated: c.isEliminated });
+  }
+
+  private updateDebugHud(): void {
+    const local = this.playerController.getPosition();
+    const remote = this.remoteInterpolation.lastState;
+    this.debugHud.state.localX = local.x; this.debugHud.state.localY = local.y; this.debugHud.state.localZ = local.z;
+    if (remote) { this.debugHud.state.remoteX = remote.x; this.debugHud.state.remoteY = remote.y; this.debugHud.state.remoteZ = remote.z; this.debugHud.state.remotePresent = true; }
+    else { this.debugHud.state.remotePresent = false; }
+    this.debugHud.state.sequence = this.inputBatcher.lastSentSequence;
+    this.debugHud.state.lastCorrectionDistance = this.predictionOrchestrator.lastCorrectionDistance;
+  }
+
+  private ensureRemoteMesh(): void {
+    if (this.remoteMesh) return;
+    this.remoteMaterial = new StandardMaterial("remote-player-material", this.scene);
+    this.remoteMaterial.diffuseColor = new Color3(0.9, 0.25, 0.25);
+    this.remoteMaterial.emissiveColor = new Color3(0.05, 0.02, 0.15);
+    this.remoteMesh = MeshBuilder.CreateCapsule("remote-player", { height: PLAYER_COLLIDER_TOTAL_HEIGHT, radius: PLAYER_COLLIDER.radius, tessellation: 16 }, this.scene);
+    this.remoteMesh.material = this.remoteMaterial;
+    this.remoteMarkerMat = new StandardMaterial("remote-player-marker", this.scene);
+    this.remoteMarkerMat.diffuseColor = new Color3(0.95, 0.95, 0.95);
+    this.remoteMarker = MeshBuilder.CreateBox("remote-player-marker", { width: 0.22, height: 0.08, depth: 0.06 }, this.scene);
+    this.remoteMarker.material = this.remoteMarkerMat;
+    this.remoteMarker.parent = this.remoteMesh;
+    this.remoteMarker.position.set(0, 0.2, -0.35);
+  }
+
+  private setRemoteVisible(v: boolean): void {
+    if (this.remoteMesh) this.remoteMesh.setEnabled(v);
+    if (this.remoteMarker) this.remoteMarker.setEnabled(v);
+  }
+
+  public dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    window.removeEventListener("resize", this.resizeEngine);
+    this.engine.stopRenderLoop(this.renderFrame);
+    this.engine.dispose();
+    this.unsubscribeState?.(); this.unsubscribeConnection?.();
+    this.unsubscribeHitEvent?.(); this.unsubscribeEliminatedEvent?.();
+    this.hudCleanup?.(); this.combatHudCleanup?.();
+    this.networkClient.dispose();
+    this.debugHud.dispose(); this.combatHud.dispose();
+    if (this.remoteMesh) this.remoteMesh.dispose();
+    if (this.remoteMarker) this.remoteMarker.dispose();
+    if (this.remoteMaterial) this.remoteMaterial.dispose();
+    if (this.remoteMarkerMat) this.remoteMarkerMat.dispose();
+    this.playerController.dispose();
+    this.inputManager.dispose();
+    this.cameraController.dispose();
+  }
+}
