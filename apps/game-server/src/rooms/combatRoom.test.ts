@@ -34,7 +34,7 @@ async function dl<T>(p: Promise<T>, ms: number, l: string): Promise<T> {
 }
 
 function si(room: ClientRoom, seq: number, fire: boolean) {
-  room.send(INPUT_MSG, { clientId: room.sessionId, input: { sequence: seq, moveX: 0, moveZ: 0, lookYaw: AIM, lookPitch: 0, jump: false, primaryFire: fire } });
+  room.send(INPUT_MSG, { clientId: room.sessionId, input: { sequence: seq, moveX: 0, moveZ: 0, lookYaw: AIM, lookPitch: 0, jump: false, primaryFire: fire ? 1 : 0 } });
 }
 
 let _room: InstanceType<typeof CombatRoom> | null = null;
