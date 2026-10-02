@@ -1,14 +1,11 @@
 /**
- * HealthHud — a minimal DOM-based health display for the combat milestone.
+ * HealthHud — a DOM-based combat HUD for the Stage 2D canonical combat path.
  *
- * A simple overlay (a div with a health-bar div inside) pinned to the bottom
- * centre of the screen. The {@link GameRuntime} drives it from the
- * authoritative room state: `setHealth` updates the bar fill from the local
- * player's `health`, and `showEliminationOverlay` flashes a brief "ELIMINATED"
- * banner when the local player is killed.
+ * Displays local player health, shield, ammo, and weapon name. When the
+ * player is eliminated, shows a brief "ELIMINATED" banner.
  *
- * Intentionally framework-free (plain DOM, no React) so it can be attached and
- * detached directly by the game runtime's lifecycle.
+ * Intentionally framework-free (plain DOM, no React) so it can be attached
+ * and detached directly by the game runtime's lifecycle.
  */
 
 /** The duration (ms) the elimination banner stays visible before fading. */
@@ -20,20 +17,31 @@ function css(el: HTMLElement, rule: string, value: string): void {
 }
 
 /**
- * A minimal health HUD rendered as a fixed, bottom-centred DOM overlay.
+ * A combat HUD rendered as a fixed, bottom-centred DOM overlay.
+ *
+ * Shows:
+ *  - Health bar (green → amber → red)
+ *  - Shield bar (blue)
+ *  - Ammo count
+ *  - Weapon name
+ *  - Elimination banner (transient)
  */
 export class HealthHud {
   private readonly overlay: HTMLDivElement;
   private readonly barTrack: HTMLDivElement;
   private readonly barFill: HTMLDivElement;
   private readonly healthText: HTMLDivElement;
+  private readonly shieldTrack: HTMLDivElement;
+  private readonly shieldFill: HTMLDivElement;
+  private readonly shieldText: HTMLDivElement;
+  private readonly ammoText: HTMLDivElement;
+  private readonly weaponText: HTMLDivElement;
   private readonly elimination: HTMLDivElement;
   private attached = false;
   private eliminationTimer: number | null = null;
 
   public constructor() {
-    // Root overlay (positioned by attach(), not here, so we can pin it to the
-    // viewport bottom-centre regardless of where the app mounts it).
+    // Root overlay.
     this.overlay = document.createElement("div");
     css(this.overlay, "position", "fixed");
     css(this.overlay, "left", "50%");
@@ -47,10 +55,9 @@ export class HealthHud {
     css(this.overlay, "gap", "6px");
     css(this.overlay, "font-family",
       "system-ui, -apple-system, 'Segoe UI', sans-serif");
-    // Keep the overlay hidden until attached.
     css(this.overlay, "display", "none");
 
-    // Health bar track.
+    // ── Health bar ──
     this.barTrack = document.createElement("div");
     css(this.barTrack, "width", "240px");
     css(this.barTrack, "height", "18px");
@@ -59,21 +66,62 @@ export class HealthHud {
     css(this.barTrack, "border-radius", "9px");
     css(this.barTrack, "overflow", "hidden");
 
-    // Health bar fill (its width reflects current/max).
     this.barFill = document.createElement("div");
     css(this.barFill, "height", "100%");
     css(this.barFill, "width", "100%");
     css(this.barFill, "background", "#4ade80");
     css(this.barFill, "transition", "width 120ms ease-out, background 200ms");
 
-    // Numeric health read-out.
     this.healthText = document.createElement("div");
     css(this.healthText, "color", "#ffffff");
     css(this.healthText, "font-size", "13px");
     css(this.healthText, "text-shadow", "0 1px 2px rgba(0,0,0,0.8)");
     this.healthText.textContent = "100 / 100";
 
-    // Elimination banner (hidden by default).
+    // ── Shield bar ──
+    this.shieldTrack = document.createElement("div");
+    css(this.shieldTrack, "width", "240px");
+    css(this.shieldTrack, "height", "10px");
+    css(this.shieldTrack, "background", "rgba(0, 0, 0, 0.45)");
+    css(this.shieldTrack, "border", "1px solid rgba(96, 165, 250, 0.5)");
+    css(this.shieldTrack, "border-radius", "5px");
+    css(this.shieldTrack, "overflow", "hidden");
+
+    this.shieldFill = document.createElement("div");
+    css(this.shieldFill, "height", "100%");
+    css(this.shieldFill, "width", "0%");
+    css(this.shieldFill, "background", "#3b82f6");
+    css(this.shieldFill, "transition", "width 150ms ease-out");
+
+    this.shieldText = document.createElement("div");
+    css(this.shieldText, "color", "#93c5fd");
+    css(this.shieldText, "font-size", "11px");
+    css(this.shieldText, "text-shadow", "0 1px 2px rgba(0,0,0,0.8)");
+    this.shieldText.textContent = "Shield: 0 / 50";
+
+    // ── Ammo + weapon readout ──
+    const ammoRow = document.createElement("div");
+    css(ammoRow, "display", "flex");
+    css(ammoRow, "align-items", "center");
+    css(ammoRow, "gap", "8px");
+
+    this.ammoText = document.createElement("div");
+    css(this.ammoText, "color", "#fbbf24");
+    css(this.ammoText, "font-size", "16px");
+    css(this.ammoText, "font-weight", "700");
+    css(this.ammoText, "text-shadow", "0 1px 2px rgba(0,0,0,0.8)");
+    this.ammoText.textContent = "30";
+
+    this.weaponText = document.createElement("div");
+    css(this.weaponText, "color", "#e5e7eb");
+    css(this.weaponText, "font-size", "12px");
+    css(this.weaponText, "text-shadow", "0 1px 2px rgba(0,0,0,0.8)");
+    this.weaponText.textContent = "Assault Rifle";
+
+    ammoRow.appendChild(this.ammoText);
+    ammoRow.appendChild(this.weaponText);
+
+    // ── Elimination banner ──
     this.elimination = document.createElement("div");
     css(this.elimination, "color", "#f87171");
     css(this.elimination, "font-size", "40px");
@@ -81,12 +129,18 @@ export class HealthHud {
     css(this.elimination, "letter-spacing", "4px");
     css(this.elimination, "text-shadow", "0 2px 6px rgba(0,0,0,0.9)");
     css(this.elimination, "opacity", "0");
+    css(this.elimination, "transition", "opacity 300ms");
     this.elimination.textContent = "ELIMINATED";
 
+    // Assemble.
     this.overlay.appendChild(this.elimination);
     this.overlay.appendChild(this.barTrack);
     this.overlay.appendChild(this.healthText);
+    this.overlay.appendChild(this.shieldTrack);
+    this.overlay.appendChild(this.shieldText);
+    this.overlay.appendChild(ammoRow);
     this.barTrack.appendChild(this.barFill);
+    this.shieldTrack.appendChild(this.shieldFill);
   }
 
   /**
@@ -105,9 +159,6 @@ export class HealthHud {
 
   /**
    * Update the health bar and read-out.
-   *
-   * @param current the player's current health (>= 0).
-   * @param max     the player's maximum health (used for the fill fraction).
    */
   public setHealth(current: number, max: number): void {
     if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) {
@@ -116,15 +167,42 @@ export class HealthHud {
     const clamped = Math.max(0, Math.min(current, max));
     const fraction = clamped / max;
     this.barFill.style.width = `${(fraction * 100).toFixed(1)}%`;
-    // Green → amber → red as health drops.
     this.barFill.style.background = healthColor(fraction);
     this.healthText.textContent = `${Math.round(clamped)} / ${Math.round(max)}`;
   }
 
   /**
-   * Flash the "ELIMINATED" banner for a brief moment (visual feedback when the
-   * local player is killed). Re-entrancy safe: calling it again restarts the
-   * timer.
+   * Update the shield bar and read-out.
+   */
+  public setShield(current: number, max: number): void {
+    if (!Number.isFinite(current) || !Number.isFinite(max) || max <= 0) {
+      return;
+    }
+    const clamped = Math.max(0, Math.min(current, max));
+    const fraction = clamped / max;
+    this.shieldFill.style.width = `${(fraction * 100).toFixed(1)}%`;
+    this.shieldText.textContent = `Shield: ${Math.round(clamped)} / ${Math.round(max)}`;
+  }
+
+  /**
+   * Update the ammo display.
+   */
+  public setAmmo(ammo: number): void {
+    if (!Number.isFinite(ammo) || ammo < 0) {
+      return;
+    }
+    this.ammoText.textContent = `${Math.round(ammo)}`;
+  }
+
+  /**
+   * Update the weapon name display.
+   */
+  public setWeapon(name: string): void {
+    this.weaponText.textContent = name;
+  }
+
+  /**
+   * Flash the "ELIMINATED" banner for a brief moment.
    */
   public showEliminationOverlay(): void {
     if (!this.attached) {
@@ -164,8 +242,7 @@ export class HealthHud {
 }
 
 /**
- * Map a health fraction [0, 1] to a CSS colour: green when healthy, amber when
- * wounded, red when critically low.
+ * Map a health fraction [0, 1] to a CSS colour.
  */
 function healthColor(fraction: number): string {
   if (fraction > 0.5) {

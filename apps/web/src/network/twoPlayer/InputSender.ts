@@ -42,6 +42,12 @@ export interface InputSample {
   jump: boolean;
   /** Crouch intent (true while holding crouch). */
   crouch: boolean;
+  /**
+   * Primary fire intent (true while the player is holding the fire button).
+   * Optional for backward compatibility with movement-only samples; the
+   * sender treats a missing value as `false` (no fire intent this tick).
+   */
+  primaryFire?: boolean;
 }
 
 /**
@@ -59,7 +65,7 @@ export interface BufferedInput {
   predictedZ: number;
   /** Predicted vertical velocity after this input. */
   predictedVelocityY: number;
-  /** Predicted grounded state after this input. */
+  /** Predicted grounded state after this input was applied. */
   predictedGrounded: boolean;
 }
 
@@ -130,7 +136,7 @@ export class InputSender {
       jump: sample.jump,
       sprint: false,
       crouch: sample.crouch,
-      primaryFire: false,
+      primaryFire: sample.primaryFire === true,
       secondaryFire: false,
     };
     this.sequence += 1;
