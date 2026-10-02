@@ -1,6 +1,5 @@
 import { PROTOCOL_VERSION } from "@buildshift/protocol";
 import { GameCanvas } from "./game/GameCanvas";
-import { NetworkStatusBadge } from "./ui/NetworkStatusBadge";
 
 export function App() {
   return (
@@ -11,7 +10,6 @@ export function App() {
         <p>Physics playground (Stage 1E)</p>
         <small>Protocol {PROTOCOL_VERSION}</small>
       </aside>
-      <NetworkStatusBadge />
     </main>
   );
 }

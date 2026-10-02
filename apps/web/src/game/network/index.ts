@@ -18,7 +18,7 @@
  * All multiplayer interaction flows through these modules.
  */
 
-// ── NetworkClient (the Colyseus transport) ──────────────────────────────
+// ── NetworkClient (the Colyseus transport) ───────────────────────────────────
 export {
   NetworkClient,
   parseRoomState,
@@ -32,7 +32,15 @@ export {
   type ParsedPlayerState,
 } from "./NetworkClient";
 
-// ── InputBatcher (sequenced input send) ─────────────────────────────────
+// ── Server URL resolution ───────────────────────────────────────────────────
+export {
+  DEFAULT_GAME_SERVER_URL,
+  GAME_SERVER_URL_ENV,
+  resolveGameServerUrl,
+  type ServerUrlEnv,
+} from "./serverUrl";
+
+// ── InputBatcher (sequenced input send) ─────────────────────────────────────
 export {
   InputBatcher,
   INPUT_BUFFER_SIZE,
@@ -40,7 +48,7 @@ export {
   type BufferedInput,
 } from "./inputBatcher";
 
-// ── PredictionOrchestrator (local prediction + reconciliation) ─────────
+// ── PredictionOrchestrator (local prediction + reconciliation) ──────────────
 export {
   PredictionOrchestrator,
   SIMULATION_TICK_SECONDS,
@@ -51,7 +59,7 @@ export {
   type FirePredictionResult,
 } from "./predictionOrchestrator";
 
-// ── RemotePlayerManager (remote interpolation buffer) ───────────────────
+// ── RemotePlayerManager (remote interpolation buffer) ───────────────────────
 export {
   RemotePlayerManager,
   REMOTE_INTERPOLATION_DELAY_MS,
@@ -60,14 +68,14 @@ export {
   type InterpolatedRemoteState,
 } from "./RemotePlayerManager";
 
-// ── Reconciliation helpers ──────────────────────────────────────────────
+// ── Reconciliation helpers ──────────────────────────────────────────────────
 export {
   reconcileHealthDisplay,
   shouldShowElimination,
   type AuthoritativeCombatData,
 } from "./reconciliation";
 
-// ── Factory ─────────────────────────────────────────────────────────────
+// ── Factory ─────────────────────────────────────────────────────────────────
 export {
   createGameNetworking,
   type GameNetworking,
