@@ -217,7 +217,7 @@ export class CombatRoom extends Room<{
       lookYaw: typeof rawInput.lookYaw === "number" ? rawInput.lookYaw : 0,
       lookPitch: typeof rawInput.lookPitch === "number" ? rawInput.lookPitch : 0,
       jump: rawInput.jump === true,
-      primaryFire: rawInput.primaryFire === true,
+      primaryFire: typeof rawInput.primaryFire === "number" ? rawInput.primaryFire : 0,
     };
 
     // Look up the player by sessionId.
@@ -232,7 +232,7 @@ export class CombatRoom extends Room<{
       return;
     }
 
-    // ─── Movement ───────────────────────────────────────────────────────────
+    // ─── Movement ─────────────────────────────────────────────────────────────
     // Convert local movement (moveX, moveZ) plus current yaw into world
     // direction and update position.
     const yaw = player.yaw;
@@ -260,7 +260,7 @@ export class CombatRoom extends Room<{
     // Update yaw from input.
     player.yaw = input.lookYaw;
 
-    // ─── Fire ───────────────────────────────────────────────────────────────
+    // ─── Fire ────────────────────────────────────────────────────────────────
     if (input.primaryFire) {
       this.processFire(sessionId, player, input.lookYaw);
     }
