@@ -1,24 +1,31 @@
 /**
- * Import-boundary contract test (Stage: net/ consolidation).
+ * Import-boundary contract test (Stage: networking consolidation).
  *
- * The legacy, competing client networking stack lived under
- * `apps/web/src/net/`. It has been consolidated into the canonical
- * `apps/web/src/network/twoPlayer/` layer. Per the architecture
- * (dependency flows `apps` -> `packages`, never the reverse), and per the
- * net-removal mission, **no production source file** in the monorepo may
- * import from `apps/web/src/net/`.
+ * The web client has been consolidated to exactly ONE canonical networking
+ * path: `apps/web/src/game/network/`.
  *
- * This test is a durable, automated guard for that boundary. It scans every
- * `.ts` / `.tsx` file under the package `src/` trees and the app `src/` trees,
- * extracts every static / side-effect / dynamic `import` and `require`
- * specifier, resolves relative specifiers against the importing file, and
- * asserts that none of them resolve into `apps/web/src/net/`.
+ * The following legacy/competing networking directories and files have been
+ * retired and must never appear on the "imported-from" side of any production
+ * source file:
  *
- * It is intentionally robust to the directory's eventual deletion: once
- * `apps/web/src/net/` is removed there are simply no files for an import to
- * point at, so the guard keeps passing. While the (empty) stub files still
- * exist, the guard proves nothing in the production import graph depends on
- * them.
+ *   - `apps/web/src/net/`            (legacy ConnectionManager stack)
+ *   - `apps/web/src/network/twoPlayer/` (legacy TwoPlayerClient stack)
+ *   - `apps/web/src/game/remote/`    (legacy RemotePlayerManager)
+ *
+ * Additionally, the duplicate `apps/web/src/game/HealthHud.ts` (a re-export
+ * shim) must not be imported directly — all HealthHud imports must resolve
+ * through the canonical `apps/web/src/game/network/HealthHud` path.
+ *
+ * This test scans every `.ts` / `.tsx` file under the package `src/` trees
+ * and the app `src/` trees, extracts every static / side-effect / dynamic
+ * `import` and `require` specifier, resolves relative specifiers against the
+ * importing file, and asserts that none of them resolve into any of the
+ * forbidden paths above.
+ *
+ * It is intentionally robust to the directories' eventual physical deletion:
+ * once they are removed there are simply no files for an import to point at,
+ * so the guard keeps passing. While the (empty) stub files still exist, the
+ * guard proves nothing in the production import graph depends on them.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { dirname, join, relative, resolve, isAbsolute, sep } from "node:path";
@@ -28,8 +35,23 @@ import { describe, expect, it } from "vitest";
 /** Absolute path of this test file's directory (`packages/protocol/src`). */
 const here = dirname(fileURLToPath(import.meta.url));
 
-/** The directory that must never appear on the "imported-from" side. */
-const FORBIDDEN_DIR = join("apps", "web", "src", "net");
+/**
+ * Directories that must never appear on the "imported-from" side.
+ * Each entry is a path relative to the monorepo root.
+ */
+const FORBIDDEN_DIRS = [
+  join("apps", "web", "src", "net"),
+  join("apps", "web", "src", "network", "twoPlayer"),
+  join("apps", "web", "src", "game", "remote"),
+] as const;
+
+/**
+ * Specific files that must not be imported directly (must go through the
+ * canonical re-export path). Each entry is a path relative to the monorepo root.
+ */
+const FORBIDDEN_FILES = [
+  join("apps", "web", "src", "game", "HealthHud"),
+] as const;
 
 /**
  * Source roots to audit. This is the full production import graph:
@@ -109,6 +131,19 @@ function isUnder(targetPath: string, dirPath: string): boolean {
 }
 
 /**
+ * Return true when `targetPath` matches `filePath` (with or without `.ts`
+ * / `.tsx` extension).
+ */
+function matchesFile(targetPath: string, filePath: string): boolean {
+  const normalized = targetPath.replace(/[\\/]+$/, "");
+  return (
+    normalized === filePath ||
+    normalized === `${filePath}.ts` ||
+    normalized === `${filePath}.tsx`
+  );
+}
+
+/**
  * Extract every module specifier referenced by an `import` / `require` in
  * `source`. Covers:
  *  - `import ... from "spec"` / `import type ... from "spec"`
@@ -145,42 +180,149 @@ function resolveSpecifier(spec: string, importerFile: string): string {
   return spec;
 }
 
-describe("import boundary: no production source imports from apps/web/src/net/", () => {
-  it("has no static / side-effect / dynamic / require import resolving into apps/web/src/net", () => {
-    const root = findMonorepoRoot(here);
-    const forbidden = join(root, FORBIDDEN_DIR);
-    const violations: { file: string; specifier: string; resolved: string }[] = [];
+/**
+ * Check a single resolved import path against all forbidden dirs and files.
+ * Returns the violation description or null if the path is allowed.
+ */
+function checkPath(
+  resolvedPath: string,
+  spec: string,
+  root: string,
+): string | null {
+  // Check forbidden directories.
+  for (const forbiddenRel of FORBIDDEN_DIRS) {
+    const forbiddenAbs = join(root, forbiddenRel);
+    if (isUnder(resolvedPath, forbiddenAbs)) {
+      return (
+        `import "${spec}" resolves into forbidden directory ` +
+        `"${forbiddenRel}"`
+      );
+    }
+  }
 
-    for (const relDir of SCAN_DIRS) {
-      const absDir = join(root, relDir);
-      if (!existsSync(absDir)) {
-        continue;
-      }
-      for (const file of collectSourceFiles(absDir)) {
-        // A file that lives inside the forbidden directory cannot "pull from"
-        // it in the cross-boundary sense; only the rest of the codebase matters.
-        if (isUnder(file, forbidden)) {
+  // Check forbidden specific files (e.g. the duplicate HealthHud shim).
+  for (const forbiddenFileRel of FORBIDDEN_FILES) {
+    const forbiddenFileAbs = join(root, forbiddenFileRel);
+    if (matchesFile(resolvedPath, forbiddenFileAbs)) {
+      return (
+        `import "${spec}" resolves to forbidden file ` +
+        `"${forbiddenFileRel}" (use the canonical path instead)`
+      );
+    }
+  }
+
+  return null;
+}
+
+describe("import boundary: consolidated networking path", () => {
+  it(
+    "no production source imports from any retired networking directory",
+    () => {
+      const root = findMonorepoRoot(here);
+      const violations: {
+        file: string;
+        specifier: string;
+        reason: string;
+      }[] = [];
+
+      for (const relDir of SCAN_DIRS) {
+        const absDir = join(root, relDir);
+        if (!existsSync(absDir)) {
           continue;
         }
-        const source = readFileSync(file, "utf8");
-        for (const spec of extractSpecifiers(source)) {
-          const resolvedPath = resolveSpecifier(spec, file);
-          const pullsFromNet =
-            isUnder(resolvedPath, forbidden) ||
-            spec.includes("apps/web/src/net");
-          if (pullsFromNet) {
-            violations.push({
-              file: relative(root, file).split(sep).join("/"),
-              specifier: spec,
-              resolved: relative(root, resolvedPath).split(sep).join("/"),
-            });
+        for (const file of collectSourceFiles(absDir)) {
+          // Skip files that live inside any of the forbidden directories —
+          // they are the retired code itself, not cross-boundary importers.
+          let skip = false;
+          for (const forbiddenRel of FORBIDDEN_DIRS) {
+            const forbiddenAbs = join(root, forbiddenRel);
+            if (isUnder(file, forbiddenAbs)) {
+              skip = true;
+              break;
+            }
+          }
+          if (skip) {
+            continue;
+          }
+
+          const source = readFileSync(file, "utf8");
+          for (const spec of extractSpecifiers(source)) {
+            const resolvedPath = resolveSpecifier(spec, file);
+            const violation = checkPath(resolvedPath, spec, root);
+            if (violation) {
+              violations.push({
+                file: relative(root, file).split(sep).join("/"),
+                specifier: spec,
+                reason: violation,
+              });
+            }
           }
         }
       }
-    }
 
-    // If anything still imports from the legacy net/ directory, fail loudly
-    // with the exact offending import so the stray reference is trivial to fix.
-    expect(violations).toEqual([]);
-  });
+      if (violations.length > 0) {
+        const detail = violations
+          .map(
+            (v) =>
+              `  ${v.file}\n    import "${v.specifier}" → ${v.reason}`,
+          )
+          .join("\n");
+        expect.soft(
+          violations,
+          `Found ${violations.length} import(s) from retired networking paths:\n${detail}`,
+        ).toEqual([]);
+      }
+      expect(violations).toEqual([]);
+    },
+  );
+
+  it(
+    "no production source imports the duplicate HealthHud shim directly",
+    () => {
+      const root = findMonorepoRoot(here);
+      const forbiddenFileAbs = join(
+        root,
+        ...FORBIDDEN_FILES[0].split(sep),
+      );
+      const violations: { file: string; specifier: string }[] = [];
+
+      for (const relDir of SCAN_DIRS) {
+        const absDir = join(root, relDir);
+        if (!existsSync(absDir)) {
+          continue;
+        }
+        for (const file of collectSourceFiles(absDir)) {
+          // Skip the shim file itself (it re-exports from the canonical path).
+          if (file === forbiddenFileAbs || file === `${forbiddenFileAbs}.ts`) {
+            continue;
+          }
+
+          const source = readFileSync(file, "utf8");
+          for (const spec of extractSpecifiers(source)) {
+            const resolvedPath = resolveSpecifier(spec, file);
+            if (matchesFile(resolvedPath, forbiddenFileAbs)) {
+              violations.push({
+                file: relative(root, file).split(sep).join("/"),
+                specifier: spec,
+              });
+            }
+          }
+        }
+      }
+
+      if (violations.length > 0) {
+        const detail = violations
+          .map(
+            (v) =>
+              `  ${v.file}\n    import "${v.specifier}" → use "./network/HealthHud" instead`,
+          )
+          .join("\n");
+        expect.soft(
+          violations,
+          `Found ${violations.length} direct import(s) of the duplicate HealthHud shim:\n${detail}`,
+        ).toEqual([]);
+      }
+      expect(violations).toEqual([]);
+    },
+  );
 });
