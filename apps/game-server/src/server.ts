@@ -23,10 +23,11 @@
  * shared protocol contract so the entry point, clients, and tests share one
  * identifier.
  *
- * Combat milestone: the server-authoritative hitscan combat room
- * (`CombatRoom`) is registered under the `"combat"` route. Two players can
- * aim and fire; the server validates, detects hits, and applies damage
- * authoritatively.
+ * Stage 2D (combat consolidation): the `TwoPlayerMovementRoom` is the SINGLE
+ * authoritative gameplay path — it drives movement, prediction, reconciliation,
+ * interpolation, AND hitscan combat (fire validation via `canFire`, ray-cast
+ * hits, shield/health damage, elimination, and respawn) in one 30 Hz tick loop.
+ * The legacy `CombatRoom` has been retired and is no longer registered here.
  *
  * Deliberately NOT implemented here (later stages): authentication,
  * reconnection policy, database/persistence. (Room capacity IS now expressed
@@ -40,7 +41,6 @@ import { ROOMS, type RoomType } from "@buildshift/protocol";
 
 import { FoundationRoom } from "./rooms/FoundationRoom.js";
 import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
-import { CombatRoom, COMBAT_ROOM } from "./rooms/index.js";
 
 export type GameServer = Server;
 
@@ -64,8 +64,8 @@ export const TWO_PLAYER_ROOM: RoomType = ROOMS.TWO_PLAYER_MOVEMENT;
 
 /**
  * Create a Colyseus server configured with the WebSocket transport and the
- * registered rooms (foundation + two-player movement + combat). The server is
- * NOT listening yet — call `startServer` to bind a port.
+ * registered rooms (foundation + two-player movement with combat). The server
+ * is NOT listening yet — call `startServer` to bind a port.
  */
 export function createServer(options: ServerOptions = {}): GameServer {
   const transport = new WebSocketTransport();
@@ -83,8 +83,7 @@ export function createServer(options: ServerOptions = {}): GameServer {
   });
   server.define(ROOMS.FOUNDATION, FoundationRoom);
   server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
-  server.define(COMBAT_ROOM, CombatRoom);
-  console.log(`[buildshift:game-server] combat room registered ("${COMBAT_ROOM}")`);
+  console.log(`[buildshift:game-server] two-player-movement room registered ("${ROOMS.TWO_PLAYER_MOVEMENT}")`);
   return server;
 }
 
