@@ -51,3 +51,8 @@ export {
   type TimedRemoteState,
   type InterpolatedRemoteState,
 } from "./RemotePlayerInterpolation";
+
+export {
+  createGameNetworking,
+  type GameNetworking,
+} from "./createGameNetworking";
