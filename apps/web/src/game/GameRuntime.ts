@@ -14,20 +14,13 @@ import { PlayerController } from "./player/PlayerController";
 import { createFoundationScene } from "./scene/createFoundationScene";
 import { HealthHud } from "./network/HealthHud";
 import type { SubstepInput } from "./player/substepInput";
-import {
-  createGameNetworking, parseMatchState, computeMatchReset,
-  INITIAL_MATCH_SNAPSHOT, COMBAT_HIT_EVENT, COMBAT_ELIMINATED_EVENT,
-  SIMULATION_TICK_SECONDS, reconcileHealthDisplay,
-  type ParsedRoomState, type ParsedMatchState, type MatchStateSnapshot, type InputSample,
-} from "./network";
+import { createGameNetworking, parseMatchState, computeMatchReset, INITIAL_MATCH_SNAPSHOT, COMBAT_HIT_EVENT, COMBAT_ELIMINATED_EVENT, SIMULATION_TICK_SECONDS, reconcileHealthDisplay, type ParsedRoomState, type ParsedMatchState, type MatchStateSnapshot, type InputSample } from "./network";
 import { MovementDebugHUD } from "../ui/MovementDebugHUD";
-
 const FIXED_DT = PHYSICS_TIMING.fixedStepDurationSeconds;
 const MAX_FRAME_DELTA = 0.1;
 const MAX_STEPS = 8;
 const MAX_SIM_TICKS = 4;
 const NEUTRAL: Readonly<SubstepInput> = { moveX: 0, moveZ: 0, lookYaw: 0, jumpPressed: false };
-
 export class GameRuntime {
   private readonly engine: Engine;
   private readonly scene: Scene;
@@ -64,21 +57,17 @@ export class GameRuntime {
   private matchState: ParsedMatchState = parseMatchState({});
   private prevMatchSnapshot: MatchStateSnapshot = { ...INITIAL_MATCH_SNAPSHOT };
   private matchOver = false;
-
+  private readonly matchStateListeners: Array<(state: ParsedMatchState) => void> = [];
   public static async create(canvas: HTMLCanvasElement): Promise<GameRuntime> {
     const engine = new Engine(canvas, true);
     try {
       const scene = createFoundationScene(engine);
       const inputManager = new InputManager(canvas);
       let cam: ThirdPersonCameraController | undefined;
-      try {
-        cam = new ThirdPersonCameraController(scene);
-        const pc = await PlayerController.create(scene);
-        return new GameRuntime(engine, scene, inputManager, cam, pc, canvas);
-      } catch (e) { cam?.dispose(); inputManager.dispose(); scene.dispose(); throw e; }
+      try { cam = new ThirdPersonCameraController(scene); const pc = await PlayerController.create(scene); return new GameRuntime(engine, scene, inputManager, cam, pc, canvas); }
+      catch (e) { cam?.dispose(); inputManager.dispose(); scene.dispose(); throw e; }
     } catch (e) { engine.dispose(); throw e; }
   }
-
   private constructor(engine: Engine, scene: Scene, inputManager: InputManager, cameraController: ThirdPersonCameraController, playerController: PlayerController, canvas: HTMLCanvasElement) {
     this.engine = engine; this.scene = scene; this.inputManager = inputManager;
     this.cameraController = cameraController; this.playerController = playerController;
@@ -119,7 +108,6 @@ export class GameRuntime {
     };
     this.resizeEngine = () => { this.engine.resize(); };
   }
-
   public start(): void {
     if (this.started || this.disposed) return;
     this.started = true;
@@ -129,7 +117,6 @@ export class GameRuntime {
     this.engine.runRenderLoop(this.renderFrame);
     void this.networkClient.start().catch((err: unknown) => { console.error("GameRuntime: network connection failed", err); });
   }
-
   private stepSimulationTick(): void {
     const m = this.inputManager.getMovementInput();
     const fireIntent = this.inputManager.isFiring();
@@ -140,7 +127,6 @@ export class GameRuntime {
     this.inputBatcher.send(sample, this.networkClient, { x: predicted.x, y: predicted.y, z: predicted.z, velocityY: predicted.velocityY, grounded: predicted.grounded });
     this.playerController.setMeshTransform({ x: predicted.x, y: predicted.y, z: predicted.z }, predicted.yaw);
   }
-
   private handleNetworkState(state: ParsedRoomState): void {
     const sid = this.networkClient.sessionId;
     if (!sid) return;
@@ -151,14 +137,9 @@ export class GameRuntime {
       this.predictionOrchestrator.onServerState({ x: local.x, y: local.y, z: local.z, yaw: local.yaw, velocityY: local.vy, grounded: local.vy === 0, sequence: local.sequence, health: local.health, shield: local.shield, energy: local.energy, ammo: local.ammo, lastFireSequence: local.lastFireSequence, isEliminated: local.isEliminated }, this.inputBatcher.getInputsAfter(local.sequence));
       this.inputBatcher.pruneUpTo(local.sequence);
     }
-    for (const pid of pids) {
-      if (pid === sid) continue;
-      const r = state.players[pid];
-      if (r) { this.remoteInterpolation.addState({ x: r.x, y: r.y, z: r.z, yaw: r.yaw, velocityY: r.vy, grounded: false }, performance.now()); if (r.isEliminated) this.remoteWasEliminated = true; }
-    }
+    for (const pid of pids) { if (pid === sid) continue; const r = state.players[pid]; if (r) { this.remoteInterpolation.addState({ x: r.x, y: r.y, z: r.z, yaw: r.yaw, velocityY: r.vy, grounded: false }, performance.now()); if (r.isEliminated) this.remoteWasEliminated = true; } }
     if (!pids.some((p) => p !== sid) && this.remoteInterpolation.hasData) { this.remoteInterpolation.reset(); this.remoteWasEliminated = false; }
   }
-
   private handleMatchState(match: ParsedMatchState): void {
     this.matchState = match;
     const snapshot: MatchStateSnapshot = { matchPhase: match.matchPhase, currentRound: match.currentRound, roundScore: match.roundScore, lastRoundResult: match.lastRoundResult };
@@ -166,31 +147,30 @@ export class GameRuntime {
     this.prevMatchSnapshot = snapshot;
     if (decision.matchEnded) this.matchOver = true;
     if (decision.shouldReset) this.clearRoundState();
+    for (const l of this.matchStateListeners) { l(this.matchState); }
   }
-
   private clearRoundState(): void {
-    this.predictionOrchestrator.reset();
-    this.inputBatcher.reset();
-    this.remoteInterpolation.reset();
-    this.remoteWasEliminated = false;
+    this.predictionOrchestrator.reset(); this.inputBatcher.reset();
+    this.remoteInterpolation.reset(); this.remoteWasEliminated = false;
     this.remoteHitFlashFrames = 0;
   }
-
+  public getSessionId(): string | null { return this.networkClient.sessionId; }
+  public onMatchStateChange(listener: (state: ParsedMatchState) => void): () => void {
+    this.matchStateListeners.push(listener);
+    return () => { const i = this.matchStateListeners.indexOf(listener); if (i !== -1) this.matchStateListeners.splice(i, 1); };
+  }
   public getMatchState(): ParsedMatchState { return this.matchState; }
   public isMatchOver(): boolean { return this.matchOver || this.matchState.matchPhase === MatchPhase.MATCH_ENDED; }
-
   private handleHitEvent(event: HitResultEvent): void {
     const sid = this.networkClient.sessionId;
     if (!sid) return;
     if (event.targetId !== sid) this.remoteHitFlashFrames = 6;
   }
-
   private handleEliminatedEvent(event: PlayerEliminatedEvent): void {
     const sid = this.networkClient.sessionId;
     if (!sid) return;
     if (event.eliminatedId !== sid) this.remoteWasEliminated = true;
   }
-
   private updateRemotePlayers(): void {
     if (!this.remoteInterpolation.hasData) { this.setRemoteVisible(false); return; }
     this.ensureRemoteMesh();
@@ -198,24 +178,15 @@ export class GameRuntime {
     this.remoteMesh!.position.set(pos.x, pos.y, pos.z);
     this.remoteMesh!.rotation.y = pos.yaw;
     if (this.remoteMaterial) {
-      if (this.remoteWasEliminated) {
-        this.remoteMaterial.emissiveColor = new Color3(0.1, 0.0, 0.0);
-        this.remoteMaterial.diffuseColor = new Color3(0.3, 0.1, 0.1);
-      } else if (this.remoteHitFlashFrames > 0) {
-        this.remoteHitFlashFrames--;
-        this.remoteMaterial.emissiveColor = new Color3(1.0, 0.3, 0.0);
-      } else {
-        this.remoteMaterial.emissiveColor = new Color3(0.05, 0.02, 0.15);
-        this.remoteMaterial.diffuseColor = new Color3(0.9, 0.25, 0.25);
-      }
+      if (this.remoteWasEliminated) { this.remoteMaterial.emissiveColor = new Color3(0.1, 0.0, 0.0); this.remoteMaterial.diffuseColor = new Color3(0.3, 0.1, 0.1); }
+      else if (this.remoteHitFlashFrames > 0) { this.remoteHitFlashFrames--; this.remoteMaterial.emissiveColor = new Color3(1.0, 0.3, 0.0); }
+      else { this.remoteMaterial.emissiveColor = new Color3(0.05, 0.02, 0.15); this.remoteMaterial.diffuseColor = new Color3(0.9, 0.25, 0.25); }
     }
   }
-
   private updateCombatHud(): void {
     const c = this.predictionOrchestrator.getCombatState();
     reconcileHealthDisplay(this.combatHud, { health: c.health, shield: c.shield, ammo: c.ammo, isEliminated: c.isEliminated });
   }
-
   private updateDebugHud(): void {
     const local = this.playerController.getPosition();
     const remote = this.remoteInterpolation.lastState;
@@ -225,7 +196,6 @@ export class GameRuntime {
     this.debugHud.state.sequence = this.inputBatcher.lastSentSequence;
     this.debugHud.state.lastCorrectionDistance = this.predictionOrchestrator.lastCorrectionDistance;
   }
-
   private ensureRemoteMesh(): void {
     if (this.remoteMesh) return;
     this.remoteMaterial = new StandardMaterial("remote-player-material", this.scene);
@@ -240,12 +210,10 @@ export class GameRuntime {
     this.remoteMarker.parent = this.remoteMesh;
     this.remoteMarker.position.set(0, 0.2, -0.35);
   }
-
   private setRemoteVisible(v: boolean): void {
     if (this.remoteMesh) this.remoteMesh.setEnabled(v);
     if (this.remoteMarker) this.remoteMarker.setEnabled(v);
   }
-
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
@@ -255,6 +223,7 @@ export class GameRuntime {
     this.unsubscribeState?.(); this.unsubscribeConnection?.();
     this.unsubscribeHitEvent?.(); this.unsubscribeEliminatedEvent?.();
     this.hudCleanup?.(); this.combatHudCleanup?.();
+    this.matchStateListeners.length = 0;
     this.networkClient.dispose();
     this.debugHud.dispose(); this.combatHud.dispose();
     if (this.remoteMesh) this.remoteMesh.dispose();

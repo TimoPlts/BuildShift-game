@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { GameRuntime } from "./GameRuntime";
+import { MatchHud, type MatchHudProps } from "../ui/MatchHud";
+import { mapMatchStateToHudProps } from "./matchHudMapper";
+import type { ParsedMatchState } from "./network";
 
 /**
  * React owns the canvas mount point, the crosshair, and the pointer-lock
@@ -11,6 +14,7 @@ import { GameRuntime } from "./GameRuntime";
 export function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
+  const [matchHudProps, setMatchHudProps] = useState<MatchHudProps | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -22,6 +26,7 @@ export function GameCanvas() {
     // flag so a stale (first) mount that never resolves can't leak resources.
     let active = true;
     let runtime: GameRuntime | undefined;
+    let unsubMatch: (() => void) | undefined;
 
     GameRuntime.create(canvas)
       .then((r) => {
@@ -31,6 +36,12 @@ export function GameCanvas() {
         }
         runtime = r;
         r.start();
+        // Subscribe to authoritative match-state updates to drive the HUD.
+        unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
+          const sid = r.getSessionId();
+          if (!sid) return;
+          setMatchHudProps(mapMatchStateToHudProps(state, sid));
+        });
       })
       .catch((error) => {
         console.error("Failed to start the game runtime:", error);
@@ -44,6 +55,7 @@ export function GameCanvas() {
 
     return () => {
       active = false;
+      unsubMatch?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
       runtime?.dispose();
     };
@@ -57,6 +69,7 @@ export function GameCanvas() {
         aria-label="BuildShift 3D game viewport"
       />
       {pointerLocked && <div className="crosshair" aria-hidden="true" />}
+      {matchHudProps && <MatchHud {...matchHudProps} />}
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
