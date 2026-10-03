@@ -1,0 +1,306 @@
+/* ── Match Lifecycle UI (ScoreBar, CountdownOverlay, RoundEndBanner, MatchEndScreen) ── */
+
+/* ═══════════════════════════════════════════════════════════
+   ScoreBar — top-center score display
+   ═══════════════════════════════════════════════════════════ */
+
+.score-bar {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 1.2rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 18 / 72%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.score-bar__side {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.score-bar__label {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.score-bar__pips {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.score-bar__pip {
+  width: 0.65rem;
+  height: 0.65rem;
+  border-radius: 50%;
+  border: 1px solid rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 8%);
+  transition: background 200ms, border-color 200ms;
+}
+
+.score-bar__pip--won-local {
+  background: #34d399;
+  border-color: #34d399;
+  box-shadow: 0 0 6px rgb(52 211 153 / 50%);
+}
+
+.score-bar__pip--won-remote {
+  background: #f0616d;
+  border-color: #f0616d;
+  box-shadow: 0 0 6px rgb(240 97 109 / 50%);
+}
+
+.score-bar__center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  min-width: 3rem;
+}
+
+.score-bar__round {
+  font-size: 0.65rem;
+  color: #aeb9ca;
+  letter-spacing: 0.03em;
+}
+
+.score-bar__score-display {
+  font-size: 1.3rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e6e8ee;
+}
+
+/* ═══════════════════════════════════════════════════════════
+   CountdownOverlay — large centered countdown number
+   ═══════════════════════════════════════════════════════════ */
+
+.countdown-overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  pointer-events: none;
+  z-index: 2000;
+  background: rgb(0 0 0 / 30%);
+}
+
+.countdown-overlay__number {
+  font-size: 8rem;
+  font-weight: 800;
+  color: #e6e8ee;
+  text-shadow: 0 4px 24px rgb(0 0 0 / 80%), 0 0 60px rgb(52 211 153 / 30%);
+  animation: countdown-pop 1s ease-out forwards;
+  user-select: none;
+}
+
+.countdown-overlay__label {
+  font-size: 1rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #aeb9ca;
+  margin-top: 0.5rem;
+}
+
+@keyframes countdown-pop {
+  0% {
+    opacity: 0;
+    transform: scale(1.4);
+  }
+  20% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  80% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   RoundEndBanner — brief round result banner
+   ═══════════════════════════════════════════════════════════ */
+
+.round-end-banner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1.2rem 2.5rem;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 0.75rem;
+  background: rgb(8 12 18 / 85%);
+  box-shadow: 0 1rem 3rem rgb(0 0 0 / 50%);
+  pointer-events: none;
+  backdrop-filter: blur(0.5rem);
+  z-index: 1500;
+  animation: round-banner-in 0.4s ease-out forwards;
+}
+
+.round-end-banner__title {
+  font-size: 2rem;
+  font-weight: 800;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+}
+
+.round-end-banner__title--won {
+  color: #34d399;
+  text-shadow: 0 2px 12px rgb(52 211 153 / 50%);
+}
+
+.round-end-banner__title--lost {
+  color: #f0616d;
+  text-shadow: 0 2px 12px rgb(240 97 109 / 50%);
+}
+
+.round-end-banner__round-info {
+  font-size: 0.8rem;
+  color: #aeb9ca;
+  letter-spacing: 0.04em;
+}
+
+@keyframes round-banner-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.9);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════
+   MatchEndScreen — full match result overlay
+   ═══════════════════════════════════════════════════════════ */
+
+.match-end-screen {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  z-index: 3000;
+  background: rgb(0 0 0 / 70%);
+  backdrop-filter: blur(0.75rem);
+  animation: match-end-fade-in 0.5s ease-out forwards;
+}
+
+.match-end-screen__panel {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+  padding: 2.5rem 3.5rem;
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 1rem;
+  background: rgb(8 12 18 / 90%);
+  box-shadow: 0 1.5rem 4rem rgb(0 0 0 / 60%);
+}
+
+.match-end-screen__title {
+  font-size: 3rem;
+  font-weight: 800;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+}
+
+.match-end-screen__title--victory {
+  color: #34d399;
+  text-shadow: 0 2px 20px rgb(52 211 153 / 60%);
+}
+
+.match-end-screen__title--defeat {
+  color: #f0616d;
+  text-shadow: 0 2px 20px rgb(240 97 109 / 60%);
+}
+
+.match-end-screen__score {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  font-size: 1.5rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e6e8ee;
+}
+
+.match-end-screen__score-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.match-end-screen__actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.match-end-screen__btn {
+  padding: 0.7rem 1.6rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  border-radius: 0.5rem;
+  border: 1px solid rgb(255 255 255 / 20%);
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, transform 100ms;
+}
+
+.match-end-screen__btn:active {
+  transform: scale(0.97);
+}
+
+.match-end-screen__btn--primary {
+  background: rgb(52 211 153 / 20%);
+  border-color: rgb(52 211 153 / 50%);
+  color: #34d399;
+}
+
+.match-end-screen__btn--primary:hover {
+  background: rgb(52 211 153 / 35%);
+}
+
+.match-end-screen__btn--secondary {
+  background: rgb(255 255 255 / 8%);
+  border-color: rgb(255 255 255 / 20%);
+  color: #aeb9ca;
+}
+
+.match-end-screen__btn--secondary:hover {
+  background: rgb(255 255 255 / 15%);
+}
+
+@keyframes match-end-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
