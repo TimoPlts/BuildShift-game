@@ -131,6 +131,16 @@ export {
   type RoundScoreSchemaInstance,
 } from "./match.js";
 
+// ───── Round / match lifecycle state protocol ─────
+
+export {
+  GameState,
+  type CountdownState,
+  type RoundScore,
+  type MatchResult,
+  FIRST_TO_N,
+} from "./round-state.js";
+
 // ───── Building contract (server-authoritative multiplayer building) ─────
 
 export {
