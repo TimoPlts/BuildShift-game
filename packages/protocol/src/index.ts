@@ -28,6 +28,12 @@
  * `HitEventPayload`, the shared `WeaponId` vocabulary, and the authoritative
  * `health` / `shield` / `energy` / `ammo` / `lastFireSequence` /
  * `isEliminated` fields on `PlayerStateSchema`.
+ *
+ * The building milestone adds the transport-neutral, server-authoritative
+ * building contract: the `BuildType` vocabulary (wall / floor / ramp / cone),
+ * the grid-snapped `StructurePlacementIntent`, the authoritative
+ * `StructureState` / `BuildingState`, the `BUILD_EVENTS` identifiers, and the
+ * structural `validateStructurePlacementIntent` guard.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -60,7 +66,7 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ───── Weapon vocabulary (canonical hitscan combat) ─────────────
+// ───── Weapon vocabulary (canonical hitscan combat) ─────
 export {
   WEAPON_IDS,
   isWeaponId,
@@ -80,7 +86,7 @@ export {
   type HitEventPayload,
 } from "./events/index.js";
 
-// ───── Stage 2D: Colyseus wire schemas ─────────────
+// ───── Stage 2D: Colyseus wire schemas ─────
 
 export {
   PlayerStateSchema,
@@ -90,7 +96,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ───── Stage 2D (consolidated): canonical movement contract ─────────────
+// ───── Stage 2D (consolidated): canonical movement contract ─────
 
 export {
   type PlayerNetworkState,
@@ -106,7 +112,7 @@ export {
   type GameModeId,
 } from "./gameModes.js";
 
-// ───── Match / round protocol (1v1 match loop) ─────────────
+// ───── Match / round protocol (1v1 match loop) ─────
 
 export {
   MatchPhase,
@@ -116,6 +122,28 @@ export {
   RoundScoreSchema,
   type RoundScoreSchemaInstance,
 } from "./match.js";
+
+// ───── Building contract (server-authoritative multiplayer building) ─────
+
+export {
+  BUILD_TYPES,
+  isBuildType,
+  type BuildType,
+  GRID_ROTATIONS,
+  isGridRotation,
+  type GridRotation,
+  type GridPosition,
+  type StructurePlacementIntent,
+  STRUCTURE_PLACEMENT_INTENT_LIMITS,
+  type StructureState,
+  type BuildingState,
+  BUILD_EVENTS,
+  type BuildEventName,
+  type BuildRejectionReason,
+  type StructurePlacedEvent,
+  type StructureRejectedEvent,
+  validateStructurePlacementIntent,
+} from "./building.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";
