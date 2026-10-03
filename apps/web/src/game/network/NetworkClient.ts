@@ -5,23 +5,34 @@
  *  - connects to the game server (configurable URL, default ws://localhost:2567)
  *  - joins the "two-player-movement" room
  *  - exposes a clean API for the GameRuntime to drive:
- *    start(), stop(), sendInput(), onStateChange(), onEvent()
+ *    start(), stop(), sendInput(), send(), onStateChange(), onEvent()
  *  - tracks the local session ID
- *  - parses the synchronized RoomStateSchema into plain player state
- *    objects for the prediction and interpolation layers, and the
- *    authoritative match/round state for the match-loop lifecycle.
+ *  - parses the synchronized RoomStateSchema into plain state for the
+ *    prediction / interpolation layers, the authoritative match/round
+ *    state, and the authoritative building state (replicated structures).
  *
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
- * RoomStateSchema, listens for combat events, and sends PlayerNetworkInput
- * messages.
+ * RoomStateSchema, listens for combat/building events, and sends
+ * PlayerNetworkInput / build-intent messages.
  */
 import { Client } from "@colyseus/sdk";
-import type { PlayerNetworkInput, PlayerNetworkState } from "@buildshift/protocol";
+import type {
+  BuildingState,
+  PlayerNetworkInput,
+} from "@buildshift/protocol";
 import {
   parseMatchState,
   type ParsedMatchState,
 } from "./matchStateParse";
+import {
+  EMPTY_BUILDING_STATE,
+  parseBuildingState,
+} from "./structureStateParse";
+import {
+  parsePlayers,
+  type ParsedPlayerState,
+} from "./playerStateParse";
 import { resolveGameServerUrl } from "./serverUrl";
 
 /**
@@ -68,32 +79,19 @@ export interface RoomLike {
 
 /**
  * The full parsed room state: a map of sessionId → player state plus the
- * authoritative match/round state.
+ * authoritative match/round state and the authoritative building state
+ * (the replicated structure collection).
  */
 export interface ParsedRoomState {
   players: Record<string, ParsedPlayerState>;
   /** The authoritative match/round state for this room. */
   match: ParsedMatchState;
+  /** The authoritative building state (replicated structures). */
+  building: BuildingState;
 }
 
-/**
- * A plain, validated player state parsed from the RoomStateSchema.
- * Extends the movement state with the combat fields carried on the wire.
- */
-export interface ParsedPlayerState extends PlayerNetworkState {
-  /** Authoritative current health (from the server schema). */
-  health: number;
-  /** Authoritative current shield. */
-  shield: number;
-  /** Authoritative current energy. */
-  energy: number;
-  /** Authoritative current magazine ammo. */
-  ammo: number;
-  /** Highest input sequence at which this player last fired (-1 = never). */
-  lastFireSequence: number;
-  /** Whether the player is eliminated. */
-  isEliminated: boolean;
-}
+/** Re-exported for existing consumers of the network module. */
+export type { ParsedPlayerState } from "./playerStateParse";
 
 /**
  * Options for the NetworkClient.
@@ -118,6 +116,7 @@ export class NetworkClient {
   private _parsedState: ParsedRoomState = {
     players: {},
     match: parseMatchState({}),
+    building: EMPTY_BUILDING_STATE,
   };
   private readonly stateListeners = new Set<(state: ParsedRoomState) => void>();
   private readonly connectionListeners = new Set<(connected: boolean) => void>();
@@ -176,7 +175,11 @@ export class NetworkClient {
     this.started = false;
     this._isConnected = false;
     this._sessionId = null;
-    this._parsedState = { players: {}, match: parseMatchState({}) };
+    this._parsedState = {
+      players: {},
+      match: parseMatchState({}),
+      building: EMPTY_BUILDING_STATE,
+    };
     this.emitConnectionChange();
     this.emitStateChange();
   }
@@ -186,11 +189,22 @@ export class NetworkClient {
    * No-op when not connected. Returns true if the message was sent.
    */
   public sendInput(input: PlayerNetworkInput): boolean {
+    return this.send(INPUT_MESSAGE_TYPE, input);
+  }
+
+  /**
+   * Send an arbitrary named message to the room (client → server).
+   *
+   * Generic outbound path for non-movement protocol messages — e.g. the
+   * building layer's `build:placement_request` intents. No-op when not
+   * connected. Returns true if the message was handed to the transport.
+   */
+  public send(type: string, payload?: unknown): boolean {
     if (!this.room || !this._isConnected) {
       return false;
     }
     try {
-      this.room.send(INPUT_MESSAGE_TYPE, input);
+      this.room.send(type, payload);
       return true;
     } catch {
       return false;
@@ -220,7 +234,8 @@ export class NetworkClient {
   }
 
   /**
-   * Subscribe to a named server event (e.g. "combat:hit", "combat:eliminated").
+   * Subscribe to a named server event (e.g. "combat:hit",
+   * "combat:eliminated", "build:structure_placed").
    * The callback is invoked with the event payload. Returns an unsubscribe
    * function.
    */
@@ -338,7 +353,11 @@ export class NetworkClient {
     if (this.disposed || !this._isConnected) return;
     this._isConnected = false;
     this._sessionId = null;
-    this._parsedState = { players: {}, match: parseMatchState({}) };
+    this._parsedState = {
+      players: {},
+      match: parseMatchState({}),
+      building: EMPTY_BUILDING_STATE,
+    };
     this.room = null;
     this.emitConnectionChange();
     this.emitStateChange();
@@ -360,120 +379,21 @@ export class NetworkClient {
 /**
  * Parse the raw Colyseus room state into a plain ParsedRoomState.
  *
- * The server uses a RoomStateSchema with a `players` MapSchema keyed by
- * sessionId plus the authoritative match fields (`matchPhase`, `roundScore`,
- * `currentRound`, `lastRoundResult`). From the client SDK this arrives as a
- * schema object whose `players` is a MapSchema (iterable as [key, value]
- * pairs) and whose match fields are parsed by {@link parseMatchState}.
+ * The server's RoomStateSchema carries `players` (MapSchema keyed by
+ * sessionId), the authoritative match fields (`matchPhase`, `roundScore`,
+ * `currentRound`, `lastRoundResult`), and the authoritative building state
+ * (`structures` — the replicated structure collection). Players are parsed
+ * by {@link parsePlayers}, match fields by {@link parseMatchState}, and
+ * structures by {@link parseBuildingState}.
  */
 export function parseRoomState(raw: unknown): ParsedRoomState {
+  const structures =
+    raw == null || typeof raw !== "object"
+      ? undefined
+      : (raw as Record<string, unknown>).structures;
   return {
     players: parsePlayers(raw),
     match: parseMatchState(raw),
-  };
-}
-
-/**
- * Parse the `players` collection of the raw room state into a plain record.
- */
-function parsePlayers(raw: unknown): Record<string, ParsedPlayerState> {
-  const result: Record<string, ParsedPlayerState> = {};
-
-  if (raw == null || typeof raw !== "object") {
-    return result;
-  }
-
-  const playersRoot = (raw as { players?: unknown }).players;
-  if (playersRoot == null) {
-    return result;
-  }
-
-  if (
-    typeof (playersRoot as { [Symbol.iterator]?: unknown })[Symbol.iterator] ===
-    "function"
-  ) {
-    for (const item of playersRoot as Iterable<unknown>) {
-      if (Array.isArray(item) && item.length >= 2) {
-        const key = String(item[0]);
-        const parsed = parsePlayerEntry(item[1]);
-        if (parsed) {
-          result[key] = parsed;
-        }
-      }
-    }
-    return result;
-  }
-
-  if (typeof playersRoot === "object" && !Array.isArray(playersRoot)) {
-    for (const key of Object.keys(playersRoot)) {
-      const parsed = parsePlayerEntry(
-        (playersRoot as Record<string, unknown>)[key],
-      );
-      if (parsed) {
-        result[key] = parsed;
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * Parse one player entry from the schema into a ParsedPlayerState.
- *
- * The server's PlayerStateSchema carries x, y, z, yaw, velocityY,
- * grounded, lastProcessedSequence, health, shield, energy, ammo,
- * lastFireSequence, alive, isEliminated.
- */
-function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
-  if (raw == null || typeof raw !== "object") {
-    return null;
-  }
-  const r = raw as Record<string, unknown>;
-  const x = r.x;
-  const y = r.y;
-  const z = r.z;
-  const yaw = r.yaw;
-  const velocityY = r.velocityY;
-
-  if (
-    typeof x !== "number" ||
-    typeof y !== "number" ||
-    typeof z !== "number" ||
-    typeof yaw !== "number" ||
-    typeof velocityY !== "number"
-  ) {
-    return null;
-  }
-
-  const sequence =
-    typeof r.lastProcessedSequence === "number"
-      ? (r.lastProcessedSequence as number)
-      : -1;
-
-  const health = typeof r.health === "number" ? r.health : 100;
-  const shield = typeof r.shield === "number" ? r.shield : 0;
-  const energy = typeof r.energy === "number" ? r.energy : 0;
-  const ammo = typeof r.ammo === "number" ? r.ammo : 0;
-  const lastFireSequence =
-    typeof r.lastFireSequence === "number" ? r.lastFireSequence : -1;
-  const isEliminated = r.isEliminated === true;
-
-  return {
-    x,
-    y,
-    z,
-    vx: 0,
-    vy: velocityY,
-    vz: 0,
-    sequence,
-    yaw,
-    pitch: 0,
-    health,
-    shield,
-    energy,
-    ammo,
-    lastFireSequence,
-    isEliminated,
+    building: parseBuildingState(structures),
   };
 }

@@ -18,7 +18,7 @@
  * All multiplayer interaction flows through these modules.
  */
 
-// ── NetworkClient (the Colyseus transport) ──────────────────────────────────
+// ── NetworkClient (the Colyseus transport) ─────────────────────────────────
 export {
   NetworkClient,
   parseRoomState,
@@ -32,13 +32,26 @@ export {
   type ParsedPlayerState,
 } from "./NetworkClient";
 
-// ── Authoritative match/round state parsing (client-side) ───────────────────
+// ── Replicated player collection parsing (client-side) ─────────────────────
+export {
+  parsePlayers,
+  parsePlayerEntry,
+} from "./playerStateParse";
+
+// ── Replicated building state parsing (client-side) ────────────────────────
+export {
+  parseBuildingState,
+  parseStructureState,
+  EMPTY_BUILDING_STATE,
+} from "./structureStateParse";
+
+// ── Authoritative match/round state parsing (client-side) ──────────────────
 export {
   parseMatchState,
   type ParsedMatchState,
 } from "./matchStateParse";
 
-// ── Match-loop reset detection (pure, testable) ─────────────────────────────
+// ── Match-loop reset detection (pure, testable) ────────────────────────────
 export {
   computeMatchReset,
   INITIAL_MATCH_SNAPSHOT,
