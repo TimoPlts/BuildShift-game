@@ -217,3 +217,101 @@ body {
   font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
+
+/* ── Match HUD (top-center overlay for 1v1 match loop) ── */
+
+.match-hud {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 18 / 72%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Score row: local — remote */
+.match-hud__score {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.match-hud__score-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e6e8ee;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+.match-hud__score-value--local {
+  color: #34d399;
+}
+
+.match-hud__score-value--remote {
+  color: #f0616d;
+}
+
+.match-hud__score-separator {
+  font-size: 1.2rem;
+  color: #aeb9ca;
+}
+
+/* Phase + round indicator row */
+.match-hud__phase-row {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.match-hud__round {
+  font-size: 0.75rem;
+  color: #aeb9ca;
+  letter-spacing: 0.03em;
+}
+
+.match-hud__phase {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+}
+
+.match-hud__phase--active {
+  color: #f5b642;
+}
+
+/* Contextual banners (round result / match winner) */
+.match-hud__banner {
+  font-size: 1.5rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 6px rgb(0 0 0 / 70%);
+}
+
+.match-hud__banner--success {
+  color: #34d399;
+}
+
+.match-hud__banner--failure {
+  color: #f0616d;
+}
+
+/* Match-end banner is larger and more prominent. */
+.match-hud__banner--match {
+  font-size: 2rem;
+  letter-spacing: 0.18em;
+}
