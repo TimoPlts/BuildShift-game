@@ -6,9 +6,8 @@
 import { describe, expect, it, beforeEach } from "vitest";
 import {
   ENERGY_LIMITS, STRUCTURE_DURABILITY_LIMITS,
-  type EnergyUpdateEvent, type StructureDamageEvent, type StructureDestroyedEvent,
 } from "@buildshift/protocol";
-import { ENERGY, getStructureConfig, getStructureDurability } from "@buildshift/game-config";
+import { ENERGY, getStructureDurability } from "@buildshift/game-config";
 import { EnergyTracker } from "./energy/energyTracker";
 import { StructureDurabilityTracker } from "./energy/structureDurabilityTracker";
 import {
@@ -60,12 +59,31 @@ describe("EnergyTracker", () => {
     t.applyReplicatedEnergy({ p1: 100 });
     expect(t.canAffordStructure("p1", "wall")).toBe(true);
     expect(t.canAffordStructure("p1", "floor")).toBe(true);
+    expect(t.canAffordStructure("p1", "ramp")).toBe(true);
+    expect(t.canAffordStructure("p1", "cone")).toBe(true);
   });
 
   it("canAffordStructure with insufficient energy", () => {
     t.applyReplicatedEnergy({ p1: 5 });
     expect(t.canAffordStructure("p1", "wall")).toBe(false);
+    expect(t.canAffordStructure("p1", "ramp")).toBe(false);
+    expect(t.canAffordStructure("p1", "cone")).toBe(false);
     expect(t.canAffordStructure("p1", "floor")).toBe(true);
+  });
+
+  it("canAffordStructure exact cost boundary", () => {
+    t.applyReplicatedEnergy({ p1: 10 });
+    expect(t.canAffordStructure("p1", "wall")).toBe(true);
+    t.applyReplicatedEnergy({ p1: 9 });
+    expect(t.canAffordStructure("p1", "wall")).toBe(false);
+    t.applyReplicatedEnergy({ p1: 8 });
+    expect(t.canAffordStructure("p1", "ramp")).toBe(true);
+    t.applyReplicatedEnergy({ p1: 7 });
+    expect(t.canAffordStructure("p1", "ramp")).toBe(false);
+    t.applyReplicatedEnergy({ p1: 6 });
+    expect(t.canAffordStructure("p1", "cone")).toBe(true);
+    t.applyReplicatedEnergy({ p1: 5 });
+    expect(t.canAffordStructure("p1", "cone")).toBe(false);
   });
 
   it("canAffordStructure unknown player", () => {
@@ -177,6 +195,14 @@ describe("parseEnergyUpdateEvent", () => {
     const r = parseEnergyUpdateEvent({ playerId: "p1", energy: 50 });
     expect(r).toEqual({ playerId: "p1", energy: 50 });
   });
+  it("valid at protocol max boundary", () => {
+    const r = parseEnergyUpdateEvent({ playerId: "p1", energy: ENERGY_LIMITS.max });
+    expect(r).toEqual({ playerId: "p1", energy: ENERGY_LIMITS.max });
+  });
+  it("valid at zero", () => {
+    const r = parseEnergyUpdateEvent({ playerId: "p1", energy: 0 });
+    expect(r).toEqual({ playerId: "p1", energy: 0 });
+  });
   it("null for non-object", () => { expect(parseEnergyUpdateEvent(null)).toBeNull(); });
   it("null for missing playerId", () => { expect(parseEnergyUpdateEvent({ energy: 50 })).toBeNull(); });
   it("null for missing energy", () => { expect(parseEnergyUpdateEvent({ playerId: "p1" })).toBeNull(); });
@@ -194,6 +220,11 @@ describe("parseStructureDamageEvent", () => {
     const r = parseStructureDamageEvent(valid);
     expect(r).toEqual(valid);
   });
+  it("valid with remainingDurability 0", () => {
+    const r = parseStructureDamageEvent({ ...valid, damage: 80, remainingDurability: 0 });
+    expect(r).not.toBeNull();
+    expect(r!.remainingDurability).toBe(0);
+  });
   it("null for non-object", () => { expect(parseStructureDamageEvent(null)).toBeNull(); });
   it("null for missing structureId", () => { expect(parseStructureDamageEvent({ ...valid, structureId: "" })).toBeNull(); });
   it("null for zero damage", () => { expect(parseStructureDamageEvent({ ...valid, damage: 0 })).toBeNull(); });
@@ -202,6 +233,10 @@ describe("parseStructureDamageEvent", () => {
     expect(parseStructureDamageEvent({ ...valid, remainingDurability: STRUCTURE_DURABILITY_LIMITS.max + 1 })).toBeNull();
   });
   it("null for unknown weapon", () => { expect(parseStructureDamageEvent({ ...valid, sourceWeaponId: "laser" })).toBeNull(); });
+  it("valid with shotgun weapon", () => {
+    const r = parseStructureDamageEvent({ ...valid, damage: 80, sourceWeaponId: "shotgun" });
+    expect(r).not.toBeNull();
+  });
 });
 
 describe("parseStructureDestroyedEvent", () => {
@@ -211,11 +246,20 @@ describe("parseStructureDestroyedEvent", () => {
   it("null for missing structureId", () => { expect(parseStructureDestroyedEvent({ ...valid, structureId: "" })).toBeNull(); });
   it("null for missing destroyer", () => { expect(parseStructureDestroyedEvent({ ...valid, destroyedByPlayerId: "" })).toBeNull(); });
   it("null for unknown weapon", () => { expect(parseStructureDestroyedEvent({ ...valid, destroyedByWeaponId: "laser" })).toBeNull(); });
+  it("valid with shotgun", () => {
+    expect(parseStructureDestroyedEvent({ ...valid, destroyedByWeaponId: "shotgun" })).toEqual({ ...valid, destroyedByWeaponId: "shotgun" });
+  });
 });
 
 describe("parseStructureDurability", () => {
   it("valid", () => {
     expect(parseStructureDurability({ maxDurability: 200, currentDurability: 150 })).toEqual({ maxDurability: 200, currentDurability: 150 });
+  });
+  it("valid at zero current", () => {
+    expect(parseStructureDurability({ maxDurability: 200, currentDurability: 0 })).toEqual({ maxDurability: 200, currentDurability: 0 });
+  });
+  it("valid at full current", () => {
+    expect(parseStructureDurability({ maxDurability: 200, currentDurability: 200 })).toEqual({ maxDurability: 200, currentDurability: 200 });
   });
   it("null for non-object", () => { expect(parseStructureDurability(null)).toBeNull(); });
   it("null for missing fields", () => { expect(parseStructureDurability({ maxDurability: 200 })).toBeNull(); });
@@ -246,5 +290,14 @@ describe("round-state cleanup", () => {
     t.applyReplicated({ s3: "cone" }, {});
     expect(t.structureCount).toBe(1);
     expect(t.getDurability("s3")!.maxDurability).toBe(getStructureDurability("cone")!);
+  });
+
+  it("EnergyTracker re-afford after reset at starting energy", () => {
+    const t = new EnergyTracker();
+    t.applyReplicatedEnergy({ p1: ENERGY.startingEnergy });
+    expect(t.canAffordStructure("p1", "wall")).toBe(true);
+    expect(t.canAffordStructure("p1", "floor")).toBe(true);
+    expect(t.canAffordStructure("p1", "ramp")).toBe(true);
+    expect(t.canAffordStructure("p1", "cone")).toBe(true);
   });
 });
