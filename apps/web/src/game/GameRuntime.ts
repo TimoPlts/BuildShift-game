@@ -6,7 +6,7 @@ import{Color3}from"@babylonjs/core/Maths/math.color";
 import{Vector3}from"@babylonjs/core/Maths/math.vector";
 import type{AbstractMesh}from"@babylonjs/core/Meshes/abstractMesh";
 import{PHYSICS_TIMING,PLAYER_COLLIDER,PLAYER_COLLIDER_TOTAL_HEIGHT}from"@buildshift/game-config";
-import{MatchPhase,type HitResultEvent,type PlayerEliminatedEvent}from"@buildshift/protocol";
+import{MatchPhase,type HitResultEvent,type PlayerEliminatedEvent,type StructureDurabilityState}from"@buildshift/protocol";
 import{ThirdPersonCameraController}from"./camera/ThirdPersonCameraController";
 import{InputManager}from"./input/InputManager";
 import{AimController}from"./aim/AimController";
@@ -16,6 +16,7 @@ import{HealthHud}from"./network/HealthHud";
 import type{SubstepInput}from"./player/substepInput";
 import{createGameNetworking,parseMatchState,computeMatchReset,INITIAL_MATCH_SNAPSHOT,COMBAT_HIT_EVENT,COMBAT_ELIMINATED_EVENT,SIMULATION_TICK_SECONDS,reconcileHealthDisplay,type ParsedRoomState,type ParsedMatchState,type MatchStateSnapshot,type InputSample}from"./network";
 import{createBuildingSystem,updateBuildingFrame,type BuildingSystem}from"./building";
+import{EnergyRuntimeConsumer}from"./energy";
 import{MovementDebugHUD}from"../ui/MovementDebugHUD";
 const FIXED_DT=PHYSICS_TIMING.fixedStepDurationSeconds,MAX_FRAME_DELTA=0.1,MAX_STEPS=8,MAX_SIM_TICKS=4;
 const NEUTRAL:Readonly<SubstepInput>={moveX:0,moveZ:0,lookYaw:0,jumpPressed:false};
@@ -29,6 +30,7 @@ public readonly currentAimDirection=new Vector3(0,0,-1);
 private readonly networkClient;private readonly inputBatcher;private readonly predictionOrchestrator;
 private readonly remoteInterpolation;private readonly debugHud:MovementDebugHUD;
 private readonly combatHud:HealthHud;private readonly buildingSystem:BuildingSystem;
+private readonly energyConsumer:EnergyRuntimeConsumer;
 private simAccumulator=0;private isConnected=false;
 private hudCleanup:(()=>void)|null=null;private combatHudCleanup:(()=>void)|null=null;
 private unsubscribeState:(()=>void)|null=null;private unsubscribeConnection:(()=>void)|null=null;
@@ -56,10 +58,11 @@ this.predictionOrchestrator=networking.predictionOrchestrator;
 this.remoteInterpolation=networking.remotePlayerManager;
 this.debugHud=new MovementDebugHUD(canvas);this.combatHud=new HealthHud();
 this.buildingSystem=createBuildingSystem(canvas,this.networkClient);
+this.energyConsumer=new EnergyRuntimeConsumer(this.networkClient,this.buildingSystem);
 this.unsubscribeState=this.networkClient.onStateChange((state)=>this.handleNetworkState(state));
 this.unsubscribeConnection=this.networkClient.onConnectionChange((connected)=>{
 this.isConnected=connected;
-if(connected){this.predictionOrchestrator.reset();this.inputBatcher.reset();this.remoteInterpolation.reset();this.remoteWasEliminated=false;this.remoteHitFlashFrames=0;this.matchOver=false;this.prevMatchSnapshot={...INITIAL_MATCH_SNAPSHOT};}
+if(connected){this.predictionOrchestrator.reset();this.inputBatcher.reset();this.remoteInterpolation.reset();this.energyConsumer.reset();this.remoteWasEliminated=false;this.remoteHitFlashFrames=0;this.matchOver=false;this.prevMatchSnapshot={...INITIAL_MATCH_SNAPSHOT};}
 this.debugHud.state.connectionState=connected?"connected":"disconnected";});
 this.unsubscribeHitEvent=this.networkClient.onEvent(COMBAT_HIT_EVENT,(p)=>this.handleHitEvent(p as HitResultEvent));
 this.unsubscribeEliminatedEvent=this.networkClient.onEvent(COMBAT_ELIMINATED_EVENT,(p)=>this.handleEliminatedEvent(p as PlayerEliminatedEvent));
@@ -97,6 +100,7 @@ private handleNetworkState(state:ParsedRoomState):void{
 const sid=this.networkClient.sessionId;if(!sid)return;
 this.handleMatchState(state.match);
 this.buildingSystem.applyReplicatedBuilding(state.building);
+this.energyConsumer.onRoomState(state);
 const pids=Object.keys(state.players);const local=state.players[sid];
 if(local){this.predictionOrchestrator.onServerState({x:local.x,y:local.y,z:local.z,yaw:local.yaw,velocityY:local.vy,grounded:local.vy===0,sequence:local.sequence,health:local.health,shield:local.shield,energy:local.energy,ammo:local.ammo,lastFireSequence:local.lastFireSequence,isEliminated:local.isEliminated},this.inputBatcher.getInputsAfter(local.sequence));this.inputBatcher.pruneUpTo(local.sequence);}
 for(const pid of pids){if(pid===sid)continue;const r=state.players[pid];if(r){this.remoteInterpolation.addState({x:r.x,y:r.y,z:r.z,yaw:r.yaw,velocityY:r.vy,grounded:false},performance.now());if(r.isEliminated)this.remoteWasEliminated=true;}}
@@ -111,7 +115,8 @@ if(decision.shouldReset)this.clearRoundState();
 for(const l of this.matchStateListeners){l(this.matchState);}}
 private clearRoundState():void{
 this.predictionOrchestrator.reset();this.inputBatcher.reset();
-this.remoteInterpolation.reset();this.remoteWasEliminated=false;
+this.remoteInterpolation.reset();this.energyConsumer.reset();
+this.remoteWasEliminated=false;
 this.remoteHitFlashFrames=0;this.buildingSystem.reset();}
 public getSessionId():string|null{return this.networkClient.sessionId;}
 public onMatchStateChange(listener:(state:ParsedMatchState)=>void):()=>void{
@@ -119,6 +124,11 @@ this.matchStateListeners.push(listener);
 return()=>{const i=this.matchStateListeners.indexOf(listener);if(i!==-1)this.matchStateListeners.splice(i,1);};}
 public getMatchState():ParsedMatchState{return this.matchState;}
 public isMatchOver():boolean{return this.matchOver||this.matchState.matchPhase===MatchPhase.MATCH_ENDED;}
+public getLocalEnergy():number|undefined{return this.energyConsumer.localEnergy;}
+public getPlayerEnergy(playerId:string):number|undefined{return this.energyConsumer.energyTracker.getEnergy(playerId);}
+public getStructureDurability(structureId:string):StructureDurabilityState|null{return this.energyConsumer.structureDurabilityTracker.getDurability(structureId);}
+public isStructureDestroyed(structureId:string):boolean{return this.energyConsumer.structureDurabilityTracker.isDestroyed(structureId);}
+public canAffordLocalStructure(buildType:string):boolean{return this.energyConsumer.canAffordLocalStructure(buildType);}
 private handleHitEvent(event:HitResultEvent):void{
 const sid=this.networkClient.sessionId;if(!sid)return;
 if(event.targetId!==sid)this.remoteHitFlashFrames=6;}
@@ -171,6 +181,7 @@ this.unsubscribeState?.();this.unsubscribeConnection?.();
 this.unsubscribeHitEvent?.();this.unsubscribeEliminatedEvent?.();
 this.hudCleanup?.();this.combatHudCleanup?.();
 this.matchStateListeners.length=0;
+this.energyConsumer.dispose();
 this.buildingSystem.dispose();
 this.networkClient.dispose();
 this.debugHud.dispose();this.combatHud.dispose();
