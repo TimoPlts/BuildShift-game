@@ -19,6 +19,7 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
 import {
+  MatchPhase,
   EVENTS,
   type FireRejectedEvent,
   type HealthUpdateEvent,
@@ -146,6 +147,14 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
       getPlayer(s, roomA.sessionId) !== undefined && getPlayer(s, roomB.sessionId) !== undefined;
     await waitForState(roomA, both);
     await waitForState(roomB, both);
+
+    // The room runs a pre-round COUNTDOWN before combat is allowed. Wait for
+    // the round to be IN_PROGRESS so fire inputs are processed.
+    await waitForState(
+      roomA,
+      (s) => (s as Record<string, any>)?.matchPhase === MatchPhase.IN_PROGRESS,
+      8000,
+    );
 
     roomA.onMessage(EVENTS.FIRE_REJECTED, (m) => fireRejected.push(m as FireRejectedEvent));
     roomA.onMessage(EVENTS.HEALTH_UPDATE, (m) => healthUpdates.push(m as HealthUpdateEvent));

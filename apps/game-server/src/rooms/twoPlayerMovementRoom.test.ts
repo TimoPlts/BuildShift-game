@@ -23,6 +23,7 @@ import {
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { VERTICAL_MOVEMENT } from "@buildshift/game-config";
+import { MatchPhase } from "@buildshift/protocol";
 
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
@@ -62,6 +63,23 @@ function playerFromState(state: any, sessionId: string): any {
   if (!players) return undefined;
   if (typeof players.get === "function") return players.get(sessionId);
   return players[sessionId];
+}
+
+function matchPhase(state: unknown): string {
+  return (state as Record<string, any>)?.matchPhase as string ?? "";
+}
+
+/** Wait until the room has left its pre-round COUNTDOWN and is IN_PROGRESS,
+ *  i.e. the round in which movement inputs are authoritatively processed. */
+async function waitForPlaying(
+  room: ClientRoom,
+  timeoutMs = 8_000,
+): Promise<void> {
+  await waitForState(
+    room,
+    (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
+    timeoutMs,
+  );
 }
 
 /** Bounded teardown of a client room + connection. */
@@ -141,7 +159,7 @@ describe("Stage 2D canonical two-player movement room", () => {
     await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
   }, 20_000);
 
-  // ─── Test 1: Two players can join and their states appear ─────────────────────
+  // ─── Test 1: Two players can join and their states appear ────────────────────
 
   it("two players can join and their states appear in the room state", async () => {
     // Wait until both players are visible in both clients' state.
@@ -176,9 +194,13 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(playerB.velocityY).toBeCloseTo(0, 2);
   });
 
-  // ─── Test 2: Sending a valid input updates position after a tick ──────────────
+  // ─── Test 2: Sending a valid input updates position after a tick ────────────
 
   it("sending a valid input updates the player's position after a tick", async () => {
+    // Wait for the pre-round countdown to finish; movement inputs are only
+    // processed while the round is IN_PROGRESS.
+    await waitForPlaying(roomA);
+
     // Record A's current position.
     const aBefore = playerFromState(roomA.state, roomA.sessionId);
     const xBefore = aBefore.x;
@@ -222,9 +244,12 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(bAfter.z).toBeCloseTo(0, 1);
   });
 
-  // ─── Test 3: Out-of-order (lower sequence) input is rejected ─────────────────
+  // ─── Test 3: Out-of-order (lower sequence) input is rejected ────────────────
 
   it("sending an out-of-order (lower sequence) input is rejected (position unchanged)", async () => {
+    // The round is IN_PROGRESS (established by the previous test).
+    await waitForPlaying(roomA);
+
     // First, send a valid input with sequence 1 to advance A's position.
     roomA.send(TWO_PLAYER_MOVEMENT_INPUT, {
       sequence: 1,
@@ -286,9 +311,13 @@ describe("Stage 2D canonical two-player movement room", () => {
     expect(Math.abs(aAfterRejected.z - zAtSeq1)).toBeLessThan(0.1);
   });
 
-  // ─── Test 4: A player leaving removes their state ─────────────────────────────
+  // ─── Test 4: A player leaving removes their state ───────────────────────────
 
   it("a player leaving removes their state", async () => {
+    // Ensure we are in the active round before the leave so the round-end
+    // handling (opponent wins) is exercised deterministically.
+    await waitForPlaying(roomA);
+
     // Before B leaves, A should see both players.
     expect(playerFromState(roomA.state, roomB.sessionId)).toBeDefined();
 

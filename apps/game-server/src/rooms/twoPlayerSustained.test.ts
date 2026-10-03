@@ -10,6 +10,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "@buildshift/game-config";
+import { MatchPhase } from "@buildshift/protocol";
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
 import {
@@ -47,6 +48,10 @@ function playerFromState(state: unknown, sessionId: string): any {
   if (!players) return undefined;
   if (typeof players.get === "function") return players.get(sessionId);
   return players[sessionId];
+}
+
+function matchPhase(state: unknown): string {
+  return (state as Record<string, any>)?.matchPhase as string ?? "";
 }
 
 /**
@@ -129,6 +134,16 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     await waitForState(roomA, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
     await waitForState(roomB, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
 
+    // The room runs a pre-round COUNTDOWN before gameplay is allowed. Wait
+    // for the round to be IN_PROGRESS so the inputs sent below are actually
+    // processed (inputs buffered during the countdown are cleared at round
+    // start by the match lifecycle).
+    await waitForState(
+      roomA,
+      (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
+      8_000,
+    );
+
     // Snapshot spawn positions as plain values (Colyseus mutates in place).
     const a0 = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
     const b0 = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
@@ -153,7 +168,7 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
 
     // Snapshot final state as plain values.
     const af = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
-    const bf = snapshotPlayer(playerFromState(roomB.state, roomB.sessionId));
+    const bf = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
 
     // PREDICTION: sustained displacement in correct direction.
     expect(af.z).toBeLessThan(0); // A moved forward (−Z)
@@ -184,6 +199,14 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
   }, 30_000);
 
   it("out-of-order input after sustained session is rejected; next sequence accepted", async () => {
+    // Ensure the round is in progress before reading state so the sequence
+    // bookkeeping below is meaningful.
+    await waitForState(
+      roomA,
+      (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
+      8_000,
+    );
+
     const a = playerFromState(roomA.state, roomA.sessionId);
     const seqBefore = a.lastProcessedSequence;
 
