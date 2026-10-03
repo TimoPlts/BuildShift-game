@@ -35,6 +35,7 @@ import {
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { VERTICAL_MOVEMENT, PLAYER_MOVEMENT } from "@buildshift/game-config";
+import { MatchPhase } from "@buildshift/protocol";
 
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
@@ -80,6 +81,10 @@ function playerFromState(state: any, sessionId: string): any {
   if (!players) return undefined;
   if (typeof players.get === "function") return players.get(sessionId);
   return players[sessionId];
+}
+
+function matchPhase(state: unknown): string {
+  return (state as Record<string, any>)?.matchPhase as string ?? "";
 }
 
 /** Bounded teardown of a client room + connection. */
@@ -211,7 +216,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
   // ─────────────────────────────────────────────────────────────────────────────
 
   it("each client receives an independent state snapshot reflecting its own movement", async () => {
-    // ── Send distinct movement inputs ───────────────────────────────────────────
+    // ── Send distinct movement inputs ──────────────────────────────────────────
     //
     // Client A: "move forward" → moveZ = -1, lookYaw = 0
     //   World-space direction: (0, -1) → displacement in -Z
@@ -220,6 +225,15 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     //   World-space direction: (-1, 0) → displacement in -X
     //
     // Both use sequence 0 (first input; lastProcessedSequence starts at -1).
+
+    // The room runs a pre-round COUNTDOWN before movement inputs are
+    // processed. Wait for the round to be IN_PROGRESS so the inputs below are
+    // authoritatively consumed.
+    await waitForState(
+      roomA,
+      (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
+      8_000,
+    );
 
     roomA.send(TWO_PLAYER_MOVEMENT_INPUT, {
       sequence: 0,
@@ -247,7 +261,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
       secondaryFire: false,
     });
 
-    // ── Wait until both inputs have been authoritatively processed ──────────────
+    // ── Wait until both inputs have been authoritatively processed ────────────
     //
     // `lastProcessedSequence` is written to the wire schema on the tick that
     // consumes the input. When both reach 0, the server has stepped both
@@ -270,7 +284,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
       5_000,
     );
 
-    // ── Allow one additional patch cycle for positions to settle ────────────────
+    // ── Allow one additional patch cycle for positions to settle ───────────────
     //
     // The `lastProcessedSequence` is updated in the same tick as the position,
     // but the Colyseus state patch carrying the position change may arrive
@@ -278,7 +292,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // bounded wait ensures both fields are consistently visible.
     await waitMs(100);
 
-    // ── Assert independent state snapshots ─────────────────────────────────────
+    // ── Assert independent state snapshots ────────────────────────────────────
 
     // Read each client's view of the room state.
     const aInAState = playerFromState(roomA.state, roomA.sessionId);
@@ -286,7 +300,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     const aInBState = playerFromState(roomB.state, roomA.sessionId);
     const bInBState = playerFromState(roomB.state, roomB.sessionId);
 
-    // ── Client A's own snapshot: moved forward in -Z, X unchanged ──────────────
+    // ── Client A's own snapshot: moved forward in -Z, X unchanged ─────────────
     expect(aInAState).toBeDefined();
     expect(aInAState.lastProcessedSequence).toBe(0);
 
@@ -304,7 +318,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // A did NOT move in the X direction (its input had moveX=0).
     expect(Math.abs(aInAState.x - (-5))).toBeLessThan(0.1);
 
-    // ── Client B's own snapshot: moved right in -X, Z unchanged ────────────────
+    // ── Client B's own snapshot: moved right in -X, Z unchanged ───────────────
     expect(bInBState).toBeDefined();
     expect(bInBState.lastProcessedSequence).toBe(0);
 
@@ -316,7 +330,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // B did NOT move in the Z direction (its input had moveZ=0).
     expect(Math.abs(bInBState.z)).toBeLessThan(0.1);
 
-    // ── Both clients see the same authoritative state (consistency) ────────────
+    // ── Both clients see the same authoritative state (consistency) ───────────
     //
     // Client A's view of player A should match client B's view of player A,
     // and vice versa. Both clients receive the same Colyseus state patch.
@@ -326,7 +340,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     expect(bInAState.x).toBeCloseTo(bInBState.x, 2);
     expect(bInAState.z).toBeCloseTo(bInBState.z, 2);
 
-    // ── Independence: A's position ≠ B's position ──────────────────────────────
+    // ── Independence: A's position ≠ B's position ─────────────────────────────
     //
     // The two players occupy distinct positions, proving the server
     // tracked them independently and the snapshots are per-player.

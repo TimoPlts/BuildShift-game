@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
+import { MatchPhase } from "@buildshift/protocol";
 
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
@@ -34,6 +35,10 @@ function pfs(state: any, id: string): any {
   if (!p) return undefined;
   if (typeof p.get === "function") return p.get(id);
   return p[id];
+}
+
+function matchPhase(state: unknown): string {
+  return (state as Record<string, any>)?.matchPhase as string ?? "";
 }
 
 async function teardown(room: ClientRoom): Promise<void> {
@@ -78,6 +83,9 @@ describe("TwoPlayerMovementRoom combat", () => {
     // Wait until both players appear in both clients' state.
     await waitForState(roomA, (s) => pfs(s, roomA.sessionId) && pfs(s, roomB.sessionId));
     await waitForState(roomB, (s) => pfs(s, roomA.sessionId) && pfs(s, roomB.sessionId));
+    // The room runs a pre-round COUNTDOWN before combat is allowed. Wait for
+    // the round to be IN_PROGRESS so fire inputs are processed.
+    await waitForState(roomA, (s) => matchPhase(s) === MatchPhase.IN_PROGRESS, 8000);
   }, 20000);
 
   afterAll(async () => {
