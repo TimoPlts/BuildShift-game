@@ -315,3 +315,133 @@ body {
   font-size: 2rem;
   letter-spacing: 0.18em;
 }
+
+/* ── Build HUD (bottom-center overlay for building mode) ── */
+
+.build-hud {
+  position: absolute;
+  bottom: 1.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.6rem 1.2rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 18 / 78%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* Dimmed state when build mode is off */
+.build-hud--inactive {
+  opacity: 0.55;
+}
+
+/* Top row: mode label + selected type */
+.build-hud__top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.build-hud__mode-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+
+.build-hud__mode-label--active {
+  color: #f5b642;
+}
+
+.build-hud__selected {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #e6e8ee;
+  letter-spacing: 0.02em;
+}
+
+.build-hud__cost {
+  font-size: 0.75rem;
+  color: #aeb9ca;
+  margin-left: 0.3rem;
+}
+
+/* Build type selector row */
+.build-hud__types {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.build-hud__type {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 4%);
+  min-width: 3.5rem;
+}
+
+.build-hud__type--selected {
+  border-color: rgb(245 182 66 / 60%);
+  background: rgb(245 182 66 / 12%);
+}
+
+.build-hud__type-icon {
+  font-size: 1.1rem;
+  line-height: 1;
+  color: #aeb9ca;
+}
+
+.build-hud__type--selected .build-hud__type-icon {
+  color: #f5b642;
+}
+
+.build-hud__type-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+
+.build-hud__type--selected .build-hud__type-label {
+  color: #f5b642;
+}
+
+/* Bottom row: validity + grid position */
+.build-hud__bottom-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+
+.build-hud__validity {
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.build-hud__validity--valid {
+  color: #34d399;
+}
+
+.build-hud__validity--invalid {
+  color: #f0616d;
+}
+
+.build-hud__grid {
+  font-size: 0.7rem;
+  color: #6b7280;
+  font-variant-numeric: tabular-nums;
+}
