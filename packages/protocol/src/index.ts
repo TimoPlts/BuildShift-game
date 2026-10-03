@@ -134,6 +134,9 @@ export {
 // ───── Round / match lifecycle state protocol ─────
 
 export {
+  RoundState,
+  type MatchState,
+  type RoundResetPayload,
   GameState,
   type CountdownState,
   type RoundScore,

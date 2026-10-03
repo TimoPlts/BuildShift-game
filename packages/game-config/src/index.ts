@@ -31,6 +31,7 @@ export type { WeaponConfig, WeaponKind } from "./weapons.js";
 
 // ───── Match / round configuration (1v1 match loop) ─────
 export {
+  WIN_ROUNDS,
   ROUNDS_TO_WIN,
   ROUND_COUNTDOWN_SECONDS,
   ROUND_RESET_DELAY_SECONDS,
