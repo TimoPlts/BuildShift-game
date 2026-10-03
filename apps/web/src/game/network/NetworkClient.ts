@@ -9,17 +9,19 @@
  *  - tracks the local session ID
  *  - parses the synchronized RoomStateSchema into plain state for the
  *    prediction / interpolation layers, the authoritative match/round
- *    state, and the authoritative building state (replicated structures).
+ *    state, the authoritative building state (replicated structures), and
+ *    the authoritative per-structure durability (when replicated).
  *
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
- * RoomStateSchema, listens for combat/building events, and sends
+ * RoomStateSchema, listens for combat/building/energy events, and sends
  * PlayerNetworkInput / build-intent messages.
  */
 import { Client } from "@colyseus/sdk";
 import type {
   BuildingState,
   PlayerNetworkInput,
+  StructureDurabilityState,
 } from "@buildshift/protocol";
 import {
   parseMatchState,
@@ -28,6 +30,7 @@ import {
 import {
   EMPTY_BUILDING_STATE,
   parseBuildingState,
+  parseStructureDurabilities,
 } from "./structureStateParse";
 import {
   parsePlayers,
@@ -79,8 +82,9 @@ export interface RoomLike {
 
 /**
  * The full parsed room state: a map of sessionId → player state plus the
- * authoritative match/round state and the authoritative building state
- * (the replicated structure collection).
+ * authoritative match/round state, the authoritative building state (the
+ * replicated structure collection), and the authoritative per-structure
+ * durability (when the server replicates it on the wire).
  */
 export interface ParsedRoomState {
   players: Record<string, ParsedPlayerState>;
@@ -88,6 +92,14 @@ export interface ParsedRoomState {
   match: ParsedMatchState;
   /** The authoritative building state (replicated structures). */
   building: BuildingState;
+  /**
+   * The authoritative per-structure durability, keyed by `structureId`
+   * (server-assigned). Empty when the server does not carry the durability
+   * fields on the replicated structure entries — durability changes are
+   * still consumed via the `build:structure_damaged` /
+   * `build:structure_destroyed` events.
+   */
+  structureDurabilities: Record<string, StructureDurabilityState>;
 }
 
 /** Re-exported for existing consumers of the network module. */
@@ -117,6 +129,7 @@ export class NetworkClient {
     players: {},
     match: parseMatchState({}),
     building: EMPTY_BUILDING_STATE,
+    structureDurabilities: {},
   };
   private readonly stateListeners = new Set<(state: ParsedRoomState) => void>();
   private readonly connectionListeners = new Set<(connected: boolean) => void>();
@@ -179,6 +192,7 @@ export class NetworkClient {
       players: {},
       match: parseMatchState({}),
       building: EMPTY_BUILDING_STATE,
+      structureDurabilities: {},
     };
     this.emitConnectionChange();
     this.emitStateChange();
@@ -235,7 +249,7 @@ export class NetworkClient {
 
   /**
    * Subscribe to a named server event (e.g. "combat:hit",
-   * "combat:eliminated", "build:structure_placed").
+   * "combat:eliminated", "build:structure_placed", "energy:update").
    * The callback is invoked with the event payload. Returns an unsubscribe
    * function.
    */
@@ -357,6 +371,7 @@ export class NetworkClient {
       players: {},
       match: parseMatchState({}),
       building: EMPTY_BUILDING_STATE,
+      structureDurabilities: {},
     };
     this.room = null;
     this.emitConnectionChange();
@@ -382,9 +397,11 @@ export class NetworkClient {
  * The server's RoomStateSchema carries `players` (MapSchema keyed by
  * sessionId), the authoritative match fields (`matchPhase`, `roundScore`,
  * `currentRound`, `lastRoundResult`), and the authoritative building state
- * (`structures` — the replicated structure collection). Players are parsed
- * by {@link parsePlayers}, match fields by {@link parseMatchState}, and
- * structures by {@link parseBuildingState}.
+ * (`structures` — the replicated structure collection, optionally with the
+ * per-structure durability fields). Players are parsed by
+ * {@link parsePlayers}, match fields by {@link parseMatchState}, structures
+ * by {@link parseBuildingState}, and the replicated per-structure
+ * durability by {@link parseStructureDurabilities}.
  */
 export function parseRoomState(raw: unknown): ParsedRoomState {
   const structures =
@@ -395,5 +412,6 @@ export function parseRoomState(raw: unknown): ParsedRoomState {
     players: parsePlayers(raw),
     match: parseMatchState(raw),
     building: parseBuildingState(structures),
+    structureDurabilities: parseStructureDurabilities(structures),
   };
 }
