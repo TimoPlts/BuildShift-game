@@ -70,6 +70,14 @@ export {
   type FireGateRejectionReason,
 } from "./combat/fireGate.js";
 
+// ───── Round / match lifecycle state machine ─────
+
+export {
+  advanceRoundState,
+  type RoundEvent,
+  type RoundTransition,
+} from "./round-state-machine.js";
+
 /**
  * Version of the simulation rules. Client and server must stay synchronized on
  * this (see docs/TECHNICAL_ARCHITECTURE.md §18 "Physics and Prediction Rule").
