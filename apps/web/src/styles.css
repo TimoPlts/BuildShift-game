@@ -2,9 +2,7 @@
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-
-html,
-body {
+html, body {
   margin: 0;
   width: 100%;
   height: 100%;
@@ -12,17 +10,13 @@ body {
   background: #0f1115;
   color: #e6e8ee;
 }
-
-#root,
-.game-shell {
+#root, .game-shell {
   width: 100%;
   height: 100%;
 }
-
 .game-shell {
   position: relative;
 }
-
 .game-canvas {
   display: block;
   width: 100%;
@@ -30,7 +24,6 @@ body {
   outline: none;
   touch-action: none;
 }
-
 .foundation-overlay {
   position: absolute;
   top: 1rem;
@@ -45,13 +38,11 @@ body {
   pointer-events: none;
   backdrop-filter: blur(0.35rem);
 }
-
 .foundation-overlay p,
 .foundation-overlay small {
   margin: 0;
   color: #aeb9ca;
 }
-
 .crosshair {
   position: absolute;
   top: 50%;
@@ -61,7 +52,6 @@ body {
   transform: translate(-50%, -50%);
   pointer-events: none;
 }
-
 .crosshair::before,
 .crosshair::after {
   content: "";
@@ -69,7 +59,6 @@ body {
   background: rgb(255 255 255 / 85%);
   box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
 }
-
 .crosshair::before {
   top: 50%;
   left: 0;
@@ -77,7 +66,6 @@ body {
   height: 2px;
   transform: translateY(-50%);
 }
-
 .crosshair::after {
   left: 50%;
   top: 0;
@@ -85,7 +73,6 @@ body {
   height: 100%;
   transform: translateX(-50%);
 }
-
 .pointer-lock-overlay {
   position: absolute;
   inset: 0;
@@ -96,18 +83,14 @@ body {
   background: rgb(5 8 12 / 35%);
   pointer-events: none;
 }
-
 .pointer-lock-overlay strong {
   font-size: 1.15rem;
   letter-spacing: 0.02em;
 }
-
 .pointer-lock-overlay p {
   margin: 0;
   color: #aeb9ca;
 }
-
-/* Stage 1E: the control hints in the click-to-play overlay. */
 .control-hints {
   display: grid;
   gap: 0.3rem;
@@ -120,7 +103,6 @@ body {
   border-radius: 0.5rem;
   background: rgb(8 12 18 / 55%);
 }
-
 .control-hints kbd {
   display: inline-block;
   min-width: 2.2rem;
@@ -134,8 +116,6 @@ body {
   border-radius: 0.3rem;
   background: rgb(255 255 255 / 8%);
 }
-
-/* Stage 2B2: small dev network status readout (bottom-left). */
 .network-status {
   position: absolute;
   left: 1rem;
@@ -152,74 +132,59 @@ body {
   backdrop-filter: blur(0.35rem);
   font-size: 0.8rem;
 }
-
 .network-status__header {
   display: flex;
   align-items: center;
   gap: 0.4rem;
 }
-
 .network-status__title {
   font-size: 0.8rem;
   letter-spacing: 0.02em;
 }
-
 .network-status__status {
   color: #aeb9ca;
   text-transform: capitalize;
 }
-
 .network-status__dot {
   width: 0.55rem;
   height: 0.55rem;
   border-radius: 50%;
   background: #6b7280;
 }
-
 .network-status__dot--connecting {
   background: #f5b642;
 }
-
 .network-status__dot--connected {
   background: #34d399;
 }
-
 .network-status__dot--disconnected {
   background: #f0616d;
 }
-
 .network-status__list {
   margin: 0;
   display: grid;
   gap: 0.15rem;
 }
-
 .network-status__row {
   display: flex;
   justify-content: space-between;
   gap: 1rem;
 }
-
 .network-status__row dt {
   color: #aeb9ca;
 }
-
 .network-status__row dd {
   margin: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-
 .network-status__error {
   margin: 0;
   color: #f0616d;
   font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
-
-/* ── Match HUD (top-center overlay for 1v1 match loop) ── */
-
 .match-hud {
   position: absolute;
   top: 1rem;
@@ -239,14 +204,11 @@ body {
   z-index: 1000;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-
-/* Score row: local — remote */
 .match-hud__score {
   display: flex;
   align-items: center;
   gap: 0.5rem;
 }
-
 .match-hud__score-value {
   font-size: 1.4rem;
   font-weight: 700;
@@ -254,33 +216,26 @@ body {
   color: #e6e8ee;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
-
 .match-hud__score-value--local {
   color: #34d399;
 }
-
 .match-hud__score-value--remote {
   color: #f0616d;
 }
-
 .match-hud__score-separator {
   font-size: 1.2rem;
   color: #aeb9ca;
 }
-
-/* Phase + round indicator row */
 .match-hud__phase-row {
   display: flex;
   align-items: center;
   gap: 0.6rem;
 }
-
 .match-hud__round {
   font-size: 0.75rem;
   color: #aeb9ca;
   letter-spacing: 0.03em;
 }
-
 .match-hud__phase {
   font-size: 0.7rem;
   font-weight: 600;
@@ -288,12 +243,9 @@ body {
   letter-spacing: 0.06em;
   color: #6b7280;
 }
-
 .match-hud__phase--active {
   color: #f5b642;
 }
-
-/* Contextual banners (round result / match winner) */
 .match-hud__banner {
   font-size: 1.5rem;
   font-weight: 700;
@@ -301,23 +253,16 @@ body {
   text-transform: uppercase;
   text-shadow: 0 2px 6px rgb(0 0 0 / 70%);
 }
-
 .match-hud__banner--success {
   color: #34d399;
 }
-
 .match-hud__banner--failure {
   color: #f0616d;
 }
-
-/* Match-end banner is larger and more prominent. */
 .match-hud__banner--match {
   font-size: 2rem;
   letter-spacing: 0.18em;
 }
-
-/* ── Build HUD (bottom-center overlay for building mode) ── */
-
 .build-hud {
   position: absolute;
   bottom: 1.5rem;
@@ -337,19 +282,14 @@ body {
   z-index: 1000;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-
-/* Dimmed state when build mode is off */
 .build-hud--inactive {
   opacity: 0.55;
 }
-
-/* Top row: mode label + selected type */
 .build-hud__top-row {
   display: flex;
   align-items: center;
   gap: 0.8rem;
 }
-
 .build-hud__mode-label {
   font-size: 0.7rem;
   font-weight: 600;
@@ -357,30 +297,24 @@ body {
   letter-spacing: 0.08em;
   color: #6b7280;
 }
-
 .build-hud__mode-label--active {
   color: #f5b642;
 }
-
 .build-hud__selected {
   font-size: 0.95rem;
   font-weight: 600;
   color: #e6e8ee;
   letter-spacing: 0.02em;
 }
-
 .build-hud__cost {
   font-size: 0.75rem;
   color: #aeb9ca;
   margin-left: 0.3rem;
 }
-
-/* Build type selector row */
 .build-hud__types {
   display: flex;
   gap: 0.35rem;
 }
-
 .build-hud__type {
   display: flex;
   flex-direction: column;
@@ -392,54 +326,43 @@ body {
   background: rgb(255 255 255 / 4%);
   min-width: 3.5rem;
 }
-
 .build-hud__type--selected {
   border-color: rgb(245 182 66 / 60%);
   background: rgb(245 182 66 / 12%);
 }
-
 .build-hud__type-icon {
   font-size: 1.1rem;
   line-height: 1;
   color: #aeb9ca;
 }
-
 .build-hud__type--selected .build-hud__type-icon {
   color: #f5b642;
 }
-
 .build-hud__type-label {
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #6b7280;
 }
-
 .build-hud__type--selected .build-hud__type-label {
   color: #f5b642;
 }
-
-/* Bottom row: validity + grid position */
 .build-hud__bottom-row {
   display: flex;
   align-items: center;
   gap: 0.8rem;
 }
-
 .build-hud__validity {
   font-size: 0.7rem;
   font-weight: 600;
   letter-spacing: 0.04em;
 }
-
 .build-hud__validity--valid {
   color: #34d399;
 }
-
 .build-hud__validity--invalid {
   color: #f0616d;
 }
-
 .build-hud__grid {
   font-size: 0.7rem;
   color: #6b7280;
