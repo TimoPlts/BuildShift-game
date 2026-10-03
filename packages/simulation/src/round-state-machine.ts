@@ -118,5 +118,11 @@ export function advanceRoundState(
         updatedScore: { roundNumber: 0, playerAScore: 0, playerBScore: 0 },
       };
     }
+
+    default: {
+      // Exhaustiveness guard: all GameState members are handled above.
+      const _exhaustive: never = current;
+      throw new Error(`Unexpected GameState: ${_exhaustive}`);
+    }
   }
 }
