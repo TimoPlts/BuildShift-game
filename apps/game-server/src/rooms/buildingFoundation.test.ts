@@ -64,6 +64,9 @@ describe("Building foundation — server-authoritative contract", () => {
     const both = (st: unknown) => pfs(st, roomA.sessionId) && pfs(st, roomB.sessionId);
     await wfs(roomA, both);
     await wfs(roomB, both);
+    // Wait for the match countdown to finish so the phase is IN_PROGRESS.
+    // Builds are rejected during COUNTDOWN.
+    await wfs(roomA, (s) => (s as Record<string, any>)?.matchPhase === "IN_PROGRESS", 10_000);
   }, 20_000);
   afterAll(async () => {
     await wd(Promise.all([td(roomB), td(roomA)]), 5000, "td");
