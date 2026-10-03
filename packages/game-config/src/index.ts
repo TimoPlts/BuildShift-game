@@ -48,4 +48,13 @@ export {
   type StructureConfig,
 } from "./building.js";
 
+// ───── Energy economy & structure durability configuration ─────
+export {
+  ENERGY,
+  STRUCTURE_DURABILITY_KEYS,
+  STRUCTURE_DURABILITY,
+  getStructureDurability,
+  type StructureDurabilityKey,
+} from "./energy.js";
+
 export const GAME_CONFIG_VERSION = "0.1.0" as const;
