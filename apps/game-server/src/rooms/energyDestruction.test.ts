@@ -75,6 +75,9 @@ rb.onMessage(EE.STRUCTURE_DAMAGED,(m)=>sd2.push(m as SD));
 rb.onMessage(EE.STRUCTURE_DESTROYED,(m)=>st2.push(m as SX));
 const t0=Date.now();
 while(Date.now()-t0<10000){const a=pl(ra.state,ra.sessionId),b=pl(ra.state,rb.sessionId);if(a&&b)break;await W(25);}
+// Wait for the match countdown to finish so the phase is IN_PROGRESS.
+// Builds are rejected during COUNTDOWN.
+await pollState(() => (ra.state as any)?.matchPhase === "IN_PROGRESS", 10000, "matchPhase");
 },20000);
 afterAll(async()=>{
 await wd(Promise.all([td(rb),td(ra)]),5000,"td");
