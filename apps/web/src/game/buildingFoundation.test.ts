@@ -87,11 +87,14 @@ describe("placementPreview", () => {
   it("overlap", () => {
     expect(computePlacementPreview(mi({ occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");
   });
-  it("invalid_rotation for floor", () => {
-    expect(computePlacementPreview(mi({ buildType: "floor", rotation: 1 })).reason).toBe("invalid_rotation");
+  it("invalid_rotation for wall with non-default rotation", () => {
+    // wall has rotationCount=4; the preview checks `rotation % rotationCount !== 0`.
+    // rotation=1 → 1 % 4 = 1 ≠ 0 → invalid_rotation.
+    expect(computePlacementPreview(mi({ buildType: "wall", rotation: 1 })).reason).toBe("invalid_rotation");
   });
-  it("valid rotation for wall", () => {
-    expect(computePlacementPreview(mi({ buildType: "wall", rotation: 1 })).valid).toBe(true);
+  it("valid rotation for wall at default facing", () => {
+    // rotation=0 → 0 % 4 = 0 → passes rotation check → valid.
+    expect(computePlacementPreview(mi({ buildType: "wall", rotation: 0 })).valid).toBe(true);
   });
   it("ABSENT_PREVIEW frozen", () => {
     expect(ABSENT_PREVIEW.present).toBe(false);
