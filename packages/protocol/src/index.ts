@@ -34,6 +34,14 @@
  * the grid-snapped `StructurePlacementIntent`, the authoritative
  * `StructureState` / `BuildingState`, the `BUILD_EVENTS` identifiers, and the
  * structural `validateStructurePlacementIntent` guard.
+ *
+ * The Energy economy milestone adds the shared Energy limits, regeneration,
+ * per-build cost contract, structure durability state, and the
+ * `ENERGY_EVENTS` / `StructureDamageEvent` / `StructureDestroyedEvent`
+ * payloads along with pure deterministic helpers
+ * (`computeEnergyAfterRegeneration`, `canAffordBuild`,
+ * `computeEnergyAfterBuild`, `applyStructureDamage`,
+ * `isStructureDestroyed`).
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -144,6 +152,26 @@ export {
   type StructureRejectedEvent,
   validateStructurePlacementIntent,
 } from "./building.js";
+
+// ───── Energy economy & structure durability contract ─────
+
+export {
+  ENERGY_LIMITS,
+  type EnergyState,
+  STRUCTURE_DURABILITY_LIMITS,
+  type StructureDurabilityState,
+  ENERGY_EVENTS,
+  type EnergyEventName,
+  type EnergyUpdateEvent,
+  type StructureDamageEvent,
+  type StructureDestroyedEvent,
+  type BuildEnergyCost,
+  computeEnergyAfterRegeneration,
+  canAffordBuild,
+  computeEnergyAfterBuild,
+  applyStructureDamage,
+  isStructureDestroyed,
+} from "./energy.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";
