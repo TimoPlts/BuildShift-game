@@ -88,6 +88,9 @@ this.hudCleanup=this.debugHud.attach();this.combatHudCleanup=this.combatHud.atta
 window.addEventListener("resize",this.resizeEngine);
 this.engine.runRenderLoop(this.renderFrame);
 void this.networkClient.start().catch((err:unknown)=>{console.error("GameRuntime: network connection failed",err);});}
+public leaveRoom():void{this.networkClient.stop();}
+public async rejoinRoom():Promise<void>{this.networkClient.stop();await this.networkClient.start();}
+public get connected():boolean{return this.isConnected;}
 private stepSimulationTick():void{
 const m=this.inputManager.getMovementInput();const fireIntent=this.inputManager.isFiring();
 const seq=this.inputBatcher.nextSequence;
