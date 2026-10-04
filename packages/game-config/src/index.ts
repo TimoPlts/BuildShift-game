@@ -29,6 +29,17 @@ export {
 } from "./weapons.js";
 export type { WeaponConfig, WeaponKind } from "./weapons.js";
 
+// ───── Energy Box Fight weapons (pellet shotgun + weapon roster) ─────
+export {
+  ENERGY_WEAPON_IDS,
+  isEnergyWeaponId,
+  ENERGY_SHOTGUN,
+  ENERGY_WEAPONS,
+  getEnergyWeaponById,
+  type EnergyWeaponId,
+  type EnergyWeaponConfig,
+} from "./energyWeapons.js";
+
 // ───── Match / round configuration (1v1 match loop) ─────
 export {
   WIN_ROUNDS,

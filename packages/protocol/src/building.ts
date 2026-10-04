@@ -11,7 +11,7 @@
 
 import type { ProtocolValidation } from "./inputs/validatePlayerInputFrame.js";
 
-// ── Build type vocabulary ──
+// ──── Build type vocabulary ────
 
 /** A valid structure kind a player can build (single source of truth). */
 export type BuildType = "wall" | "floor" | "ramp" | "cone";
@@ -24,7 +24,7 @@ export function isBuildType(value: unknown): value is BuildType {
   return typeof value === "string" && (BUILD_TYPES as readonly string[]).includes(value);
 }
 
-// ── Grid coordinate contract ──
+// ──── Grid coordinate contract ────
 
 /** A build-grid cell coordinate (integer cell indices, not metres). */
 export interface GridPosition {
@@ -54,7 +54,53 @@ export function isGridRotation(value: unknown): value is GridRotation {
   );
 }
 
-// ── Placement intent (client → server) ──
+// ──── Structure opening vocabulary (server-authoritative build editing) ────
+
+/**
+ * The set of editable opening patterns a player can apply to (or remove from)
+ * a structure.
+ *
+ *  - `door_top`        — a top-aligned door opening.
+ *  - `window_center`   — a centre window opening.
+ *  - `half_bottom`     — a lower-half opening.
+ *  - `none`            — no opening (removes / clears any active opening).
+ *
+ * These are the *edit patterns* a {@link BuildEdit} intent references; the
+ * *resulting* active openings on a structure are described by
+ * {@link StructureOpening} on {@link StructureState}.
+ */
+export type StructureOpeningPattern = "door_top" | "window_center" | "half_bottom" | "none";
+
+/** All valid structure opening patterns as a frozen tuple. */
+export const OPENING_PATTERNS = Object.freeze([
+  "door_top",
+  "window_center",
+  "half_bottom",
+  "none",
+] as const);
+
+/** Type guard: `value` is a valid {@link StructureOpeningPattern}. */
+export function isStructureOpeningPattern(value: unknown): value is StructureOpeningPattern {
+  return (
+    typeof value === "string" &&
+    (OPENING_PATTERNS as readonly string[]).includes(value)
+  );
+}
+
+/**
+ * A descriptor of a single *active* opening on a placed structure.
+ *
+ * Carried on a structure's `openings` array (see {@link StructureState}) so
+ * clients can render the structure's modified geometry (cut-outs for doors /
+ * windows) to match the authoritative server. A structure with no openings
+ * simply has an empty (or absent) `openings` array.
+ */
+export interface StructureOpening {
+  /** The opening pattern that is currently active on the structure. */
+  pattern: StructureOpeningPattern;
+}
+
+// ──── Placement intent (client → server) ────
 
 /** A client's grid-snapped structure placement intent (player intent only). */
 export interface StructurePlacementIntent {
@@ -76,7 +122,7 @@ export const STRUCTURE_PLACEMENT_INTENT_LIMITS = {
   layerMin: 0,
 } as const;
 
-// ── Authoritative structure state ──
+// ──── Authoritative structure state ────
 
 /** The authoritative state of a single placed structure. */
 export interface StructureState {
@@ -92,6 +138,15 @@ export interface StructureState {
   ownerId: string;
   /** The placement-intent `sequence` that produced this structure. */
   createdSequence: number;
+  /**
+   * The set of *active* openings on this structure, in the order they were
+   * applied. Empty (or omitted) when the structure has no openings. Clients
+   * use this to render the structure's modified geometry.
+   *
+   * Optional so pre-existing construction sites that do not yet model build
+   * editing keep compiling unchanged (the field defaults to "no openings").
+   */
+  openings?: StructureOpening[];
 }
 
 /** Plain-data view of a room's authoritative building state. */
@@ -100,7 +155,7 @@ export interface BuildingState {
   structures: Record<string, StructureState>;
 }
 
-// ── Building events ──
+// ──── Building events ────
 
 /** Building network event identifiers. */
 export const BUILD_EVENTS = {
@@ -138,7 +193,7 @@ export interface StructureRejectedEvent {
   reason: BuildRejectionReason;
 }
 
-// ── Structural validation ──
+// ──── Structural validation ────
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

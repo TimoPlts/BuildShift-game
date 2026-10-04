@@ -10,6 +10,14 @@
  * that the authoritative server populates each tick and that Colyseus' built-in
  * state synchronisation delivers to clients.
  *
+ * The 1v1 Energy Box Fight milestone extends it with the player's *weapon*
+ * state: `currentWeapon` (the active {@link WeaponId}) and a `weapons` map
+ * keyed by weapon id, each value a {@link WeaponAmmoStateSchema} carrying
+ * magazine / reserve ammo and reload progress. `currentWeapon` is stored as a
+ * plain string so it serialises cleanly over the wire (the shared
+ * `WeaponId` vocabulary — `shotgun` / `assault_rifle` — is validated by the
+ * consuming code).
+ *
  * Fields:
  *  - x, y, z       — world position in metres, Y-up, capsule-centre semantic.
  *  - yaw           — horizontal facing in radians (0 faces -Z, positive
@@ -38,11 +46,19 @@
  *                    no longer act.
  *  - isEliminated  — authoritative elimination flag; `true` once the player is
  *                    eliminated (health reached 0 and not yet respawned).
+ *  - currentWeapon — authoritative id of the weapon the player currently has
+ *                    equipped. Switching weapons updates this field so the
+ *                    change syncs to all clients.
+ *  - weapons       — per-weapon ammo + reload state, keyed by weapon id. Each
+ *                    value is a {@link WeaponAmmoStateSchema} (magazineAmmo /
+ *                    reserveAmmo / isReloading / reloadProgress). A weapon the
+ *                    player does not carry is simply absent from the map.
  *
  * Coordinate convention matches `PlayerPositionSemantic` (capsule-centre)
  * and the shared `@buildshift/simulation` movement step.
  */
 import { schema, t } from "@colyseus/schema";
+import { WeaponAmmoStateSchema } from "./weaponAmmoSchema.js";
 
 export const PlayerStateSchema = schema(
   {
@@ -113,6 +129,23 @@ export const PlayerStateSchema = schema(
      * `false` until the server assigns a value (Colyseus boolean default).
      */
     isEliminated: t.boolean(),
+    /**
+     * Authoritative id of the weapon the player currently has equipped (the
+     * "active" weapon). The server sets this on join and updates it when the
+     * player switches weapons; the change syncs to all clients. Stored as a
+     * plain string (the shared `WeaponId` vocabulary); defaults to `""` until
+     * the server assigns a value (Colyseus string default).
+     */
+    currentWeapon: t.string(),
+    /**
+     * Per-weapon ammo + reload state, keyed by weapon id. Each value is a
+     * {@link WeaponAmmoStateSchema} carrying `magazineAmmo`, `reserveAmmo`,
+     * `isReloading`, and `reloadProgress`. The server adds an entry for each
+     * weapon the player carries on join; a weapon the player does not carry is
+     * simply absent from the map. Colyseus synchronises map additions,
+     * removals, and value updates to every client automatically.
+     */
+    weapons: t.map(WeaponAmmoStateSchema),
   },
   "PlayerStateSchema",
 );

@@ -70,6 +70,14 @@ export {
   type FireGateRejectionReason,
 } from "./combat/fireGate.js";
 
+// ───── Combat (1v1 Energy Box Fight: shotgun pellet spread) ─────
+
+export {
+  degreesToRadians,
+  computePelletSpreadAngles,
+  computePelletDirections,
+} from "./combat/pelletSpread.js";
+
 // ───── Round / match lifecycle state machine ─────
 
 export {

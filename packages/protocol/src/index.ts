@@ -42,6 +42,14 @@
  * (`computeEnergyAfterRegeneration`, `canAffordBuild`,
  * `computeEnergyAfterBuild`, `applyStructureDamage`,
  * `isStructureDestroyed`).
+ *
+ * The 1v1 Energy Box Fight milestone adds the first slice of the shotgun /
+ * weapon-switching / reloading / build-editing contract: the
+ * `WeaponSwitch` / `StartReload` client→server messages, the
+ * `currentWeapon` + per-weapon `weapons` state on `PlayerStateSchema` /
+ * `AuthoritativePlayerState` (and the `WeaponAmmoStateSchema` wire schema),
+ * the `BuildEdit` / `BuildEditResult` messages with the structure `openings`
+ * vocabulary, and the shared pellet-spread helpers in `@buildshift/simulation`.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -70,6 +78,7 @@ export {
 export {
   PlayerPositionSemantic,
   type AuthoritativePlayerState,
+  type WeaponAmmoState,
 } from "./state/playerState.js";
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
@@ -102,6 +111,8 @@ export {
   type MovementInput,
   RoomStateSchema,
   type RoomStateSchemaInstance,
+  WeaponAmmoStateSchema,
+  type WeaponAmmoStateSchemaInstance,
 } from "./schemas/index.js";
 
 // ───── Stage 2D (consolidated): canonical movement contract ─────
@@ -158,6 +169,10 @@ export {
   STRUCTURE_PLACEMENT_INTENT_LIMITS,
   type StructureState,
   type BuildingState,
+  OPENING_PATTERNS,
+  isStructureOpeningPattern,
+  type StructureOpeningPattern,
+  type StructureOpening,
   BUILD_EVENTS,
   type BuildEventName,
   type BuildRejectionReason,
@@ -185,6 +200,22 @@ export {
   applyStructureDamage,
   isStructureDestroyed,
 } from "./energy.js";
+
+// ───── Energy Box Fight: weapon switch + reload messages ─────
+
+export {
+  type WeaponSwitch,
+  type StartReload,
+} from "./messages/weaponMessages.js";
+
+// ───── Energy Box Fight: server-authoritative build editing ─────
+
+export {
+  BUILD_EDIT_EVENTS,
+  type BuildEditEventName,
+  type BuildEdit,
+  type BuildEditResult,
+} from "./messages/buildEditMessages.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";
