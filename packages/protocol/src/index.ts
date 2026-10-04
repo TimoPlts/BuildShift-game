@@ -58,6 +58,14 @@
  *  - the first server-authoritative *cell-based* build-editing request
  *    (`BuildEditRequest`, `cellIndex` 0–8, `action` = `"remove"`) alongside
  *    the existing pattern-based `BuildEdit`.
+ *
+ * The 1v1 Energy Box Fight T1 weapon + build-edit protocol adds,
+ * *additively*:
+ *  - the `WeaponType` union and `WEAPON_TYPES` tuple;
+ *  - the `SwitchWeaponRequest` / `FireRequest` client→server messages;
+ *  - the `WeaponStateUpdate` / `FireResult` server→client messages;
+ *  - the `BuildEditType` union, `BuildEditCommand` for the
+ *    server-authoritative build-editing slice.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -91,14 +99,14 @@ export {
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ─────── Weapon vocabulary (canonical hitscan combat) ───────
+// ─── Weapon vocabulary (canonical hitscan combat) ───────────────────────────
 export {
   WEAPON_IDS,
   isWeaponId,
   type WeaponId,
 } from "./weapons.js";
 
-// ─────── Event identifiers + combat payloads (single source of truth) ───────
+// ─── Event identifiers + combat payloads (single source of truth) ───────────
 export {
   EVENTS,
   type EventName,
@@ -111,7 +119,7 @@ export {
   type HitEventPayload,
 } from "./events/index.js";
 
-// ─────── Stage 2D: Colyseus wire schemas ───────
+// ─── Stage 2D: Colyseus wire schemas ───────────────────────────────────────
 
 export {
   PlayerStateSchema,
@@ -123,7 +131,7 @@ export {
   type WeaponAmmoStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ─────── Stage 2D (consolidated): canonical movement contract ───────
+// ─── Stage 2D (consolidated): canonical movement contract ──────────────────
 
 export {
   type PlayerNetworkState,
@@ -139,7 +147,7 @@ export {
   type GameModeId,
 } from "./gameModes.js";
 
-// ─────── Match / round protocol (1v1 match loop) ───────
+// ─── Match / round protocol (1v1 match loop) ────────────────────────────────
 
 export {
   MatchPhase,
@@ -150,7 +158,7 @@ export {
   type RoundScoreSchemaInstance,
 } from "./match.js";
 
-// ─────── Round / match lifecycle state protocol ───────
+// ─── Round / match lifecycle state protocol ─────────────────────────────────
 
 export {
   RoundState,
@@ -163,7 +171,7 @@ export {
   FIRST_TO_N,
 } from "./round-state.js";
 
-// ─────── Building contract (server-authoritative multiplayer building) ───────
+// ─── Building contract (server-authoritative multiplayer building) ──────────
 
 export {
   BUILD_TYPES,
@@ -189,7 +197,7 @@ export {
   validateStructurePlacementIntent,
 } from "./building.js";
 
-// ─────── Energy economy & structure durability contract ───────
+// ─── Energy economy & structure durability contract ─────────────────────────
 
 export {
   ENERGY_LIMITS,
@@ -209,14 +217,14 @@ export {
   isStructureDestroyed,
 } from "./energy.js";
 
-// ─────── Energy Box Fight: weapon switch + reload messages ───────
+// ─── Energy Box Fight: weapon switch + reload messages ──────────────────────
 
 export {
   type WeaponSwitch,
   type StartReload,
 } from "./messages/weaponMessages.js";
 
-// ─────── Energy Box Fight T1: weapon-switch / reload requests + weapon state ───────
+// ─── Energy Box Fight T1: weapon-switch / reload requests + weapon state ────
 
 export {
   type WeaponSwitchRequest,
@@ -224,7 +232,7 @@ export {
   type WeaponState,
 } from "./messages/weaponRequestMessages.js";
 
-// ─────── Energy Box Fight: server-authoritative build editing ───────
+// ─── Energy Box Fight: server-authoritative build editing ───────────────────
 
 export {
   BUILD_EDIT_EVENTS,
@@ -239,6 +247,24 @@ export {
   type BuildEditAction,
   type BuildEditRequest,
 } from "./messages/buildEditMessages.js";
+
+// ─── 1v1 Energy Box Fight T1: weapon + build-edit protocol ──────────────────
+
+export {
+  WEAPON_TYPES,
+  isWeaponType,
+  type WeaponType,
+  type SwitchWeaponRequest,
+  type Vec3,
+  type FireRequest,
+  type WeaponStateUpdate,
+  type FireHit,
+  type FireResult,
+  BUILD_EDIT_TYPES,
+  isBuildEditType,
+  type BuildEditType,
+  type BuildEditCommand,
+} from "./messages/energyBoxFightMessages.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";
