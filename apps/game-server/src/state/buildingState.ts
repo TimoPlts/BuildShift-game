@@ -38,6 +38,12 @@ export const StructureGridSchema = schema(
  * their damage on each authoritative hit; when it reaches 0 the structure is
  * destroyed and removed from `BuildingStateSchema` (and from the physics
  * world) so it disappears for every client.
+ *
+ * The first server-authoritative build-editing slice also marks the
+ * structure with its active `editType` (see {@link StructureStateSchema}
+ * below): when a player's `BuildEditCommand` is validated and applied, the
+ * structure's `editType` field is set to the applied edit so every client
+ * can render the structure's modified shape.
  */
 export const StructureStateSchema = schema(
   {
@@ -64,6 +70,15 @@ export const StructureStateSchema = schema(
      * structure has been destroyed and must be removed for all clients.
      */
     currentDurability: t.number(),
+    /**
+     * The build-edit currently applied to this structure, as the
+     * `BuildEditType` string (`"door" | "window" | "half_top" |
+     * "half_bottom"`), or `""` when no edit has been applied. The
+     * authoritative server sets this on a successful build edit so every
+     * client renders the structure's modified shape; a re-edited structure
+     * carries the most recently applied edit.
+     */
+    editType: t.string(),
   },
   "StructureStateSchema",
 );
