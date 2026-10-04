@@ -11,6 +11,11 @@ export {
   type PlayerStateSchemaInstance,
 } from "./playerStateSchema.js";
 
+export {
+  WeaponAmmoStateSchema,
+  type WeaponAmmoStateSchemaInstance,
+} from "./weaponAmmoSchema.js";
+
 export { type MovementInput } from "./movementInput.js";
 
 export {
@@ -18,7 +23,7 @@ export {
   type RoomStateSchemaInstance,
 } from "./roomStateSchema.js";
 
-// ───── Canonical plain-TypeScript network contracts ─────────────────────────────
+// ───── Canonical plain-TypeScript network contracts ─────
 
 export { type PlayerNetworkState } from "./playerNetworkState.js";
 
