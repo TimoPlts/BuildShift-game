@@ -3,6 +3,13 @@ import type { LocalMovementInput } from "@buildshift/simulation";
 const MOVEMENT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
 const JUMP_CODE = "Space";
 
+/** Weapon switch key: key 1 → assault rifle. */
+const WEAPON_SLOT_1_CODE = "Digit1";
+/** Weapon switch key: key 2 → shotgun. */
+const WEAPON_SLOT_2_CODE = "Digit2";
+/** Reload key. */
+const RELOAD_CODE = "KeyR";
+
 /** Accumulated pointer-lock mouse movement in pixels since the last frame. */
 export interface LookDelta {
   x: number;
@@ -16,6 +23,7 @@ export interface LookDelta {
  * - accumulated pointer-lock mouse movement (look delta)
  * - pointer-lock lifecycle (request, release, listeners)
  * - mouse button state (fire / left-click)
+ * - weapon switch / reload key edges (1, 2, R)
  *
  * Real gameplay input is only active while the canvas has pointer lock;
  * while unlocked, both movement and look report zero so the player cannot
@@ -51,6 +59,14 @@ export class InputManager {
    * Consumed by {@link consumeFirePressed}. Cleared on input-clear events.
    */
   private firePressed = false;
+
+  // ── Weapon switch / reload key edges ────────────────────────────────────
+  /** Latched when key 1 was pressed (assault rifle switch). */
+  private weaponSlot1Pressed = false;
+  /** Latched when key 2 was pressed (shotgun switch). */
+  private weaponSlot2Pressed = false;
+  /** Latched when key R was pressed (reload). */
+  private reloadPressed = false;
 
   public constructor(private readonly canvas: HTMLCanvasElement) {
     canvas.addEventListener("click", this.requestPointerLock);
@@ -165,6 +181,40 @@ export class InputManager {
     return wasPressed;
   }
 
+  // ──────────────────────────────────────────────────────────────────────────
+  // Weapon key edge polling (key 1, key 2, key R)
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Returns true if the key 1 (assault rifle switch) edge is pending,
+   * and clears the latch. Only latched while pointer lock is active.
+   */
+  public consumeWeaponSlot1Pressed(): boolean {
+    const wasPressed = this.weaponSlot1Pressed;
+    this.weaponSlot1Pressed = false;
+    return wasPressed;
+  }
+
+  /**
+   * Returns true if the key 2 (shotgun switch) edge is pending,
+   * and clears the latch. Only latched while pointer lock is active.
+   */
+  public consumeWeaponSlot2Pressed(): boolean {
+    const wasPressed = this.weaponSlot2Pressed;
+    this.weaponSlot2Pressed = false;
+    return wasPressed;
+  }
+
+  /**
+   * Returns true if the key R (reload) edge is pending,
+   * and clears the latch. Only latched while pointer lock is active.
+   */
+  public consumeReloadPressed(): boolean {
+    const wasPressed = this.reloadPressed;
+    this.reloadPressed = false;
+    return wasPressed;
+  }
+
   /**
    * Returns whether raw input was cleared since the previous call, then
    * resets the signal. This pull API remains available for callers that only
@@ -259,6 +309,18 @@ export class InputManager {
     if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
       this.jumpPressed = true;
     }
+
+    // Weapon switch / reload edges: latched only while pointer-locked and
+    // not on key repeat, matching jump/fire edge semantics.
+    if (this.pointerLocked && !event.repeat) {
+      if (event.code === WEAPON_SLOT_1_CODE) {
+        this.weaponSlot1Pressed = true;
+      } else if (event.code === WEAPON_SLOT_2_CODE) {
+        this.weaponSlot2Pressed = true;
+      } else if (event.code === RELOAD_CODE) {
+        this.reloadPressed = true;
+      }
+    }
   };
 
   private readonly handleKeyUp = (event: KeyboardEvent): void => {
@@ -326,6 +388,11 @@ export class InputManager {
     // after the pointer is released (blur / Esc / hidden tab).
     this.fireHeld = false;
     this.firePressed = false;
+    // Drop any pending weapon switch / reload edges so a stale key-down can't
+    // trigger a weapon action after the pointer is released.
+    this.weaponSlot1Pressed = false;
+    this.weaponSlot2Pressed = false;
+    this.reloadPressed = false;
     // Signal the runtime to drop the controller's buffered jump / coyote state
     // on exactly these triggers, so a stale buffered press can't fire later.
     this.inputCleared = true;
