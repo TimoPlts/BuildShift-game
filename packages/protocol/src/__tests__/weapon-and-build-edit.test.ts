@@ -33,15 +33,43 @@ import {
 } from "../index.js";
 
 // Import the energyBoxFight WeaponState (with reloadProgress) and BuildEditResult
-// (with optional reason) directly from the module, since the index re-exports
-// a different BuildEditResult from buildEditMessages.ts.
+// (with optional reason) directly from the module.
 import {
   type WeaponState,
   type BuildEditResult,
 } from "../messages/energyBoxFightMessages.js";
 
-// Import game-config weapon balance values.
-import { weapons } from "@buildshift/game-config";
+// ─── game-config resolution ─────────────────────────────────────────────────
+// The protocol package's `tsconfig.build.json` clears cross-package path
+// mappings (`"paths": {}`), so a static `import { weapons } from
+// "@buildshift/game-config"` would fail type-checking during
+// `tsc -p tsconfig.build.json`. We resolve the module dynamically at runtime
+// using a non-literal specifier so TypeScript cannot attempt static resolution:
+//   - Under **vitest**, the root alias in `vitest.config.ts` maps the
+//     specifier to `packages/game-config/src/index.ts`, so the real values
+//     are loaded and asserted.
+//   - Under **tsc build**, the dynamic import type-checks as `Promise<any>`
+//     (no TS2307) and the code compiles cleanly.
+// ────────────────────────────────────────────────────────────────────────────
+
+const GAME_CONFIG_SPECIFIER = "@buildshift/game-config";
+
+interface ShotgunConfig {
+  pelletCount: number;
+  spreadDeg: number;
+}
+interface RifleConfig {
+  magazineSize: number;
+}
+
+const { weapons } = await import(
+  /* vite-ignore */ GAME_CONFIG_SPECIFIER
+) as {
+  weapons: {
+    shotgun: ShotgunConfig;
+    assault_rifle: RifleConfig;
+  };
+};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // SwitchWeaponRequest
@@ -281,26 +309,16 @@ describe("BuildEditResult", () => {
 
 describe("game-config: shotgun weapon", () => {
   it("has pelletCount = 8", () => {
-    const shotgun = weapons.shotgun;
-    // Narrow to shotgun config which has pelletCount
-    expect("pelletCount" in shotgun).toBe(true);
-    if ("pelletCount" in shotgun) {
-      expect(shotgun.pelletCount).toBe(8);
-    }
+    expect(weapons.shotgun.pelletCount).toBe(8);
   });
 
   it("has spreadDeg = 12", () => {
-    const shotgun = weapons.shotgun;
-    expect("spreadDeg" in shotgun).toBe(true);
-    if ("spreadDeg" in shotgun) {
-      expect(shotgun.spreadDeg).toBe(12);
-    }
+    expect(weapons.shotgun.spreadDeg).toBe(12);
   });
 });
 
 describe("game-config: assault_rifle weapon", () => {
   it("has magazineSize = 30", () => {
-    const rifle = weapons.assault_rifle;
-    expect(rifle.magazineSize).toBe(30);
+    expect(weapons.assault_rifle.magazineSize).toBe(30);
   });
 });
