@@ -2,19 +2,46 @@ import { useEffect, useRef, useState } from "react";
 import { GameRuntime } from "./GameRuntime";
 import { MatchHud, type MatchHudProps } from "../ui/MatchHud";
 import { mapMatchStateToHudProps } from "./matchHudMapper";
+import { buildMatchLifecycleView, type MatchLifecycleView } from "./matchLifecycleView";
 import type { ParsedMatchState } from "./network";
+
+/**
+ * Actions exposed by the game runtime for match lifecycle control.
+ */
+export interface GameRuntimeActions {
+  leaveRoom: () => void;
+  rejoinRoom: () => Promise<void>;
+}
+
+/**
+ * Props for the GameCanvas component.
+ */
+export interface GameCanvasProps {
+  /**
+   * Callback invoked whenever the match lifecycle view changes.
+   * The parent uses this to render the correct screen overlay.
+   */
+  onMatchLifecycleChange?: (view: MatchLifecycleView) => void;
+  /**
+   * Callback invoked once when the game runtime is ready,
+   * providing the action methods for room lifecycle control.
+   */
+  onRuntimeReady?: (actions: GameRuntimeActions) => void;
+}
 
 /**
  * React owns the canvas mount point, the crosshair, and the pointer-lock
  * instruction overlay. It never owns camera transforms, player position,
  * mouse deltas, or movement simulation — those stay in the game runtime.
- * The overlay only mirrors the browser's own pointer-lock state through a
- * single `pointerlockchange` listener for UI purposes.
  */
-export function GameCanvas() {
+export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [matchHudProps, setMatchHudProps] = useState<MatchHudProps | null>(null);
+  const onLifecycleChangeRef = useRef(onMatchLifecycleChange);
+  const onRuntimeReadyRef = useRef(onRuntimeReady);
+  onLifecycleChangeRef.current = onMatchLifecycleChange;
+  onRuntimeReadyRef.current = onRuntimeReady;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -22,8 +49,6 @@ export function GameCanvas() {
       return;
     }
 
-    // StrictMode in dev mounts effects twice; we guard with a local "active"
-    // flag so a stale (first) mount that never resolves can't leak resources.
     let active = true;
     let runtime: GameRuntime | undefined;
     let unsubMatch: (() => void) | undefined;
@@ -36,11 +61,31 @@ export function GameCanvas() {
         }
         runtime = r;
         r.start();
-        // Subscribe to authoritative match-state updates to drive the HUD.
+
+        // Build and emit the initial lifecycle view (disconnected state).
+        const initialView = buildMatchLifecycleView(
+          r.getMatchState(),
+          r.getSessionId(),
+          0,
+          r.connected,
+        );
+        onLifecycleChangeRef.current?.(initialView);
+
+        // Notify parent that runtime actions are available.
+        onRuntimeReadyRef.current?.({
+          leaveRoom: () => r.leaveRoom(),
+          rejoinRoom: () => r.rejoinRoom(),
+        });
+
+        // Subscribe to authoritative match-state updates to drive the HUD
+        // and the match lifecycle view.
         unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
           const sid = r.getSessionId();
           if (!sid) return;
           setMatchHudProps(mapMatchStateToHudProps(state, sid));
+
+          const view = buildMatchLifecycleView(state, sid, 0, r.connected);
+          onLifecycleChangeRef.current?.(view);
         });
       })
       .catch((error) => {
@@ -87,7 +132,7 @@ export function GameCanvas() {
               <kbd>Esc</kbd> unlock cursor
             </li>
           </ul>
-          <p>Physics playground: test movement, sliding, gravity and jumps</p>
+          <p>1v1 Energy Box Fight — first to 3 round wins takes the match</p>
         </div>
       )}
     </>
