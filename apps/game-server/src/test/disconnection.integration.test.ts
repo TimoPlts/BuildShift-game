@@ -7,7 +7,6 @@ import { MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, EVENTS, type StructurePlacedEv
 import { MAX_HEALTH, MAX_SHIELD, ENERGY, VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { startServer, shutdownServer } from "../server.js";
-import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM } from "../rooms/TwoPlayerMovementRoom.js";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
