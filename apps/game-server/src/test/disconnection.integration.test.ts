@@ -100,6 +100,10 @@ describe("Disconnection integration", () => {
       sb(a, 200, "floor", { x: -3, y: 0, z: 1 });
       await wfs(a, () => pl.length >= 2, 5000);
       expect(pl[1].structure.ownerId).toBe(sidA);
+      // Wait for the state patch to reflect the reduced energy before asserting.
+      // The STRUCTURE_PLACED event arrives before the state delta, so we must
+      // poll until the client schema shows energy below the starting value.
+      await wfs(a, (s) => (pf(s, sidA)?.energy ?? ENERGY.startingEnergy) < ENERGY.startingEnergy, 5000);
       expect(pf(a.state, sidA)?.energy).toBeLessThan(ENERGY.startingEnergy);
       // A disconnects mid-round
       try { a.connection.close(); } catch {}
