@@ -29,7 +29,7 @@ export {
 } from "./weapons.js";
 export type { WeaponConfig, WeaponKind } from "./weapons.js";
 
-// ───── Energy Box Fight weapons (pellet shotgun + weapon roster) ─────
+// ─────── Energy Box Fight weapons (pellet shotgun + weapon roster) ───────
 export {
   ENERGY_WEAPON_IDS,
   isEnergyWeaponId,
@@ -40,7 +40,24 @@ export {
   type EnergyWeaponConfig,
 } from "./energyWeapons.js";
 
-// ───── Match / round configuration (1v1 match loop) ─────
+// ─────── 1v1 Energy Box Fight weapon roster (authoritative shotgun + assault rifle) ───────
+export {
+  SHOTGUN_WEAPON_ID,
+  ASSAULT_RIFLE_WEAPON_ID,
+  ENERGY_FIGHT_WEAPON_IDS,
+  isEnergyFightWeaponId,
+  SHOTGUN_WEAPON,
+  ASSAULT_RIFLE_WEAPON,
+  ENERGY_FIGHT_WEAPONS,
+  getEnergyFightWeaponById,
+  type EnergyFightWeaponId,
+  type EnergyFightWeaponBase,
+  type ShotgunWeaponDefinition,
+  type AssaultRifleWeaponDefinition,
+  type EnergyFightWeaponDefinition,
+} from "./shotgunWeapon.js";
+
+// ─────── Match / round configuration (1v1 match loop) ───────
 export {
   WIN_ROUNDS,
   ROUNDS_TO_WIN,
@@ -48,7 +65,7 @@ export {
   ROUND_RESET_DELAY_SECONDS,
 } from "./match.js";
 
-// ───── Building configuration (server-authoritative multiplayer building) ─────
+// ─────── Building configuration (server-authoritative multiplayer building) ───────
 export {
   BUILD_GRID,
   BUILD_RANGE,
@@ -60,7 +77,7 @@ export {
   type StructureConfig,
 } from "./building.js";
 
-// ───── Energy economy & structure durability configuration ─────
+// ─────── Energy economy & structure durability configuration ───────
 export {
   ENERGY,
   STRUCTURE_DURABILITY_KEYS,
