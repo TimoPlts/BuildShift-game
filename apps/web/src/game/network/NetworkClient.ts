@@ -3,7 +3,7 @@
  *
  * This is the SINGLE canonical client-side networking module. It:
  *  - connects to the game server (configurable URL, default ws://localhost:2567)
- *  - joins the "two-player-movement" room
+ *  - joins the "box-fight" room
  *  - exposes a clean API for the GameRuntime to drive:
  *    start(), stop(), sendInput(), send(), onStateChange(), onEvent()
  *  - tracks the local session ID
@@ -39,16 +39,16 @@ import {
 import { resolveGameServerUrl } from "./serverUrl";
 
 /**
- * The room name for the two-player movement room. Must match the server's
- * TWO_PLAYER_MOVEMENT_ROOM constant.
+ * The room name for the Energy Box Fight room. Must match the server's
+ * BOX_FIGHT_ROOM constant.
  */
-export const ROOM_NAME = "two-player-movement";
+export const ROOM_NAME = "box-fight";
 
 /**
  * The inbound message type for movement input (client → server). Must match
- * the server's TWO_PLAYER_MOVEMENT_INPUT constant.
+ * the server's BOX_FIGHT_INPUT constant.
  */
-export const INPUT_MESSAGE_TYPE = "two-player:input";
+export const INPUT_MESSAGE_TYPE = "box-fight:input";
 
 /**
  * Server → all: a confirmed hitscan hit was applied.
