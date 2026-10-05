@@ -7,7 +7,10 @@
  *    round is starting, so the client must clear its stale prediction /
  *    reconciliation / interpolation / combat / input state), and
  *  - whether the **match has just finished** (a player reached the win
- *    threshold, i.e. the phase transitioned into `MATCH_ENDED`).
+ *    threshold, i.e. the phase transitioned into `MATCH_ENDED`), and
+ *  - whether a **rematch** has been accepted (the phase left `MATCH_ENDED`
+ *    and entered a fresh `COUNTDOWN`), which requires a full client reset
+ *    including clearing the local winner state.
  *
  * This module holds no Colyseus / Babylon dependencies — it is a pure
  * function over plain match-state snapshots so the reset trigger can be unit
@@ -48,6 +51,13 @@ export interface MatchResetDecision {
    * the win threshold; the phase entered `MATCH_ENDED`).
    */
   matchEnded: boolean;
+  /**
+   * Whether a rematch has been accepted on this transition (the phase left
+   * `MATCH_ENDED` and entered a fresh `COUNTDOWN` or `IN_PROGRESS`). When
+   * true, the client must also clear its local winner / match-over state in
+   * addition to the per-round stale state.
+   */
+  rematchAccepted: boolean;
 }
 
 /**
@@ -64,7 +74,7 @@ export const INITIAL_MATCH_SNAPSHOT: MatchStateSnapshot = {
 /**
  * Decide whether the transition from `prev` to `next` crosses an authoritative
  * round boundary (requiring a stale-state reset) and/or the completion of the
- * match.
+ * match and/or a rematch acceptance.
  *
  * A round boundary is detected when EITHER:
  *  - the authoritative `currentRound` advances to a higher number, or
@@ -74,6 +84,11 @@ export const INITIAL_MATCH_SNAPSHOT: MatchStateSnapshot = {
  * The match is considered finished the moment the phase transitions into
  * `MATCH_ENDED`; a finished match also implies a final reset so the deciding
  * round's stale combat / input state is cleared.
+ *
+ * A rematch is detected when the phase leaves `MATCH_ENDED` and enters a
+ * fresh `COUNTDOWN` or `IN_PROGRESS`. This requires the same full client
+ * reset as a round boundary, PLUS clearing the local winner / match-over
+ * state so the next match starts clean.
  */
 export function computeMatchReset(
   prev: MatchStateSnapshot,
@@ -89,7 +104,16 @@ export function computeMatchReset(
     (next.matchPhase === MatchPhase.COUNTDOWN ||
       next.matchPhase === MatchPhase.IN_PROGRESS);
 
-  const shouldReset = roundAdvanced || enteredFreshRound || matchEnded;
+  // A rematch is detected when the phase leaves MATCH_ENDED and enters a
+  // fresh COUNTDOWN or IN_PROGRESS (the server resets scores and round
+  // number, so `roundAdvanced` will be false — we need this explicit check).
+  const rematchAccepted =
+    prev.matchPhase === MatchPhase.MATCH_ENDED &&
+    (next.matchPhase === MatchPhase.COUNTDOWN ||
+      next.matchPhase === MatchPhase.IN_PROGRESS);
 
-  return { shouldReset, matchEnded };
+  const shouldReset =
+    roundAdvanced || enteredFreshRound || matchEnded || rematchAccepted;
+
+  return { shouldReset, matchEnded, rematchAccepted };
 }
