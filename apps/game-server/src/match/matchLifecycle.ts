@@ -35,6 +35,12 @@ export const MATCH_EVENTS = {
    * Payload: `{ winnerId: string, scores: Record<string, number> }`.
    */
   MATCH_END: "match:end",
+  /** Authoritative active-round timer; timeout is resolved by the server. */
+  ROUND_TIMER: "match:round_timer",
+  /** Both players accepted a rematch and a fresh countdown has begun. */
+  REMATCH_ACCEPTED: "match:rematch_accepted",
+  /** A rematch vote was rejected outside the post-match window. */
+  REMATCH_DECLINED: "match:rematch_declined",
 } as const;
 
 export type MatchEventName = (typeof MATCH_EVENTS)[keyof typeof MATCH_EVENTS];
