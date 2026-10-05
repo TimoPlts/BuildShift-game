@@ -4,38 +4,29 @@
  * Wires the minimal pieces:
  *  - a Colyseus `Server` using the plain WebSocket transport
  *    (`@colyseus/ws-transport`);
- *  - registration of the canonical gameplay room
- *    (`TwoPlayerMovementRoom`) which drives movement AND hitscan combat
- *    in a single 30 Hz tick loop;
+ *  - registration of the canonical Energy Box Fight room
+ *    (`BoxFightRoom`);
  *  - `startServer` which binds to a port and reports the port actually bound;
  *  - `shutdownServer` which delegates to `Server.gracefullyShutdown()`.
  *
- * The canonical gameplay path is the `TwoPlayerMovementRoom` — it is the
- * SINGLE authoritative gameplay path that drives movement, prediction,
- * reconciliation, interpolation, AND hitscan combat (fire validation via
- * `canFire`, ray-cast hits, shield/health damage, elimination, and respawn)
- * in one 30 Hz tick loop.
+ * Note: `TwoPlayerMovementRoom` has been retired from production registration.
+ * The canonical Energy Box Fight room is `BoxFightRoom`.
  */
 import { Server, type ServerOptions } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import type { AddressInfo } from "node:net";
 
-import { ROOMS, type RoomType } from "@buildshift/protocol";
+import { BoxFightRoom } from "./rooms/BoxFightRoom.js";
+import { BOX_FIGHT_ROOM } from "./rooms/boxFightContract.js";
 
-import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
+export { BOX_FIGHT_ROOM };
 
 export type GameServer = Server;
 
 /**
- * The canonical gameplay room name, sourced from the shared protocol contract
- * so client, server, and tests share one identifier.
- */
-export const TWO_PLAYER_ROOM: RoomType = ROOMS.TWO_PLAYER_MOVEMENT;
-
-/**
  * Create a Colyseus server configured with the WebSocket transport and the
- * canonical gameplay room. The server is NOT listening yet — call `startServer`
- * to bind a port.
+ * canonical Energy Box Fight room. The server is NOT listening yet — call
+ * `startServer` to bind a port.
  */
 export function createServer(options: ServerOptions = {}): GameServer {
   const transport = new WebSocketTransport();
@@ -45,8 +36,8 @@ export function createServer(options: ServerOptions = {}): GameServer {
     transport,
     ...options,
   });
-  server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
-  console.log(`[buildshift:game-server] gameplay room registered ("${ROOMS.TWO_PLAYER_MOVEMENT}")`);
+  server.define(BOX_FIGHT_ROOM, BoxFightRoom);
+  console.log(`[buildshift:game-server] gameplay room registered ("${BOX_FIGHT_ROOM}")`);
   return server;
 }
 

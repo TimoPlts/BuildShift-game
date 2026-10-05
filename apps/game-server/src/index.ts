@@ -10,8 +10,9 @@
 import { PROTOCOL_VERSION } from "@buildshift/protocol";
 
 import { resolvePort } from "./port.js";
+import { BoxFightRoom } from "./rooms/BoxFightRoom.js";
 import {
-  TWO_PLAYER_ROOM,
+  BOX_FIGHT_ROOM,
   createServer,
   startServer,
   shutdownServer,
@@ -52,7 +53,7 @@ async function main(): Promise<void> {
   const requestedPort = resolvePort();
   console.log(`${LOG_PREFIX} starting (protocol ${PROTOCOL_VERSION})`);
   console.log(`${LOG_PREFIX} requested port: ${requestedPort}`);
-  console.log(`${LOG_PREFIX} registering room: ${TWO_PLAYER_ROOM}`);
+  console.log(`${LOG_PREFIX} registering room: ${BoxFightRoom.name} ("${BOX_FIGHT_ROOM}")`);
 
   server = createServer();
   const { server: running, port } = await startServer(requestedPort, server);
@@ -74,7 +75,7 @@ async function main(): Promise<void> {
     `${LOG_PREFIX} listening on http://${displayHost}:${port}` +
       (anyInterface ? " (bound to all interfaces)" : ""),
   );
-  console.log(`${LOG_PREFIX} room "${TWO_PLAYER_ROOM}" is ready for connections`);
+  console.log(`${LOG_PREFIX} ${BoxFightRoom.name} ("${BOX_FIGHT_ROOM}") is ready for connections`);
 
   process.on("SIGINT", () => {
     void shutdown("received SIGINT");
