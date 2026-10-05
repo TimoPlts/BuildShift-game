@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
 import { MatchHud, type MatchHudProps } from "../ui/MatchHud";
 import { mapMatchStateToHudProps } from "./matchHudMapper";
@@ -11,6 +12,15 @@ import type { ParsedMatchState } from "./network";
 export interface GameRuntimeActions {
   leaveRoom: () => void;
   rejoinRoom: () => Promise<void>;
+  /**
+   * Request a rematch after the match has ended.
+   *
+   * Routes through the runtime's existing rejoin mechanism to start a
+   * fresh match without the caller needing to know the transport details.
+   * The parent (e.g. App) calls this from the MatchEndScreen's
+   * "Play Again" / "Rematch" button.
+   */
+  requestRematch: () => Promise<void>;
 }
 
 /**
@@ -71,10 +81,12 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         );
         onLifecycleChangeRef.current?.(initialView);
 
-        // Notify parent that runtime actions are available.
+        // Notify parent that runtime actions are available, including
+        // the rematch action routed through the existing runtime rejoin.
         onRuntimeReadyRef.current?.({
           leaveRoom: () => r.leaveRoom(),
           rejoinRoom: () => r.rejoinRoom(),
+          requestRematch: () => r.rejoinRoom(),
         });
 
         // Subscribe to authoritative match-state updates to drive the HUD
@@ -82,9 +94,24 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
           const sid = r.getSessionId();
           if (!sid) return;
-          setMatchHudProps(mapMatchStateToHudProps(state, sid));
 
+          // Build the lifecycle view to derive countdown and connection state.
           const view = buildMatchLifecycleView(state, sid, 0, r.connected);
+
+          // Wire the full lifecycle-derived props into the presentation-only
+          // MatchHud: base score/phase data plus the optional countdown and
+          // waiting-for-opponent indicator.
+          const baseHud = mapMatchStateToHudProps(state, sid);
+          setMatchHudProps({
+            ...baseHud,
+            countdownSeconds: view.countdownRemainingSeconds,
+            waitingForOpponent:
+              r.connected &&
+              state.matchPhase === MatchPhase.COUNTDOWN &&
+              state.currentRound === 0,
+          });
+
+          // Propagate the lifecycle view to the parent for overlay screens.
           onLifecycleChangeRef.current?.(view);
         });
       })
