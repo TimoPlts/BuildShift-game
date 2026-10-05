@@ -152,7 +152,7 @@ describe("Weapon and build-edit integration (BoxFightRoom)", () => {
     await wfe(ws, (e, i) => i >= b && e.playerId === roomA.sessionId && e.weaponState.currentAmmo === weapons.shotgun.magazineSize && !e.weaponState.isReloading, 6000, "rc");
     const f = fr.length;
     roomA.send(BOX_FIGHT_FIRE, { weaponType: "shotgun", aimDirection: { x: 1, y: 0, z: 0 } });
-    const r = await wfe(fr, (e, i) => i >= f, 5000, "sg");
+    const r = await wfe(fr, (_, i) => i >= f, 5000, "sg");
     expect(r.hits).toHaveLength(sc.pelletCount);
   }, 30_000);
   it("firing an assault rifle produces exactly 1 hit", async () => {
@@ -162,7 +162,7 @@ describe("Weapon and build-edit integration (BoxFightRoom)", () => {
     await wfe(ws, (e, i) => i >= b && e.playerId === roomA.sessionId && e.weaponState.weaponType === "assault_rifle", 5000, "ar");
     const f = fr.length;
     roomA.send(BOX_FIGHT_FIRE, { weaponType: "assault_rifle", aimDirection: { x: 1, y: 0, z: 0 } });
-    const r = await wfe(fr, (e, i) => i >= f, 5000, "ar");
+    const r = await wfe(fr, (_, i) => i >= f, 5000, "ar");
     expect(r.hits).toHaveLength(1);
   }, 30_000);
   it("a BuildEditCommand on a structure not owned by the player is rejected with success false", async () => {
