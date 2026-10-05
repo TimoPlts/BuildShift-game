@@ -4,7 +4,7 @@
  *
  * This is a plain TypeScript interface suitable for Colyseus 0.18+ JSON
  * serialization or as a direct Schema field mapping. It is the canonical
- * input contract for the TWO_PLAYER_MOVEMENT game mode.
+ * input contract for the two-player movement game mode.
  *
  * Conventions (single source of truth — client and server must agree):
  * - `sequence` is a monotonically increasing, non-negative safe integer
