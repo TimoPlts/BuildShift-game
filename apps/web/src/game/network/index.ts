@@ -18,7 +18,7 @@
  * All multiplayer interaction flows through these modules.
  */
 
-// ── NetworkClient (the Colyseus transport) ─────────────────────────────────
+// ── NetworkClient (the Colyseus transport) ──────────────────────────────────
 export {
   NetworkClient,
   parseRoomState,
@@ -57,7 +57,17 @@ export {
 // ── Match-lifecycle broadcast event names (client-side mirror of server) ──
 export {
   MATCH_COUNTDOWN_TICK_EVENT,
+  MATCH_ROUND_OVER_EVENT,
+  MATCH_ROUND_TIMER_EVENT,
+  MATCH_END_EVENT,
+  REMATCH_REQUEST_MESSAGE,
+  REMATCH_ACCEPTED_EVENT,
+  REMATCH_DECLINED_EVENT,
   type CountdownTickPayload,
+  type RoundOverPayload,
+  type RoundTimerPayload,
+  type MatchEndPayload,
+  type RematchAcceptedPayload,
 } from "./matchEvents";
 
 // ── Match-loop reset detection (pure, testable) ────────────────────────────
@@ -84,7 +94,7 @@ export {
   type BufferedInput,
 } from "./inputBatcher";
 
-// ── PredictionOrchestrator (local prediction + reconciliation) ────────────
+// ── PredictionOrchestrator (local prediction + reconciliation) ─────────────
 export {
   PredictionOrchestrator,
   SIMULATION_TICK_SECONDS,
