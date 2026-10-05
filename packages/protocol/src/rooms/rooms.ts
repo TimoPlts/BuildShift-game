@@ -8,6 +8,8 @@
 export const ROOMS = {
   /** The single Stage 2 foundation room (stateless join/leave lifecycle). */
   FOUNDATION: "foundation",
+  /** The canonical two-player movement + combat gameplay room. */
+  TWO_PLAYER_MOVEMENT: "two-player-movement",
 } as const;
 
 /** The foundation room type name (mirrors the server's `FOUNDATION_ROOM`). */
