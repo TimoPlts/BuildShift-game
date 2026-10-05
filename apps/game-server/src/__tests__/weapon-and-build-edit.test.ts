@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Server } from "@colyseus/core";
 import { WebSocketTransport } from "@colyseus/ws-transport";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
-import { weapons, getStructureDurability, type ShotgunWeaponConfig } from "@buildshift/game-config";
+import { MAX_HEALTH, MAX_SHIELD, weapons, getStructureDurability, type ShotgunWeaponConfig } from "@buildshift/game-config";
 import { BoxFightRoom } from "../rooms/BoxFightRoom.js";
 import { BOX_FIGHT_ROOM, BOX_FIGHT_SWITCH_WEAPON, BOX_FIGHT_RELOAD, BOX_FIGHT_FIRE, BOX_FIGHT_BUILD_EDIT, BOX_FIGHT_EVENTS } from "../rooms/boxFightContract.js";
 import { StructureStateSchema } from "../state/buildingState.js";
@@ -73,6 +73,22 @@ describe("Weapon and build-edit integration (BoxFightRoom)", () => {
     s.maxDurability = getStructureDurability(bt) ?? 100; s.currentDurability = s.maxDurability; s.editType = "";
     bfRoom!.state.building.structures.set(id, s);
   }
+  function restoreTarget(): void {
+    // Earlier ammo/reload cases deliberately empty a shotgun into player B,
+    // which can eliminate B.  Put a live target close enough that every
+    // pellet in the configured spread intersects it before counting hits.
+    const players = (bfRoom as unknown as {
+      pl: Map<string, { x: number; y: number; z: number; hp: number; sh: number; alive: boolean }>;
+    }).pl;
+    const target = players.get(roomB.sessionId);
+    expect(target).toBeDefined();
+    target!.x = -3;
+    target!.y = 0;
+    target!.z = 0;
+    target!.hp = MAX_HEALTH;
+    target!.sh = MAX_SHIELD;
+    target!.alive = true;
+  }
   it("a fresh player has assault_rifle as active weapon at full ammo", () => {
     const w = ws.find((e) => e.playerId === roomA.sessionId)!;
     expect(w.weaponState.weaponType).toBe("assault_rifle");
@@ -128,6 +144,7 @@ describe("Weapon and build-edit integration (BoxFightRoom)", () => {
   }, 30_000);
   it("firing a shotgun produces exactly pelletCount hits in FireResult", async () => {
     const sc = weapons.shotgun as ShotgunWeaponConfig;
+    restoreTarget();
     let b = ws.length;
     roomA.send(BOX_FIGHT_RELOAD, { weaponType: "shotgun" });
     await wfe(ws, (e, i) => i >= b && e.playerId === roomA.sessionId && e.weaponState.isReloading, 5000, "rl");
@@ -139,6 +156,7 @@ describe("Weapon and build-edit integration (BoxFightRoom)", () => {
     expect(r.hits).toHaveLength(sc.pelletCount);
   }, 30_000);
   it("firing an assault rifle produces exactly 1 hit", async () => {
+    restoreTarget();
     let b = ws.length;
     roomA.send(BOX_FIGHT_SWITCH_WEAPON, { targetWeapon: "assault_rifle" });
     await wfe(ws, (e, i) => i >= b && e.playerId === roomA.sessionId && e.weaponState.weaponType === "assault_rifle", 5000, "ar");
