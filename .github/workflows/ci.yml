@@ -2,8 +2,15 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, integration/auto]
   pull_request:
+  workflow_dispatch:
+
+# One immutable validation result per branch head is more useful than letting
+# superseded agent integrations consume runners after a new transaction lands.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
