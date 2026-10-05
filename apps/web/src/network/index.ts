@@ -22,6 +22,7 @@ export { createFoundationNetwork } from "./createFoundationNetwork";
 export { getFoundationNetwork } from "./networkInstance";
 export {
   FoundationNetwork,
+  GAME_ROOM_NAME,
   type FoundationNetworkOptions,
   type NetworkUiState,
 } from "./colyseus/foundationNetwork";
