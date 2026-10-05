@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { EVENTS, ROOMS } from "@buildshift/protocol";
-import { FoundationNetwork, type RoomLike } from "./foundationNetwork";
+import { EVENTS } from "@buildshift/protocol";
+import { FoundationNetwork, GAME_ROOM_NAME, type RoomLike } from "./foundationNetwork";
 
 /** A hand-rolled fake room — no mock framework, no `@colyseus/sdk`. */
 function createFakeRoom(overrides: Partial<RoomLike> = {}) {
@@ -71,7 +71,7 @@ describe("FoundationNetwork", () => {
     network.start();
     await flush();
 
-    expect(joinedName).toBe(ROOMS.FOUNDATION);
+    expect(joinedName).toBe(GAME_ROOM_NAME);
     // Auto-reconnect is explicitly disabled per spec.
     expect(room.reconnection.enabled).toBe(false);
 
