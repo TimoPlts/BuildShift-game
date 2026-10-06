@@ -6,6 +6,8 @@
  *  - joins the "two-player-movement" room
  *  - exposes a clean API for the GameRuntime to drive:
  *    start(), stop(), sendInput(), send(), onStateChange(), onEvent()
+ *  - provides typed send methods for weapon intents (switch, reload) and
+ *    build-edit intents that use the correct message types the server listens on
  *  - tracks the local session ID
  *  - parses the synchronized RoomStateSchema into plain state for the
  *    prediction / interpolation layers, the authoritative match/round
@@ -15,7 +17,7 @@
  * Authority contract: the client NEVER writes to room state. All state
  * mutations happen on the server; the client only reads the synced
  * RoomStateSchema, listens for combat/building/energy events, and sends
- * PlayerNetworkInput / build-intent messages.
+ * PlayerNetworkInput / build-intent / weapon-intent messages.
  */
 import { Client } from "@colyseus/sdk";
 import type {
@@ -49,6 +51,30 @@ export const ROOM_NAME = "two-player-movement";
  * the server's TWO_PLAYER_MOVEMENT_INPUT constant.
  */
 export const INPUT_MESSAGE_TYPE = "two-player:input";
+
+/**
+ * The message type for weapon switch intents (client → server). Must match
+ * the server's WEAPON_SWITCH_INPUT constant ("two-player:weapon_switch").
+ */
+export const WEAPON_SWITCH_MESSAGE = "two-player:weapon_switch";
+
+/**
+ * The message type for weapon reload intents (client → server). Follows the
+ * naming convention of WEAPON_SWITCH_MESSAGE for the two-player-movement room.
+ */
+export const WEAPON_RELOAD_MESSAGE = "two-player:weapon_reload";
+
+/**
+ * The event name for authoritative weapon state updates (server → client).
+ * Must match the server's WSE constant ("combat:weapon_state").
+ */
+export const WEAPON_STATE_EVENT = "combat:weapon_state";
+
+/**
+ * The message type for build-edit intents (client → server). Must match
+ * the protocol's BUILD_EDIT_EVENTS.EDIT_REQUEST constant.
+ */
+export const BUILD_EDIT_MESSAGE = "build:edit_request";
 
 /**
  * Server → all: a confirmed hitscan hit was applied.
@@ -206,6 +232,49 @@ export class NetworkClient {
     return this.send(INPUT_MESSAGE_TYPE, input);
   }
 
+  // ─── Typed weapon intent send methods ───────────────────────────────────────
+
+  /**
+   * Send a weapon switch intent to the server.
+   *
+   * Uses the canonical message type `"two-player:weapon_switch"` that the
+   * TwoPlayerMovementRoom listens on. The payload carries the target weapon id
+   * (e.g. `"assault_rifle"` or `"shotgun"`).
+   *
+   * No-op when not connected. Returns true if the message was sent.
+   */
+  public sendWeaponSwitch(weaponId: string): boolean {
+    return this.send(WEAPON_SWITCH_MESSAGE, { targetWeaponId: weaponId });
+  }
+
+  /**
+   * Send a weapon reload intent to the server.
+   *
+   * Uses the canonical message type `"two-player:weapon_reload"`. The active
+   * weapon is implied by the player's authoritative weapon state on the
+   * server, so no weapon id is carried in the payload.
+   *
+   * No-op when not connected. Returns true if the message was sent.
+   */
+  public sendWeaponReload(): boolean {
+    return this.send(WEAPON_RELOAD_MESSAGE, {});
+  }
+
+  // ─── Typed build-edit intent send method ────────────────────────────────────
+
+  /**
+   * Send a build-edit intent to the server.
+   *
+   * Uses the canonical message type `"build:edit_request"` (matching the
+   * protocol's `BUILD_EDIT_EVENTS.EDIT_REQUEST`). The payload carries the
+   * structure id and the edit pattern to apply.
+   *
+   * No-op when not connected. Returns true if the message was sent.
+   */
+  public sendBuildEdit(structureId: string, editPattern: string): boolean {
+    return this.send(BUILD_EDIT_MESSAGE, { structureId, editPattern });
+  }
+
   /**
    * Send an arbitrary named message to the room (client → server).
    *
@@ -249,7 +318,8 @@ export class NetworkClient {
 
   /**
    * Subscribe to a named server event (e.g. "combat:hit",
-   * "combat:eliminated", "build:structure_placed", "energy:update").
+   * "combat:eliminated", "combat:weapon_state", "build:structure_placed",
+   * "energy:update").
    * The callback is invoked with the event payload. Returns an unsubscribe
    * function.
    */
