@@ -17,6 +17,10 @@
  *    All reconciliation is a hard snap (no interpolation), so the local
  *    prediction can never diverge from the server by more than one
  *    authoritative update interval.
+ *  - Authoritative updates are validated with the protocol's `isWeaponId`
+ *    guard before reconciliation. A malformed server event (invalid weapon
+ *    id, missing fields) is silently discarded rather than corrupting the
+ *    local prediction state.
  *
  * This class does NOT create a separate network connection — it operates
  * entirely on the canonical {@link NetworkClient} instance that the
@@ -32,6 +36,7 @@ import {
   type ReloadPredictionResult,
 } from "./WeaponPrediction";
 import type { StructureOpeningPattern, WeaponId } from "@buildshift/protocol";
+import { isWeaponId } from "@buildshift/protocol";
 
 /**
  * The input edges to process in a single frame.
@@ -96,7 +101,7 @@ export class WeaponNetworkClient {
     );
   }
 
-  // ───── Public API ─────────────────────────────────────────────────────────
+  // ─── Public API ────────────────────────────────────────────────────────────
 
   /**
    * The current locally-predicted weapon state (for HUD binding).
@@ -220,15 +225,18 @@ export class WeaponNetworkClient {
     this.unsubscribeWeaponState();
   }
 
-  // ───── Internals ──────────────────────────────────────────────────────────
+  // ─── Internals ─────────────────────────────────────────────────────────────
 
   /**
    * Handle an authoritative weapon-state update from the server.
    *
    * The server sends this via the `"combat:weapon_state"` event with a
    * `WeaponState` payload: `{ weaponId, ammoInMag, ammoReserve, reloading,
-   * reloadRemainingMs }`. The state is fed directly into the prediction for
-   * a hard snap (bounded reconciliation).
+   * reloadRemainingMs }`. The state is validated with the protocol's
+   * `isWeaponId` guard before being fed into the prediction for a hard snap
+   * (bounded reconciliation). A malformed payload (invalid weapon id,
+   * missing fields) is silently discarded so it can never corrupt the
+   * local prediction state.
    */
   private handleWeaponStateUpdate(payload: unknown): void {
     if (this.disposed) return;
@@ -236,9 +244,12 @@ export class WeaponNetworkClient {
 
     const p = payload as Record<string, unknown>;
 
-    // Validate the minimum required fields.
+    // Validate the weapon id using the protocol's canonical guard.
+    // This ensures only "shotgun" or "assault_rifle" can reach the
+    // prediction state — any other string (including "blaster" or an
+    // arbitrary value) is rejected.
     const weaponId = p.weaponId;
-    if (typeof weaponId !== "string") return;
+    if (typeof weaponId !== "string" || !isWeaponId(weaponId)) return;
 
     const ammoInMag = typeof p.ammoInMag === "number" ? p.ammoInMag : 0;
     const ammoReserve = typeof p.ammoReserve === "number" ? p.ammoReserve : 0;
@@ -247,7 +258,7 @@ export class WeaponNetworkClient {
       typeof p.reloadRemainingMs === "number" ? p.reloadRemainingMs : 0;
 
     this.prediction.reconcile({
-      weaponId: weaponId as WeaponId,
+      weaponId,
       ammoInMag,
       ammoReserve,
       reloading,
