@@ -10,6 +10,7 @@
  *   InputBatcher,
  *   PredictionOrchestrator,
  *   RemotePlayerManager,
+ *   WeaponNetworkClient,
  *   reconcileHealthDisplay,
  * } from "./game/network";
  * ```
@@ -36,13 +37,13 @@ export {
   type ParsedPlayerState,
 } from "./NetworkClient";
 
-// ── Replicated player collection parsing (client-side) ───────────────────────
+// ── Replicated player collection parsing (client-side) ─────────────────────────
 export {
   parsePlayers,
   parsePlayerEntry,
 } from "./playerStateParse";
 
-// ── Replicated building state parsing (client-side) ──────────────────────────
+// ── Replicated building state parsing (client-side) ───────────────────────────
 export {
   parseBuildingState,
   parseStructureState,
@@ -52,13 +53,13 @@ export {
   EMPTY_STRUCTURE_DURABILITIES,
 } from "./structureStateParse";
 
-// ── Authoritative match/round state parsing (client-side) ────────────────────
+// ── Authoritative match/round state parsing (client-side) ─────────────────────
 export {
   parseMatchState,
   type ParsedMatchState,
 } from "./matchStateParse";
 
-// ── Match-lifecycle broadcast event names (client-side mirror of server) ─────
+// ── Match-lifecycle broadcast event names (client-side mirror of server) ──────
 export {
   MATCH_COUNTDOWN_TICK_EVENT,
   MATCH_ROUND_OVER_EVENT,
@@ -74,7 +75,7 @@ export {
   type RematchAcceptedPayload,
 } from "./matchEvents";
 
-// ── Match-loop reset detection (pure, testable) ──────────────────────────────
+// ── Match-loop reset detection (pure, testable) ───────────────────────────────
 export {
   computeMatchReset,
   INITIAL_MATCH_SNAPSHOT,
@@ -82,7 +83,7 @@ export {
   type MatchResetDecision,
 } from "./matchReset";
 
-// ── Server URL resolution ────────────────────────────────────────────────────
+// ── Server URL resolution ─────────────────────────────────────────────────────
 export {
   DEFAULT_GAME_SERVER_URL,
   GAME_SERVER_URL_ENV,
@@ -90,7 +91,7 @@ export {
   type ServerUrlEnv,
 } from "./serverUrl";
 
-// ── InputBatcher (sequenced input send) ──────────────────────────────────────
+// ── InputBatcher (sequenced input send) ───────────────────────────────────────
 export {
   InputBatcher,
   INPUT_BUFFER_SIZE,
@@ -109,7 +110,7 @@ export {
   type FirePredictionResult,
 } from "./predictionOrchestrator";
 
-// ── RemotePlayerManager (remote interpolation buffer) ────────────────────────
+// ── RemotePlayerManager (remote interpolation buffer) ─────────────────────────
 export {
   RemotePlayerManager,
   REMOTE_INTERPOLATION_DELAY_MS,
@@ -118,14 +119,33 @@ export {
   type InterpolatedRemoteState,
 } from "./RemotePlayerManager";
 
-// ── Reconciliation helpers ───────────────────────────────────────────────────
+// ── Reconciliation helpers ────────────────────────────────────────────────────
 export {
   reconcileHealthDisplay,
   shouldShowElimination,
   type AuthoritativeCombatData,
 } from "./reconciliation";
 
-// ── Factory ──────────────────────────────────────────────────────────────────
+// ── WeaponNetworkClient (canonical weapon/build-edit network bridge) ──────────
+export {
+  WeaponNetworkClient,
+  type WeaponInputFrame,
+} from "../player/WeaponNetworkClient";
+
+// ── WeaponPrediction (local weapon state prediction / reconciliation) ────────
+// NOTE: `FirePredictionResult` from WeaponPrediction is intentionally NOT
+// re-exported here to avoid a name collision with the movement-layer
+// `FirePredictionResult` from predictionOrchestrator. Import it directly
+// from "../player/WeaponPrediction" if needed.
+export {
+  WeaponPrediction,
+  type LocalWeaponState,
+  type SwitchPredictionResult,
+  type ReloadPredictionResult,
+  type AuthoritativeWeaponState,
+} from "../player/WeaponPrediction";
+
+// ── Factory ───────────────────────────────────────────────────────────────────
 export {
   createGameNetworking,
   type GameNetworking,
