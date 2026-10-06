@@ -107,3 +107,4 @@ export const SIMULATION_VERSION = "0.2.0" as const;
 export function gameConfigVersion(): string {
   return GAME_CONFIG_VERSION;
 }
+export { computeShotgunSpread } from "./combat/weaponSimulation.js";

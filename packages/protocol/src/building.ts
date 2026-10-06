@@ -138,6 +138,8 @@ export interface StructureState {
   ownerId: string;
   /** The placement-intent `sequence` that produced this structure. */
   createdSequence: number;
+  /** Server-accepted edit, including shapes not represented by legacy openings. */
+  editType?: "" | "door" | "window" | "half_top" | "half_bottom";
   /**
    * The set of *active* openings on this structure, in the order they were
    * applied. Empty (or omitted) when the structure has no openings. Clients

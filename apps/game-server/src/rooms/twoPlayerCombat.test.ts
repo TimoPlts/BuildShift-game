@@ -118,6 +118,8 @@ describe("TwoPlayerMovementRoom combat", () => {
   });
 
   it("2) shield absorbs damage before health", async () => {
+    // Cadence is measured by the server clock, not client sequence jumps.
+    await wait(350);
     // B's shield was reduced by test 1 to MAX_SHIELD - 20 = 30.
     // Fire again: 20 damage absorbed by shield (30 -> 10), health stays 100.
     sendFire(roomA, 20);
@@ -131,6 +133,7 @@ describe("TwoPlayerMovementRoom combat", () => {
     expect(bAfter.health).toBe(MAX_HEALTH); // still full
 
     // Fire again: 20 damage, shield has 10 → 10 absorbed by shield, 10 to health.
+    await wait(350);
     sendFire(roomA, 30);
     await waitForState(roomA, (s) => {
       const bp = pfs(s, roomB.sessionId);
@@ -145,6 +148,7 @@ describe("TwoPlayerMovementRoom combat", () => {
   });
 
   it("3) fire rate limiting: firing faster than allowed is ignored", async () => {
+    await wait(350);
     const bBefore = pfs(roomA.state, roomB.sessionId);
     const shieldBefore = bBefore.shield;
     const healthBefore = bBefore.health;
@@ -171,6 +175,7 @@ describe("TwoPlayerMovementRoom combat", () => {
   });
 
   it("4) elimination: health reaches 0, isEliminated becomes true", async () => {
+    await wait(350);
     // B currently has shield=0, health=70 (after test 3 applied one more shot).
     // Need 4 more shots (4×20=80 > 70) to eliminate. Fire 5 to be safe.
     let seq = 50;

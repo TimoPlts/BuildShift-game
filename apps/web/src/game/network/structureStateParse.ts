@@ -28,7 +28,7 @@ import type {
   StructureDurabilityState,
   StructureState,
 } from "@buildshift/protocol";
-import { isBuildType, isGridRotation, STRUCTURE_DURABILITY_LIMITS } from "@buildshift/protocol";
+import { isBuildType, isGridRotation, isBuildEditType, STRUCTURE_DURABILITY_LIMITS } from "@buildshift/protocol";
 
 /**
  * The empty building state — used before the first room-state sync and
@@ -99,6 +99,10 @@ export function parseStructureState(raw: unknown): StructureState | null {
     return null;
   }
   const grid: GridPosition = { x: gx, y: gy, z: gz };
+  const openings: StructureState["openings"] =
+    raw.editType === "door" ? [{ pattern: "door_top" }] :
+    raw.editType === "window" ? [{ pattern: "window_center" }] :
+    raw.editType === "half_bottom" ? [{ pattern: "half_bottom" }] : [];
   return {
     structureId,
     buildType: raw.buildType,
@@ -106,6 +110,8 @@ export function parseStructureState(raw: unknown): StructureState | null {
     rotation: raw.rotation as GridRotation,
     ownerId,
     createdSequence,
+    ...(raw.editType === "" || isBuildEditType(raw.editType) ? { editType: raw.editType } : {}),
+    ...(typeof raw.editType === "string" ? { openings } : {}),
   };
 }
 
