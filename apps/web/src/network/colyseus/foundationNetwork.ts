@@ -56,10 +56,10 @@ export interface FoundationNetworkOptions {
 }
 
 /**
- * The canonical room name for the Energy Box Fight production room.
- * Must match the server's BOX_FIGHT_ROOM constant.
+ * The canonical room name for the Energy Box Fight production transport.
+ * Must match the server's TWO_PLAYER_MOVEMENT_ROOM constant.
  */
-export const GAME_ROOM_NAME = "box-fight";
+export const GAME_ROOM_NAME = "two-player-movement";
 
 const LOG_PREFIX = "[buildshift:network]";
 
@@ -67,8 +67,9 @@ const LOG_PREFIX = "[buildshift:network]";
  * The browser-side networking adapter for the canonical gameplay room.
  *
  * Responsibilities:
- *  - connect to the game server and join the canonical "box-fight" room once.
- *    Auto reconnect is deliberately disabled (the SDK re-enables it by default).
+ *  - connect to the game server and join the canonical "two-player-movement"
+ *    room once. Auto reconnect is deliberately disabled (the SDK re-enables
+ *    it by default).
  *  - track and expose a small, immutable {@link NetworkUiState} that the dev
  *    status UI observes (status, room/session ids, player count, players,
  *    error) via a plain subscribe/getSnapshot pair — no Colyseus types leak

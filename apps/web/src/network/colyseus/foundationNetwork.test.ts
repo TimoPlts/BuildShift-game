@@ -71,7 +71,9 @@ describe("FoundationNetwork", () => {
     network.start();
     await flush();
 
-    expect(joinedName).toBe(GAME_ROOM_NAME);
+    // Contract: the production transport target is the canonical
+    // two-player-movement room registered by the server.
+    expect(joinedName).toBe("two-player-movement");
     // Auto-reconnect is explicitly disabled per spec.
     expect(room.reconnection.enabled).toBe(false);
 
