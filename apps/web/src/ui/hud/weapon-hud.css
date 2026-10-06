@@ -88,16 +88,52 @@
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
+/* ── Ammo counter: magazine / reserve ── */
 .weapon-hud__ammo {
-  font-size: 0.9rem;
-  font-weight: 700;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
   font-variant-numeric: tabular-nums;
-  color: #e6e8ee;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
-/* Empty magazine: warn with red */
-.weapon-hud__ammo--empty {
+/* Magazine count — primary, bold */
+.weapon-hud__ammo-magazine {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e6e8ee;
+}
+
+/* Separator between magazine and reserve */
+.weapon-hud__ammo-separator {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #8b93a7;
+}
+
+/* Reserve count — secondary, smaller */
+.weapon-hud__ammo-reserve {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #8b93a7;
+}
+
+/*
+ * Empty magazine (reserve may still have rounds):
+ * magazine turns amber/warning, reserve stays secondary.
+ */
+.weapon-hud__ammo--low .weapon-hud__ammo-magazine {
+  color: #fbbf24;
+}
+
+/*
+ * Fully empty (no magazine ammo AND no reserve ammo):
+ * both counts turn red to signal "out of ammo — reload required or weapon
+ * exhausted".
+ */
+.weapon-hud__ammo--empty .weapon-hud__ammo-magazine,
+.weapon-hud__ammo--empty .weapon-hud__ammo-reserve,
+.weapon-hud__ammo--empty .weapon-hud__ammo-separator {
   color: #f0616d;
 }
 

@@ -1,35 +1,35 @@
 /**
- * WeaponHud — a presentation-only weapon HUD for the BuildShift 1v1 Energy
+ * WeaponHUD — a presentation-only weapon HUD for the BuildShift 1v1 Energy
  * Box Fight mode.
  *
  * Displays the local player's authoritative weapon state:
  *  - the active weapon's name (small label)
- *  - the active weapon's ammo as `currentAmmo / maxAmmo`
+ *  - the active weapon's magazine ammo (primary) and reserve ammo (secondary)
  *  - a thin horizontal reload progress bar while the active weapon is
  *    reloading (fills based on `reloadProgress`)
  *  - an unobtrusive weapon-slot indicator for every weapon in the loadout,
  *    with the currently equipped one highlighted
  *
- * The data source is the local player's {@link WeaponStateView} as produced
- * by the GameRuntime's authoritative weapon pipeline. This component is
- * purely presentational: all values are supplied via explicit props; it
- * performs no networking, no runtime queries, and no side effects beyond
- * rendering. It deliberately does not touch the existing health, energy, or
- * round-timer HUD elements.
+ * The data source is the local player's {@link WeaponAmmoState} as produced
+ * by the authoritative server (via the Colyseus `PlayerStateSchema.weapons`
+ * map). This component is purely presentational: all values are supplied via
+ * explicit props; it performs no networking, no runtime queries, and no side
+ * effects beyond rendering. It deliberately does not touch the existing
+ * health, energy, or round-timer HUD elements.
  *
  * Example usage:
  * ```tsx
- * <WeaponHud
+ * <WeaponHUD
  *   activeWeapon={{
  *     weaponType: "assault_rifle",
- *     currentAmmo: 12,
- *     maxAmmo: 30,
+ *     magazineAmmo: 12,
+ *     reserveAmmo: 48,
  *     isReloading: true,
  *     reloadProgress: 0.42,
  *   }}
  *   weapons={[
- *     { weaponType: "assault_rifle", currentAmmo: 12, maxAmmo: 30, isReloading: true, reloadProgress: 0.42 },
- *     { weaponType: "shotgun", currentAmmo: 4, maxAmmo: 4, isReloading: false, reloadProgress: 0 },
+ *     { weaponType: "assault_rifle", magazineAmmo: 12, reserveAmmo: 48, isReloading: true, reloadProgress: 0.42 },
+ *     { weaponType: "shotgun", magazineAmmo: 4, reserveAmmo: 16, isReloading: false, reloadProgress: 0 },
  *   ]}
  * />
  * ```
@@ -40,18 +40,18 @@ import "./weapon-hud.css";
 
 /**
  * A view of a single weapon slot's authoritative state, in the shape the HUD
- * needs. Mirrors the fields of the protocol weapon state (`currentAmmo`,
- * `maxAmmo`, `isReloading`, `reloadProgress`) plus the canonical
- * {@link WeaponType} so the active weapon can be identified in the slot
- * indicator.
+ * needs. Mirrors the protocol `WeaponAmmoState` fields
+ * (`magazineAmmo`, `reserveAmmo`, `isReloading`, `reloadProgress`) plus the
+ * canonical {@link WeaponType} so the active weapon can be identified in the
+ * slot indicator.
  */
 export interface WeaponStateView {
   /** The canonical weapon type occupying this slot. */
   weaponType: WeaponType;
   /** Rounds currently loaded in the magazine (>= 0). */
-  currentAmmo: number;
-  /** Maximum rounds the magazine holds (> 0). */
-  maxAmmo: number;
+  magazineAmmo: number;
+  /** Rounds available in the reserve to reload the magazine (>= 0). */
+  reserveAmmo: number;
   /** `true` while this weapon is in the middle of a reload. */
   isReloading: boolean;
   /**
@@ -62,12 +62,12 @@ export interface WeaponStateView {
 }
 
 /**
- * Explicit props for the weapon HUD.
+ * Explicit props for the WeaponHUD.
  *
  * All values represent the **local player's** weapon state as supplied by the
  * runtime.
  */
-export interface WeaponHudProps {
+export interface WeaponHUDProps {
   /** The local player's currently equipped (active) weapon. */
   activeWeapon: WeaponStateView;
   /**
@@ -99,18 +99,20 @@ function clamp(value: number, min: number, max: number): number {
  * A presentation-only weapon HUD.
  *
  * Renders a fixed-position overlay at the bottom-left of the viewport showing
- * the active weapon name, its `currentAmmo / maxAmmo` count, a thin reload
- * progress bar (only while the active weapon is reloading), and a compact slot
- * indicator for every weapon in the loadout with the equipped one highlighted.
+ * the active weapon name, its `magazineAmmo / reserveAmmo` counter, a thin
+ * reload progress bar (only while the active weapon is reloading), and a
+ * compact slot indicator for every weapon in the loadout with the equipped
+ * one highlighted.
  */
-export function WeaponHud(props: WeaponHudProps): JSX.Element {
+export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
   const { activeWeapon, weapons } = props;
 
-  // Guard against malformed inputs so the counter never renders a negative or
-  // over-max value.
-  const maxAmmo = Math.max(1, activeWeapon.maxAmmo);
-  const currentAmmo = Math.round(clamp(activeWeapon.currentAmmo, 0, maxAmmo));
-  const ammoEmpty = currentAmmo <= 0;
+  // Guard against malformed inputs so the counters never render negative
+  // values.
+  const magazineAmmo = Math.max(0, Math.round(activeWeapon.magazineAmmo));
+  const reserveAmmo = Math.max(0, Math.round(activeWeapon.reserveAmmo));
+  const ammoEmpty = magazineAmmo <= 0;
+  const fullyEmpty = ammoEmpty && reserveAmmo <= 0;
 
   const reloadFraction = clamp(activeWeapon.reloadProgress, 0, 1);
   const reloadPercent = (reloadFraction * 100).toFixed(1);
@@ -155,10 +157,19 @@ export function WeaponHud(props: WeaponHudProps): JSX.Element {
         <span className="weapon-hud__name">{weaponName}</span>
         <span
           className={`weapon-hud__ammo ${
-            ammoEmpty ? "weapon-hud__ammo--empty" : ""
+            fullyEmpty
+              ? "weapon-hud__ammo--empty"
+              : ammoEmpty
+                ? "weapon-hud__ammo--low"
+                : ""
           }`}
+          aria-label={`${magazineAmmo} in magazine, ${reserveAmmo} in reserve`}
         >
-          {currentAmmo} / {maxAmmo}
+          <span className="weapon-hud__ammo-magazine">{magazineAmmo}</span>
+          <span className="weapon-hud__ammo-separator" aria-hidden="true">
+            /
+          </span>
+          <span className="weapon-hud__ammo-reserve">{reserveAmmo}</span>
         </span>
       </div>
 
