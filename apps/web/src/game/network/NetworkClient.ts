@@ -154,10 +154,13 @@ export class NetworkClient {
 
   /**
    * Send a weapon reload intent. Uses "two-player:weapon_reload". The active
-   * weapon is implied by the server's authoritative weapon state.
+   * weapon is implied by the server's authoritative weapon state when
+   * `weaponId` is omitted. An explicit `weaponId` is carried for forward
+   * compatibility matching the protocol's `StartReload` interface.
    */
-  public sendWeaponReload(): boolean {
-    return this.send(WEAPON_RELOAD_MESSAGE, {});
+  public sendWeaponReload(weaponId?: WeaponId): boolean {
+    const payload = weaponId ? { weaponId } : {};
+    return this.send(WEAPON_RELOAD_MESSAGE, payload);
   }
 
   /**

@@ -31,7 +31,7 @@ import {
   type SwitchPredictionResult,
   type ReloadPredictionResult,
 } from "./WeaponPrediction";
-import type { StructureOpeningPattern, WeaponId } from "@buildshift/protocol";
+import { isWeaponId, type StructureOpeningPattern, type WeaponId } from "@buildshift/protocol";
 
 /**
  * The input edges to process in a single frame.
@@ -96,7 +96,7 @@ export class WeaponNetworkClient {
     );
   }
 
-  // ───── Public API ─────────────────────────────────────────────────────────
+  // ─── Public API ─────────────────────────────────────────────────────────────
 
   /**
    * The current locally-predicted weapon state (for HUD binding).
@@ -180,12 +180,14 @@ export class WeaponNetworkClient {
    * Request a reload of the active weapon.
    *
    * Applies the local prediction (starts the reload timer) and sends the
-   * reload intent to the server.
+   * reload intent to the server. The active weapon id is passed explicitly
+   * for forward compatibility (the protocol's `StartReload` supports it).
    */
   public requestReload(): ReloadPredictionResult {
     const result = this.prediction.startReload();
     if (result.started) {
-      this.networkClient.sendWeaponReload();
+      // Send the reload intent with the explicit active weapon id.
+      this.networkClient.sendWeaponReload(this.prediction.activeWeaponId);
     }
     return result;
   }
@@ -220,7 +222,7 @@ export class WeaponNetworkClient {
     this.unsubscribeWeaponState();
   }
 
-  // ───── Internals ──────────────────────────────────────────────────────────
+  // ─── Internals ──────────────────────────────────────────────────────────────
 
   /**
    * Handle an authoritative weapon-state update from the server.
@@ -229,6 +231,10 @@ export class WeaponNetworkClient {
    * `WeaponState` payload: `{ weaponId, ammoInMag, ammoReserve, reloading,
    * reloadRemainingMs }`. The state is fed directly into the prediction for
    * a hard snap (bounded reconciliation).
+   *
+   * The weaponId is validated against the shared `WeaponId` vocabulary
+   * before the snap is applied, so a malformed or unexpected payload can
+   * never corrupt the local prediction state.
    */
   private handleWeaponStateUpdate(payload: unknown): void {
     if (this.disposed) return;
@@ -236,9 +242,9 @@ export class WeaponNetworkClient {
 
     const p = payload as Record<string, unknown>;
 
-    // Validate the minimum required fields.
+    // Validate the weaponId is a known canonical weapon.
     const weaponId = p.weaponId;
-    if (typeof weaponId !== "string") return;
+    if (typeof weaponId !== "string" || !isWeaponId(weaponId)) return;
 
     const ammoInMag = typeof p.ammoInMag === "number" ? p.ammoInMag : 0;
     const ammoReserve = typeof p.ammoReserve === "number" ? p.ammoReserve : 0;
@@ -247,7 +253,7 @@ export class WeaponNetworkClient {
       typeof p.reloadRemainingMs === "number" ? p.reloadRemainingMs : 0;
 
     this.prediction.reconcile({
-      weaponId: weaponId as WeaponId,
+      weaponId,
       ammoInMag,
       ammoReserve,
       reloading,
