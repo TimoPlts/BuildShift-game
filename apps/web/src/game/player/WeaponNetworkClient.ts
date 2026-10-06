@@ -5,7 +5,7 @@
  *
  * Responsibilities:
  *  - Consumes weapon input edges (switch, reload, fire) from the
- *    {@link InputManager} latches.
+ *    {@link InputManager} latches via {@link WeaponInputFrame}.
  *  - Sends typed weapon intents through the {@link NetworkClient} using the
  *    correct message types that the server's TwoPlayerMovementRoom listens on.
  *  - Consumes authoritative weapon-state updates from the server and feeds
@@ -25,6 +25,27 @@
  * This class does NOT create a separate network connection — it operates
  * entirely on the canonical {@link NetworkClient} instance that the
  * GameRuntime already owns.
+ *
+ * Integration with the GameRuntime:
+ * ```ts
+ * // The GameRuntime creates the network stack via createGameNetworking().
+ * const networkClient = networking.client;
+ * const wnc = new WeaponNetworkClient(networkClient);
+ *
+ * // Per render frame:
+ * wnc.tick(dtMs);
+ * const frame = inputManager.consumeWeaponInputFrame();
+ * const fireResult = wnc.processWeaponInput(frame);
+ *
+ * // For HUD:
+ * const state = wnc.localState;
+ *
+ * // On connection / match reset:
+ * wnc.reset();
+ *
+ * // On teardown:
+ * wnc.dispose();
+ * ```
  */
 import type { NetworkClient } from "../network/NetworkClient";
 import { WEAPON_STATE_EVENT } from "../network/NetworkClient";
@@ -37,29 +58,7 @@ import {
 } from "./WeaponPrediction";
 import type { StructureOpeningPattern, WeaponId } from "@buildshift/protocol";
 import { isWeaponId } from "@buildshift/protocol";
-
-/**
- * The input edges to process in a single frame.
- *
- * Mirrors the latched edges exposed by the {@link InputManager}:
- *  - `weaponSlot1Pressed` — key 1 (assault rifle switch)
- *  - `weaponSlot2Pressed` — key 2 (shotgun switch)
- *  - `reloadPressed` — key R (reload)
- *  - `firePressed` — left mouse click edge
- *  - `isFiring` — left mouse button held (continuous fire intent)
- */
-export interface WeaponInputFrame {
-  /** Key 1 edge (assault rifle). */
-  weaponSlot1Pressed: boolean;
-  /** Key 2 edge (shotgun). */
-  weaponSlot2Pressed: boolean;
-  /** Key R edge (reload). */
-  reloadPressed: boolean;
-  /** Left-mouse press edge (single-shot trigger). */
-  firePressed: boolean;
-  /** Left-mouse held (continuous fire for auto weapons). */
-  isFiring: boolean;
-}
+import type { WeaponInputFrame } from "../input/InputManager";
 
 /**
  * The canonical client-side weapon network bridge.
@@ -69,7 +68,7 @@ export interface WeaponInputFrame {
  * const wnc = new WeaponNetworkClient(networkClient);
  * // Per frame:
  * wnc.tick(dtMs);
- * wnc.processWeaponInput({ weaponSlot1Pressed, weaponSlot2Pressed, ... });
+ * wnc.processWeaponInput(inputManager.consumeWeaponInputFrame());
  * // For HUD:
  * const state = wnc.localState;
  * // On connection / reset:
@@ -93,6 +92,8 @@ export class WeaponNetworkClient {
     this.prediction = new WeaponPrediction();
 
     // Subscribe to the server's authoritative weapon-state updates.
+    // The server sends this via "combat:weapon_state" after weapon switch,
+    // reload completion, or any authoritative weapon state change.
     this.unsubscribeWeaponState = this.networkClient.onEvent(
       WEAPON_STATE_EVENT,
       (payload) => {
@@ -101,13 +102,21 @@ export class WeaponNetworkClient {
     );
   }
 
-  // ─── Public API ────────────────────────────────────────────────────────────
+  // ─── Public API ────────────────────────────────────────────────────────
 
   /**
    * The current locally-predicted weapon state (for HUD binding).
    */
   public get localState(): LocalWeaponState {
     return this.prediction.getLocalState();
+  }
+
+  /**
+   * Whether the weapon network client is connected to the server.
+   * Reflects the {@link NetworkClient} connection state.
+   */
+  public get isConnected(): boolean {
+    return this.networkClient.isConnected;
   }
 
   /**
@@ -128,6 +137,8 @@ export class WeaponNetworkClient {
    *  - Attempts a fire (optimistic prediction; the fire intent rides in the
    *    movement input frame's `primaryFire` field — no separate message)
    *
+   * @param input The weapon input frame obtained from
+   *        {@link InputManager.consumeWeaponInputFrame}.
    * @returns The fire prediction result for the current frame (if the fire
    *          gate passed). The caller can use this to drive local effects
    *          (muzzle flash, sound, etc.) before the server confirms.
@@ -225,7 +236,7 @@ export class WeaponNetworkClient {
     this.unsubscribeWeaponState();
   }
 
-  // ─── Internals ─────────────────────────────────────────────────────────────
+  // ─── Internals ─────────────────────────────────────────────────────────
 
   /**
    * Handle an authoritative weapon-state update from the server.
