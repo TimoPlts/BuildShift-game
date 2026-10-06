@@ -31,7 +31,7 @@ import {
   type SwitchPredictionResult,
   type ReloadPredictionResult,
 } from "./WeaponPrediction";
-import type { WeaponId } from "@buildshift/protocol";
+import type { StructureOpeningPattern, WeaponId } from "@buildshift/protocol";
 
 /**
  * The input edges to process in a single frame.
@@ -96,7 +96,7 @@ export class WeaponNetworkClient {
     );
   }
 
-  // ─── Public API ─────────────────────────────────────────────────────────────
+  // ───── Public API ─────────────────────────────────────────────────────────
 
   /**
    * The current locally-predicted weapon state (for HUD binding).
@@ -198,7 +198,7 @@ export class WeaponNetworkClient {
    */
   public requestBuildEdit(
     structureId: string,
-    editPattern: string,
+    editPattern: StructureOpeningPattern,
   ): boolean {
     return this.networkClient.sendBuildEdit(structureId, editPattern);
   }
@@ -220,7 +220,7 @@ export class WeaponNetworkClient {
     this.unsubscribeWeaponState();
   }
 
-  // ─── Internals ──────────────────────────────────────────────────────────────
+  // ───── Internals ──────────────────────────────────────────────────────────
 
   /**
    * Handle an authoritative weapon-state update from the server.
