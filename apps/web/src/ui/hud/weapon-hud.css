@@ -153,3 +153,92 @@
   border-radius: 3px;
   transition: width 120ms linear;
 }
+
+/* ────────────────────────────────────────────────────────────────────────────
+ * Composable sub-components
+ *
+ * These styles are independent of the `.weapon-hud` container so each
+ * component can be placed anywhere in a parent layout. They inherit the
+ * same visual design language (colors, sizing, font) as the monolithic
+ * `WeaponHUD` for consistency.
+ * ──────────────────────────────────────────────────────────────────────────── */
+
+/* ── WeaponNameLabel: standalone weapon name display ── */
+.weapon-name-label {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #e6e8ee;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+/* ── AmmoCounter: standalone magazine/reserve display ── */
+.ammo-counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  font-variant-numeric: tabular-nums;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+/* Magazine count — primary, bold */
+.ammo-counter__magazine {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e6e8ee;
+}
+
+/* Separator between magazine and reserve */
+.ammo-counter__separator {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #8b93a7;
+}
+
+/* Reserve count — secondary, smaller */
+.ammo-counter__reserve {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #8b93a7;
+}
+
+/*
+ * Low state: magazine empty, reserve still has rounds.
+ * Magazine count turns amber/warning.
+ */
+.ammo-counter--low .ammo-counter__magazine {
+  color: #fbbf24;
+}
+
+/*
+ * Empty state: both magazine and reserve at 0.
+ * All counts turn red to signal "out of ammo".
+ */
+.ammo-counter--empty .ammo-counter__magazine,
+.ammo-counter--empty .ammo-counter__reserve,
+.ammo-counter--empty .ammo-counter__separator {
+  color: #f0616d;
+}
+
+/* ── ReloadProgressBar: standalone reload progress bar ── */
+.reload-progress-bar {
+  display: block;
+  width: 100%;
+  height: 6px;
+  background: rgb(0 0 0 / 55%);
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 3px;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+.reload-progress-bar__fill {
+  height: 100%;
+  background: #22d3ee;
+  border-radius: 3px;
+  transition: width 120ms linear;
+}
