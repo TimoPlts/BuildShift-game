@@ -55,9 +55,9 @@ export interface AuthoritativeWeaponState {
   /** Whether the weapon is currently reloading. */
   reloading: boolean;
   /**
-   * Remaining reload time as reported by the server. The server currently
-   * reports this in simulation ticks (matching `WeaponConfig.reloadTicks`);
-   * the client converts to milliseconds for the local timer.
+   * Remaining reload time in **milliseconds**, as reported by the server.
+   * `0` when not reloading (or the reload has completed). Meaningful only
+   * while `reloading` is `true`.
    */
   reloadRemainingMs: number;
 }
@@ -140,7 +140,7 @@ export class WeaponPrediction {
     this._reloadDurationMs = config.reloadTicks * TICK_MS;
   }
 
-  // ─── Accessors ──────────────────────────────────────────────────────────────
+  // ─── Accessors ─────────────────────────────────────────────────────────
 
   public get activeWeaponId(): WeaponId {
     return this._activeWeaponId;
@@ -188,7 +188,7 @@ export class WeaponPrediction {
     };
   }
 
-  // ─── Prediction methods ───────────────────────────────────────────────────
+  // ─── Prediction methods ────────────────────────────────────────────────
 
   /**
    * Advance local timers by the given elapsed time (milliseconds).
@@ -285,7 +285,7 @@ export class WeaponPrediction {
     return { started: true };
   }
 
-  // ─── Reconciliation ───────────────────────────────────────────────────────
+  // ─── Reconciliation ────────────────────────────────────────────────────
 
   /**
    * Snap the local prediction to the server's authoritative weapon state.
@@ -293,6 +293,11 @@ export class WeaponPrediction {
    * This is called when the server broadcasts a `WeaponState` update via
    * the `"combat:weapon_state"` event. The local state is *replaced* — no
    * interpolation is applied — keeping the prediction bounded.
+   *
+   * The `reloadRemainingMs` field is in **milliseconds** per the protocol
+   * contract (`WeaponState` in `@buildshift/protocol`). The local elapsed
+   * timer is set so that {@link tick} will continue the reload from the
+   * correct point.
    */
   public reconcile(state: AuthoritativeWeaponState): void {
     const config = getWeaponById(state.weaponId);
@@ -304,12 +309,13 @@ export class WeaponPrediction {
     this._reserveAmmo = state.ammoReserve;
     this._isReloading = state.reloading;
 
+    this._reloadDurationMs = config.reloadTicks * TICK_MS;
+
     if (state.reloading) {
-      // The server reports remaining time in ticks; convert to elapsed ms
-      // so the local tick() timer continues from the correct point.
-      const remainingTicks = state.reloadRemainingMs;
-      const remainingMs = remainingTicks * TICK_MS;
-      this._reloadDurationMs = config.reloadTicks * TICK_MS;
+      // The server reports remaining reload time in milliseconds.
+      // Compute the elapsed time so the local tick() timer continues
+      // from the correct point toward completion.
+      const remainingMs = Math.max(0, state.reloadRemainingMs);
       this._reloadElapsedMs = Math.max(0, this._reloadDurationMs - remainingMs);
     } else {
       this._isReloading = false;
