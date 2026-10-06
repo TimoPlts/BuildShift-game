@@ -5,8 +5,9 @@
  * Displays the local player's authoritative weapon state:
  *  - the active weapon's name (small label)
  *  - the active weapon's magazine ammo (primary) and reserve ammo (secondary)
+ *    via {@link WeaponAmmoDisplay}
  *  - a thin horizontal reload progress bar while the active weapon is
- *    reloading (fills based on `reloadProgress`)
+ *    reloading (fills based on `reloadProgress`) via {@link ReloadProgressBar}
  *  - an unobtrusive weapon-slot indicator for every weapon in the loadout,
  *    with the currently equipped one highlighted
  *
@@ -36,6 +37,8 @@
  */
 
 import type { WeaponType } from "@buildshift/protocol";
+import { WeaponAmmoDisplay } from "./WeaponAmmoDisplay";
+import { ReloadProgressBar } from "./ReloadProgressBar";
 import "./weapon-hud.css";
 
 /**
@@ -90,11 +93,6 @@ const WEAPON_GLYPHS: Record<WeaponType, string> = {
   shotgun: "\u2733",
 };
 
-/** Clamp `value` into the inclusive range `[min, max]`. */
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(value, max));
-}
-
 /**
  * A presentation-only weapon HUD.
  *
@@ -103,19 +101,12 @@ function clamp(value: number, min: number, max: number): number {
  * reload progress bar (only while the active weapon is reloading), and a
  * compact slot indicator for every weapon in the loadout with the equipped
  * one highlighted.
+ *
+ * The ammo counter and reload bar are delegated to the focused, reusable
+ * {@link WeaponAmmoDisplay} and {@link ReloadProgressBar} components.
  */
 export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
   const { activeWeapon, weapons } = props;
-
-  // Guard against malformed inputs so the counters never render negative
-  // values.
-  const magazineAmmo = Math.max(0, Math.round(activeWeapon.magazineAmmo));
-  const reserveAmmo = Math.max(0, Math.round(activeWeapon.reserveAmmo));
-  const ammoEmpty = magazineAmmo <= 0;
-  const fullyEmpty = ammoEmpty && reserveAmmo <= 0;
-
-  const reloadFraction = clamp(activeWeapon.reloadProgress, 0, 1);
-  const reloadPercent = (reloadFraction * 100).toFixed(1);
 
   const weaponName =
     WEAPON_NAMES[activeWeapon.weaponType] ?? activeWeapon.weaponType;
@@ -155,39 +146,15 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
       {/* ── Active weapon: name + ammo counter ── */}
       <div className="weapon-hud__active">
         <span className="weapon-hud__name">{weaponName}</span>
-        <span
-          className={`weapon-hud__ammo ${
-            fullyEmpty
-              ? "weapon-hud__ammo--empty"
-              : ammoEmpty
-                ? "weapon-hud__ammo--low"
-                : ""
-          }`}
-          aria-label={`${magazineAmmo} in magazine, ${reserveAmmo} in reserve`}
-        >
-          <span className="weapon-hud__ammo-magazine">{magazineAmmo}</span>
-          <span className="weapon-hud__ammo-separator" aria-hidden="true">
-            /
-          </span>
-          <span className="weapon-hud__ammo-reserve">{reserveAmmo}</span>
-        </span>
+        <WeaponAmmoDisplay
+          magazineAmmo={activeWeapon.magazineAmmo}
+          reserveAmmo={activeWeapon.reserveAmmo}
+        />
       </div>
 
       {/* ── Reload progress bar (only while the active weapon reloads) ── */}
       {activeWeapon.isReloading && (
-        <div
-          className="weapon-hud__reload-track"
-          role="progressbar"
-          aria-valuenow={Math.round(reloadFraction * 100)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Reload in progress"
-        >
-          <div
-            className="weapon-hud__reload-fill"
-            style={{ width: `${reloadPercent}%` }}
-          />
-        </div>
+        <ReloadProgressBar progress={activeWeapon.reloadProgress} />
       )}
     </div>
   );
