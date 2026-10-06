@@ -44,6 +44,9 @@ const TICK_MS = TICK_SECONDS * 1000;
  * Matches the `WeaponState` type from `@buildshift/protocol`
  * (`messages/weaponRequestMessages.ts`), which the TwoPlayerMovementRoom
  * broadcasts via the `"combat:weapon_state"` event.
+ *
+ * The `reloadRemainingMs` field is in **milliseconds** per the protocol
+ * contract. The client uses it directly to position the local reload timer.
  */
 export interface AuthoritativeWeaponState {
   /** The weapon id this state describes. */
@@ -55,9 +58,9 @@ export interface AuthoritativeWeaponState {
   /** Whether the weapon is currently reloading. */
   reloading: boolean;
   /**
-   * Remaining reload time as reported by the server. The server currently
-   * reports this in simulation ticks (matching `WeaponConfig.reloadTicks`);
-   * the client converts to milliseconds for the local timer.
+   * Remaining reload time in **milliseconds**. `0` when not reloading or
+   * the reload has completed. Used to position the local reload timer so
+   * the remaining countdown is accurate after a network round-trip.
    */
   reloadRemainingMs: number;
 }
@@ -140,7 +143,7 @@ export class WeaponPrediction {
     this._reloadDurationMs = config.reloadTicks * TICK_MS;
   }
 
-  // ─── Accessors ──────────────────────────────────────────────────────────────
+  // ───── Accessors ───────────────────────────────────────────────────────────
 
   public get activeWeaponId(): WeaponId {
     return this._activeWeaponId;
@@ -188,7 +191,7 @@ export class WeaponPrediction {
     };
   }
 
-  // ─── Prediction methods ───────────────────────────────────────────────────
+  // ───── Prediction methods ─────────────────────────────────────────────────
 
   /**
    * Advance local timers by the given elapsed time (milliseconds).
@@ -285,7 +288,7 @@ export class WeaponPrediction {
     return { started: true };
   }
 
-  // ─── Reconciliation ───────────────────────────────────────────────────────
+  // ───── Reconciliation ─────────────────────────────────────────────────────
 
   /**
    * Snap the local prediction to the server's authoritative weapon state.
@@ -293,6 +296,17 @@ export class WeaponPrediction {
    * This is called when the server broadcasts a `WeaponState` update via
    * the `"combat:weapon_state"` event. The local state is *replaced* — no
    * interpolation is applied — keeping the prediction bounded.
+   *
+   * The `reloadRemainingMs` field from the protocol is in **milliseconds**
+   * (per the `WeaponState` contract in `@buildshift/protocol`). It is used
+   * directly to position the local reload timer:
+   *
+   * ```
+   * elapsedMs = totalDurationMs - remainingMs
+   * ```
+   *
+   * This ensures the local reload countdown continues from the correct
+   * point even after a network round-trip delay.
    */
   public reconcile(state: AuthoritativeWeaponState): void {
     const config = getWeaponById(state.weaponId);
@@ -302,15 +316,18 @@ export class WeaponPrediction {
     this._currentAmmo = state.ammoInMag;
     this._maxAmmo = config.maxAmmo;
     this._reserveAmmo = state.ammoReserve;
-    this._isReloading = state.reloading;
+    this._reloadDurationMs = config.reloadTicks * TICK_MS;
 
     if (state.reloading) {
-      // The server reports remaining time in ticks; convert to elapsed ms
-      // so the local tick() timer continues from the correct point.
-      const remainingTicks = state.reloadRemainingMs;
-      const remainingMs = remainingTicks * TICK_MS;
-      this._reloadDurationMs = config.reloadTicks * TICK_MS;
-      this._reloadElapsedMs = Math.max(0, this._reloadDurationMs - remainingMs);
+      // The server reports remaining reload time in milliseconds.
+      // Convert to elapsed ms so the local tick() timer continues from
+      // the correct point: elapsed = total - remaining.
+      const remainingMs = Math.max(0, state.reloadRemainingMs);
+      this._isReloading = true;
+      this._reloadElapsedMs = Math.max(
+        0,
+        this._reloadDurationMs - remainingMs,
+      );
     } else {
       this._isReloading = false;
       this._reloadElapsedMs = 0;

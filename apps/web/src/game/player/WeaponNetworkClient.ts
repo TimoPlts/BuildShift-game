@@ -18,6 +18,16 @@
  *    prediction can never diverge from the server by more than one
  *    authoritative update interval.
  *
+ * Fire path:
+ *  - The fire intent is carried in the movement input frame's `primaryFire`
+ *    field (sent via {@link NetworkClient.sendInput}). This class performs
+ *    *local* fire prediction (optimistic ammo decrement) for immediate
+ *    visual feedback (muzzle flash, ammo counter). The server validates the
+ *    actual shot via the shared `fireGate` on the `primaryFire` flag.
+ *  - {@link lastFireResult} stores the most recent fire prediction so the
+ *    GameRuntime can query fire status without capturing the return value
+ *    of {@link processWeaponInput}.
+ *
  * This class does NOT create a separate network connection — it operates
  * entirely on the canonical {@link NetworkClient} instance that the
  * GameRuntime already owns.
@@ -67,6 +77,8 @@ export interface WeaponInputFrame {
  * wnc.processWeaponInput({ weaponSlot1Pressed, weaponSlot2Pressed, ... });
  * // For HUD:
  * const state = wnc.localState;
+ * // Check last fire prediction (for muzzle flash / SFX):
+ * if (wnc.lastFireResult?.fired) { /* show muzzle flash *\/ }
  * // On connection / reset:
  * wnc.reset();
  * // On teardown:
@@ -78,6 +90,14 @@ export class WeaponNetworkClient {
   private readonly prediction: WeaponPrediction;
   private readonly unsubscribeWeaponState: () => void;
   private disposed = false;
+
+  /**
+   * The most recent fire prediction result. `null` when no fire prediction
+   * has been attempted since the last reset. The GameRuntime can use this
+   * to trigger local effects (muzzle flash, sound) without needing to
+   * capture the return value of {@link processWeaponInput}.
+   */
+  private _lastFireResult: FirePredictionResult | null = null;
 
   /**
    * @param networkClient The canonical network client (same instance the
@@ -96,13 +116,23 @@ export class WeaponNetworkClient {
     );
   }
 
-  // ───── Public API ─────────────────────────────────────────────────────────
+  // ───── Public API ──────────────────────────────────────────────────────────
 
   /**
    * The current locally-predicted weapon state (for HUD binding).
    */
   public get localState(): LocalWeaponState {
     return this.prediction.getLocalState();
+  }
+
+  /**
+   * The most recent fire prediction result, or `null` if no fire has been
+   * attempted since the last {@link reset}. Use this to trigger immediate
+   * visual/audio feedback (muzzle flash, ammo counter update) on the same
+   * frame the fire prediction occurred.
+   */
+  public get lastFireResult(): FirePredictionResult | null {
+    return this._lastFireResult;
   }
 
   /**
@@ -153,7 +183,9 @@ export class WeaponNetworkClient {
     // muzzle flash). The actual fire validation on the server uses the
     // `primaryFire` flag in the input frame + the shared `canFire` gate.
     if (input.firePressed || input.isFiring) {
-      return this.prediction.tryFire();
+      const result = this.prediction.tryFire();
+      this._lastFireResult = result;
+      return result;
     }
 
     return null;
@@ -209,6 +241,7 @@ export class WeaponNetworkClient {
    */
   public reset(): void {
     this.prediction.reset();
+    this._lastFireResult = null;
   }
 
   /**
@@ -220,7 +253,7 @@ export class WeaponNetworkClient {
     this.unsubscribeWeaponState();
   }
 
-  // ───── Internals ──────────────────────────────────────────────────────────
+  // ───── Internals ───────────────────────────────────────────────────────────
 
   /**
    * Handle an authoritative weapon-state update from the server.
@@ -229,6 +262,10 @@ export class WeaponNetworkClient {
    * `WeaponState` payload: `{ weaponId, ammoInMag, ammoReserve, reloading,
    * reloadRemainingMs }`. The state is fed directly into the prediction for
    * a hard snap (bounded reconciliation).
+   *
+   * The `reloadRemainingMs` field is in **milliseconds** per the protocol
+   * contract. The prediction uses it directly to position the local reload
+   * timer.
    */
   private handleWeaponStateUpdate(payload: unknown): void {
     if (this.disposed) return;
