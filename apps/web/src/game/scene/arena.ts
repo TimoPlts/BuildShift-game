@@ -79,7 +79,7 @@ export function getArenaMaterialKind(id: string): ArenaMaterialKind {
  */
 export function setupArenaLighting(scene: Scene): void {
   // Remove any pre-existing lights so the two below are the only sources.
-  for (const light of scene.lights) {
+  for (const light of [...scene.lights]) {
     light.dispose();
   }
 
