@@ -11,6 +11,24 @@ import { createFoundationScene } from "./createFoundationScene";
 import { setupArenaLighting } from "./arena";
 
 describe("Arena lighting", () => {
+  it("disposes every old light when setup is repeated", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+    setupArenaLighting(scene);
+    const originalLights = [...scene.lights];
+    expect(originalLights).toHaveLength(2);
+    setupArenaLighting(scene);
+    expect(scene.lights).toHaveLength(2);
+    for (const light of originalLights) {
+      expect(light.isDisposed()).toBe(true);
+      expect(scene.lights).not.toContain(light);
+    }
+    expect(scene.lights.map((light) => light.name).sort()).toEqual([
+      "arena-directional", "arena-hemisphere",
+    ]);
+    scene.dispose();
+    engine.dispose();
+  });
   it("produces exactly 2 lights: a HemisphericLight and a DirectionalLight", () => {
     const engine = new NullEngine();
     const scene = createFoundationScene(engine);
