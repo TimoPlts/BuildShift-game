@@ -19,6 +19,7 @@ Use Pi with the VIVES Qwen model as the interactive coding harness for future Bu
 
 - Persistent project memory consists of this file for changing status and `AGENTS.md` for stable collaboration rules.
 - Pi is configured outside this repository with a private VIVES model configuration. No credentials belong in this repository.
+- Future Pi work uses four isolated worker worktrees: shared contracts, server, client/networking, and UI/scene. The coordinator assigns tasks, collects reports, and owns shared memory updates.
 - Do not commit or push unless the user explicitly approves it.
 
 ## Progress and checks

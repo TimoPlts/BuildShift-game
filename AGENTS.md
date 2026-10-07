@@ -7,5 +7,6 @@
 - Record checks actually performed, their results, and what remains untested.
 - Keep memory concise and current. Replace outdated information rather than appending a transcript.
 - Keep changing task progress in `MEMORY.md`, separate from these collaboration rules.
+- In coordinated multi-worker work, the coordinator updates `MEMORY.md` from worker reports. Do not edit it from an individual worker task unless that task explicitly owns the memory update.
 - Never put passwords, API keys, access tokens, or other secrets in either file.
 - Ask before committing or pushing changes.
