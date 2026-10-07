@@ -30,6 +30,13 @@ export class ThirdPersonCameraController {
   private readonly lookTarget = new Vector3();
   private yaw = 0;
   private pitch = 0;
+  /**
+   * Transient vertical pitch nudge (radians) applied on top of the user's
+   * aim pitch for this frame. Driven by the combat camera-recoil module —
+   * it is set every frame by the runtime and is *not* persisted into
+   * {@link pitch}, so recoil never disturbs the player's aim state.
+   */
+  private pitchOffset = 0;
   private disposed = false;
 
   public constructor(scene: Scene) {
@@ -84,6 +91,23 @@ export class ThirdPersonCameraController {
   }
 
   /**
+   * Sets the transient vertical pitch nudge for the next {@link update}. The
+   * value is added to the aim pitch when the camera is positioned and does
+   * not modify the player's aim pitch itself. Defaults to `0` (no nudge).
+   */
+  public setPitchOffset(offset: number): void {
+    if (this.disposed) {
+      return;
+    }
+    this.pitchOffset = offset;
+  }
+
+  /** The current transient pitch nudge (for inspection / tests). */
+  public getPitchOffset(): number {
+    return this.pitchOffset;
+  }
+
+  /**
    * Repositions the camera behind and above the player for the current
    * yaw/pitch. `feetPosition` is the player's ground anchor.
    */
@@ -99,8 +123,10 @@ export class ThirdPersonCameraController {
       feetPosition.z,
     );
 
-    const horizontalDistance = distance * Math.cos(this.pitch);
-    const verticalOffset = distance * Math.sin(this.pitch);
+    // Fold in the transient (recoil) nudge without touching aim pitch.
+    const effectivePitch = this.pitch + this.pitchOffset;
+    const horizontalDistance = distance * Math.cos(effectivePitch);
+    const verticalOffset = distance * Math.sin(effectivePitch);
     const forwardX = Math.sin(this.yaw);
     const forwardZ = -Math.cos(this.yaw);
 
