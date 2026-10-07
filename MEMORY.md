@@ -6,13 +6,13 @@ BuildShift is a TypeScript pnpm monorepo for a server-authoritative multiplayer 
 
 ## Current goal
 
-Add small, client-only combat feedback to the production App → GameCanvas → GameRuntime → NetworkClient path: a local muzzle flash for accepted local shots and a center-screen hit marker only after an authoritative confirmed hit. Assault-rifle and shotgun muzzle flashes must differ. Gameplay rules and server authority must not change.
+The client-combat-feedback mission is complete: a local muzzle flash appears after an accepted local shot and a center-screen hit marker appears only after an authoritative hit event identifies the local session as the shooter. Assault-rifle and shotgun flashes differ, with no gameplay or authority changes.
 
 ## Agreed plan
 
-1. Build and test a self-cleaning Babylon combat-feedback component in the UI/scene worker worktree.
-2. Review that component, then have the client worker wire local accepted fire and the authoritative hit event through the canonical runtime/network path.
-3. Review the integrated diff, run the full test, typecheck, and build gates, then update this record with actual results.
+1. Build and test a self-cleaning Babylon combat-feedback component in the UI/scene worker worktree. Completed.
+2. Review that component, then have the client worker wire local accepted fire and the authoritative hit event through the canonical runtime/network path. Completed.
+3. Review the integrated diff, run the full test, typecheck, and build gates, then update this record with actual results. Completed.
 
 ## Decisions
 
@@ -31,10 +31,13 @@ Add small, client-only combat feedback to the production App → GameCanvas → 
 - The legacy visual-foundation mission completed with all eight tasks integrated. Its `integration/auto` result was merged into `main` locally.
 - After the merge, `pnpm test`, `pnpm typecheck`, and `pnpm build` all passed. The test output includes pre-existing Colyseus “message not registered” warnings; the commands still exited successfully.
 - The two memory files were reviewed and checked for trailing whitespace. No application code was changed for the memory setup itself.
-- Four clean Pi worker worktrees and a private controller were created. The controller can start, steer, inspect, interrupt, and stop the shared, server, client, and UI workers through tmux. No worker task or Pi editing session has been started yet.
+- Four clean Pi worker worktrees and a private controller were created. The controller can start, steer, inspect, interrupt, and stop the shared, server, client, and UI workers through tmux.
 - A non-editing VIVES Pi readiness request succeeded.
-- The combat-feedback mission is planned but implementation has not started. Browser/manual visual verification remains required after automated checks.
+- The combat-feedback mission used only the UI/scene and client workers. Their work was reviewed, integrated locally on `main` as `57b37d2`.
+- Added `CombatFeedback`, which owns its Babylon meshes, materials, and scene observer; it expires effects and disposes safely. Its focused NullEngine suite has 10 passing tests.
+- `GameRuntime` calls the component only after existing local `tryFire` success and after the existing authoritative `combat:hit` event confirms the local session as shooter. No server, protocol, damage, ammunition, fire-rate, hit-detection, or networking-authority code changed.
+- Final `pnpm test`, `pnpm typecheck`, and `pnpm build` all passed. Test output continues to include pre-existing Colyseus “message not registered” warnings. No browser/two-player visual smoke test was performed.
 
 ## Next step
 
-Review the UI worker's isolated component before assigning canonical client/runtime wiring.
+Optional manual two-player browser smoke test: verify the rifle’s smaller/shorter flash, the shotgun’s larger/longer flash, and that the hit marker appears only for confirmed hits by the local player.
