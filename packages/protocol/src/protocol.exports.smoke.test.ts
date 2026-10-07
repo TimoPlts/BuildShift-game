@@ -12,7 +12,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  // ─── Constants ─────────────────────────────────────────────────────
+  // ─── Constants ─────────────────────────────────────────────────────────────────────
   PROTOCOL_VERSION,
   PLAYER_INPUT_LIMITS,
   PLAYER_NETWORK_INPUT_LIMITS,
@@ -22,15 +22,15 @@ import {
   GAME_MODE_IDS,
   PlayerPositionSemantic,
 
-  // ─── Functions ─────────────────────────────────────────────────────
+  // ─── Functions ─────────────────────────────────────────────────────────────────────
   validatePlayerInputFrame,
   validatePlayerNetworkInput,
 
-  // ─── Schema classes ─────────────────────────────────────────────────
+  // ─── Schema classes ──────────────────────────────────────────────────────────────────
   PlayerStateSchema,
   RoomStateSchema,
 
-  // ─── Types (compile-time only — imported to verify they resolve) ──
+  // ─── Types (compile-time only — imported to verify they resolve) ───
   type PlayerInputFrame,
   type PlayerNetworkInput,
   type AuthoritativePlayerState,
@@ -46,7 +46,7 @@ import {
   type GameStateSchema,
 } from "./index.js";
 
-// ─── Compile-time type assertions ────────────────────────────────────────
+// ─── Compile-time type assertions ─────────────────────────────────────────────────────
 //
 // These are no-op assignments that the compiler checks. If any of the
 // imported types were removed or mistyped, `tsc` would emit an error
@@ -147,13 +147,12 @@ describe("protocol public exports — constants", () => {
     expect(EVENTS.PLAYER_INPUT).toBe("player:input");
   });
 
-  it("exposes GAME_MODES with the two-player-movement identifier", () => {
-    expect(GAME_MODES.TWO_PLAYER_MOVEMENT).toBe("two-player-movement");
+  it("exposes GAME_MODES with the box-fight identifier", () => {
+    expect(GAME_MODES.BOX_FIGHT).toBe("box-fight");
   });
 
   it("exposes GAME_MODE_IDS as a tuple of all valid mode identifiers", () => {
     expect(Array.isArray(GAME_MODE_IDS)).toBe(true);
-    expect(GAME_MODE_IDS).toContain("two-player-movement");
     expect(GAME_MODE_IDS).toContain("box-fight");
     expect(GAME_MODE_IDS).toContain("king-of-the-tower");
   });

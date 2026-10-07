@@ -1,0 +1,233 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Match Lifecycle Animations
+   ───────────────────────────────────────────────────────────────────
+   Top-level animation layer for the 1v1 Energy Box Fight match
+   lifecycle transitions. This file defines keyframe animations and
+   transition styles for the four lifecycle UI surfaces:
+
+     • CountdownOverlay  → countdown number pulse (each tick)
+     • RoundEndBanner    → round result slide-in
+     • MatchEndScreen    → final match result fade-in
+     • ScoreBar          → score-change highlight (pip pop + glow)
+
+   The keyframe names are intentionally distinct from the ones defined
+   in ./ui/match-lifecycle.css (countdown-pop, round-banner-in,
+   match-end-fade-in) so both stylesheets can coexist without
+   colliding.
+
+   Integration note:
+     Import this file AFTER ./ui/match-lifecycle.css so that these
+     animation declarations become the authoritative animation layer.
+     Because the animations target the exact class names the components
+     already render, no component markup or logic needs to change.
+     ═══════════════════════════════════════════════════════════════════ */
+
+/* ─────────────────────────────────────────────
+   1. CountdownOverlay — countdown number pulse
+   ─────────────────────────────────────────────
+   The `.countdown-overlay__number` element is remounted on every tick
+   (its React `key` is `remainingSeconds`), so the pulse re-triggers on
+   each 3 → 2 → 1 step. The number scales up with a soft settle and
+   stays visible until the next tick replaces it, reading as a
+   heartbeat "get ready" pulse. */
+
+@keyframes lifecycle-countdown-pulse {
+  0% {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.14);
+  }
+  55% {
+    transform: scale(0.98);
+  }
+  75% {
+    transform: scale(1.03);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.countdown-overlay__number {
+  animation: lifecycle-countdown-pulse 900ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* The "Get Ready" label gently fades up with the number so the whole
+   overlay feels like one coordinated pulse. */
+@keyframes lifecycle-countdown-label-in {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.countdown-overlay__label {
+  animation: lifecycle-countdown-label-in 600ms ease-out both;
+}
+
+/* ─────────────────────────────────────────────
+   2. RoundEndBanner — round result slide-in
+   ─────────────────────────────────────────────
+   The banner mounts when a round ends and is removed when the next
+   countdown / match ends, so the slide-in plays on every mount. The
+   banner is centered with `translate(-50%, -50%)`, so the keyframes
+   compose that centering transform with a vertical drop to preserve
+   horizontal centering throughout the motion. */
+
+@keyframes lifecycle-round-slide-in {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) translateY(-40px);
+  }
+  100% {
+    opacity: 1;
+    transform: translate(-50%, -50%) translateY(0);
+  }
+}
+
+.round-end-banner {
+  animation: lifecycle-round-slide-in 450ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* The winning/losing title gets a subtle delayed glow-in so the eye
+   lands on the result after the panel has settled in. */
+@keyframes lifecycle-banner-title-in {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.round-end-banner__title {
+  animation: lifecycle-banner-title-in 400ms ease-out 120ms both;
+}
+
+/* ─────────────────────────────────────────────
+   3. MatchEndScreen — final match result fade-in
+   ─────────────────────────────────────────────
+   The full-screen result overlay mounts once when the match ends. The
+   backdrop fades in, while the inner panel rises and scales up slightly
+   for a polished, layered entrance. */
+
+@keyframes lifecycle-match-fade-in {
+  0% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.match-end-screen {
+  animation: lifecycle-match-fade-in 300ms ease-out both;
+}
+
+@keyframes lifecycle-match-panel-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(14px) scale(0.97);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.match-end-screen__panel {
+  animation: lifecycle-match-panel-rise 550ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ─────────────────────────────────────────────
+   4. ScoreBar — score-change highlight
+   ─────────────────────────────────────────────
+   A round win is reflected by a pip gaining its `--won-local` /
+   `--won-remote` modifier class. Because that class is added dynamically
+   on each score change, a keyframe animation declared on it re-triggers
+   every time a new round is won — giving a "pop" + glow highlight that
+   requires no component changes. Per-player glow colors are supplied via
+   the `--score-glow` custom property, resolved per element inside the
+   keyframe. */
+
+@keyframes lifecycle-score-highlight {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgb(0 0 0 / 0);
+  }
+  35% {
+    transform: scale(1.45);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 12px 3px var(--score-glow, rgb(52 211 153 / 55%));
+  }
+}
+
+.score-bar__pip--won-local {
+  --score-glow: rgb(52 211 153 / 60%);
+  animation: lifecycle-score-highlight 550ms ease-out both;
+}
+
+.score-bar__pip--won-remote {
+  --score-glow: rgb(240 97 109 / 60%);
+  animation: lifecycle-score-highlight 550ms ease-out both;
+}
+
+/* A brief flash on the central numeric score readout. It plays on
+   mount and provides a smooth transition hook so any future class-
+   driven change animates cleanly. */
+@keyframes lifecycle-score-display-flash {
+  0% {
+    opacity: 0.35;
+    transform: scale(1.08);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.score-bar__score-display {
+  animation: lifecycle-score-display-flash 400ms ease-out both;
+  transition: color 200ms ease-out;
+}
+
+/* ─────────────────────────────────────────────
+   Accessibility — honor reduced-motion preference
+   ─────────────────────────────────────────────
+   When the user prefers reduced motion, drop the transforms and
+   settle each element to its final state immediately so content is
+   still fully visible without movement. */
+
+@media (prefers-reduced-motion: reduce) {
+  .countdown-overlay__number,
+  .countdown-overlay__label,
+  .round-end-banner,
+  .round-end-banner__title,
+  .match-end-screen,
+  .match-end-screen__panel,
+  .score-bar__pip--won-local,
+  .score-bar__pip--won-remote,
+  .score-bar__score-display {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+
+  /* Keep the round banner horizontally/vertically centered when its
+     slide-in transform is disabled. */
+  .round-end-banner {
+    transform: translate(-50%, -50%);
+  }
+}

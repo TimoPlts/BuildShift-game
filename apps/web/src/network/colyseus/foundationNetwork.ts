@@ -1,6 +1,5 @@
 import {
   EVENTS,
-  ROOMS,
   validatePlayerInputFrame,
   type PlayerInputFrame,
 } from "@buildshift/protocol";
@@ -56,14 +55,21 @@ export interface FoundationNetworkOptions {
   joinRoom: RoomJoiner;
 }
 
+/**
+ * The canonical room name for the Energy Box Fight production transport.
+ * Must match the server's TWO_PLAYER_MOVEMENT_ROOM constant.
+ */
+export const GAME_ROOM_NAME = "two-player-movement";
+
 const LOG_PREFIX = "[buildshift:network]";
 
 /**
- * The browser-side networking adapter for the Stage 2 foundation room.
+ * The browser-side networking adapter for the canonical gameplay room.
  *
- * Responsibilities (Stage 2B2):
- *  - connect to the game server and join `ROOMS.FOUNDATION` once. Auto
- *    reconnect is deliberately disabled (the SDK re-enables it by default).
+ * Responsibilities:
+ *  - connect to the game server and join the canonical "two-player-movement"
+ *    room once. Auto reconnect is deliberately disabled (the SDK re-enables
+ *    it by default).
  *  - track and expose a small, immutable {@link NetworkUiState} that the dev
  *    status UI observes (status, room/session ids, player count, players,
  *    error) via a plain subscribe/getSnapshot pair — no Colyseus types leak
@@ -101,8 +107,8 @@ export class FoundationNetwork {
   }
 
   /**
-   * Begin connecting and join the foundation room. Idempotent: calling it more
-   * than once is a no-op. A failure to connect (e.g. the server is not
+   * Begin connecting and join the canonical gameplay room. Idempotent: calling
+   * it more than once is a no-op. A failure to connect (e.g. the server is not
    * running) never throws to the caller — it is surfaced as an error in the
    * UI state so the rest of the game keeps running.
    */
@@ -113,7 +119,7 @@ export class FoundationNetwork {
     this.started = true;
     this.applyEvent("join-started");
 
-    this.joinRoom(ROOMS.FOUNDATION)
+    this.joinRoom(GAME_ROOM_NAME)
       .then((room) => {
         if (this.disposed) {
           // Disposed while the join was in flight: tear it down and stop.
@@ -126,7 +132,7 @@ export class FoundationNetwork {
         if (this.disposed) {
           return;
         }
-        console.warn(`${LOG_PREFIX} failed to join ${ROOMS.FOUNDATION}:`, error);
+        console.warn(`${LOG_PREFIX} failed to join ${GAME_ROOM_NAME}:`, error);
         this.error = describeError(error);
         this.applyEvent("disconnected");
       });

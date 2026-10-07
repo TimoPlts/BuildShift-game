@@ -10,6 +10,11 @@ import { THIRD_PERSON_CAMERA } from "./cameraConfig";
  * - positive yaw rotates forward toward +X
  * - forward vector at yaw θ is (sin θ, 0, -cos θ)
  *
+ * Because the camera-right direction at yaw 0 is world -X (not +X),
+ * **decreasing** yaw turns the camera visually right. This matches the
+ * movement math in `movementInputToWorld` where camera-right maps to
+ * world -X at yaw 0.
+ *
  * Pitch is measured from the horizontal: positive pitch looks upward.
  *
  * The camera is a plain `UniversalCamera` whose position and target are set
@@ -39,15 +44,26 @@ export class ThirdPersonCameraController {
   /**
    * Applies accumulated pointer-lock mouse movement (pixels) to yaw/pitch.
    * Sensitivity is per pixel — never per frame, so the feel is independent
-   * of the frame rate. Vertical movement is inverted in the standard
-   * game-camera direction: mouse up looks up, mouse down looks down.
+   * of the frame rate.
+   *
+   * **Horizontal:** positive `deltaXPixels` (mouse right) decreases yaw,
+   * turning the camera visually right. This is because the camera-right
+   * direction at yaw 0 is world -X (see `movementInputToWorld`), so
+   * decreasing yaw rotates the forward vector toward -X.
+   *
+   * **Vertical:** positive `deltaYPixels` (mouse down) decreases pitch
+   * (looks down). The minus sign inverts the raw pointer value so that
+   * mouse up looks up and mouse down looks down (standard game-camera
+   * convention).
    */
   public applyLook(deltaXPixels: number, deltaYPixels: number): void {
     if (this.disposed) {
       return;
     }
 
-    this.yaw += deltaXPixels * THIRD_PERSON_CAMERA.mouseSensitivity;
+    // Mouse right (positive deltaX) → decrease yaw → turn visually right.
+    this.yaw -= deltaXPixels * THIRD_PERSON_CAMERA.mouseSensitivity;
+    // Mouse up (negative deltaY) → increase pitch → look up.
     this.pitch -= deltaYPixels * THIRD_PERSON_CAMERA.mouseSensitivity;
     this.pitch = clamp(
       this.pitch,

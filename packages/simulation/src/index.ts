@@ -22,7 +22,7 @@ export { stepFullMovement } from "./movement/verticalMovement.js";
 // game-server / web-app integrations).
 export { stepVerticalMovement as stepVerticalState } from "./movement/verticalMovement.js";
 
-// ───── Canonical player movement step (Stage 2D consolidated) ─────
+// ─────── Canonical player movement step (Stage 2D consolidated) ───────
 
 export {
   stepPlayerMovement,
@@ -47,7 +47,7 @@ export type {
   WorldMovementInput,
 } from "./movement/types.js";
 
-// ───── Combat (canonical hitscan contract) ─────
+// ─────── Combat (canonical hitscan contract) ───────
 
 export {
   rayIntersectsCapsule,
@@ -70,6 +70,29 @@ export {
   type FireGateRejectionReason,
 } from "./combat/fireGate.js";
 
+// ─────── Combat (1v1 Energy Box Fight: shotgun pellet spread) ───────
+
+export {
+  degreesToRadians,
+  computePelletSpreadAngles,
+  computePelletDirections,
+} from "./combat/pelletSpread.js";
+
+// ─────── Combat (1v1 Energy Box Fight T1: shotgun spread from weapon config) ───────
+
+export {
+  computeShotgunPelletDirections,
+  type ShotgunSpreadWeapon,
+} from "./combat/shotgunSpread.js";
+
+// ─────── Round / match lifecycle state machine ───────
+
+export {
+  advanceRoundState,
+  type RoundEvent,
+  type RoundTransition,
+} from "./round-state-machine.js";
+
 /**
  * Version of the simulation rules. Client and server must stay synchronized on
  * this (see docs/TECHNICAL_ARCHITECTURE.md §18 "Physics and Prediction Rule").
@@ -84,3 +107,4 @@ export const SIMULATION_VERSION = "0.2.0" as const;
 export function gameConfigVersion(): string {
   return GAME_CONFIG_VERSION;
 }
+export { computeShotgunSpread } from "./combat/weaponSimulation.js";

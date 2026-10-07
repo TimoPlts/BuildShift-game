@@ -8,13 +8,7 @@
  * the room registry (server) and the client's room joiner both use.
  */
 export const GAME_MODES = {
-  /**
-   * Two-player authoritative movement: the canonical Stage 2D multiplayer
-   * movement room. Both players share the same arena; the server is the
-   * sole authority on position and velocity.
-   */
-  TWO_PLAYER_MOVEMENT: "two-player-movement",
-  /** Legacy box-fight mode (placeholder for future content). */
+  /** The canonical Energy Box Fight mode. */
   BOX_FIGHT: "box-fight",
   /** Legacy king-of-the-tower mode (placeholder for future content). */
   KING_OF_THE_TOWER: "king-of-the-tower",

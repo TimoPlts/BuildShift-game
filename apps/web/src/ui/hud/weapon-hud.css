@@ -1,0 +1,155 @@
+/* ── Weapon HUD (bottom-left overlay for local weapon status) ──
+ *
+ * Unobtrusive, semi-transparent, small-font. Positioned at the very
+ * bottom-left so it stacks cleanly below the Energy HUD (which sits at
+ * bottom: 4.5rem) without overlapping it.
+ */
+
+.weapon-hud {
+  position: absolute;
+  left: 1rem;
+  bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 15rem;
+  padding: 0.55rem 0.75rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 18 / 72%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ── Weapon-slot indicator: a row of compact chips ── */
+.weapon-hud__slots {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.weapon-hud__slot {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 5%);
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+
+.weapon-hud__slot-glyph {
+  font-size: 0.7rem;
+  line-height: 1;
+  color: #6b7280;
+}
+
+.weapon-hud__slot-name {
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #8b93a7;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Active slot: highlighted */
+.weapon-hud__slot--active {
+  border-color: rgb(103 232 249 / 55%);
+  background: rgb(103 232 249 / 12%);
+}
+
+.weapon-hud__slot--active .weapon-hud__slot-glyph,
+.weapon-hud__slot--active .weapon-hud__slot-name {
+  color: #67e8f9;
+}
+
+/* ── Active weapon row: name (left) + ammo counter (right) ── */
+.weapon-hud__active {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.weapon-hud__name {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #e6e8ee;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+/* ── Ammo counter: magazine / reserve ── */
+.weapon-hud__ammo {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.15rem;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+
+/* Magazine count — primary, bold */
+.weapon-hud__ammo-magazine {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #e6e8ee;
+}
+
+/* Separator between magazine and reserve */
+.weapon-hud__ammo-separator {
+  font-size: 0.75rem;
+  font-weight: 400;
+  color: #8b93a7;
+}
+
+/* Reserve count — secondary, smaller */
+.weapon-hud__ammo-reserve {
+  font-size: 0.72rem;
+  font-weight: 500;
+  color: #8b93a7;
+}
+
+/*
+ * Empty magazine (reserve may still have rounds):
+ * magazine turns amber/warning, reserve stays secondary.
+ */
+.weapon-hud__ammo--low .weapon-hud__ammo-magazine {
+  color: #fbbf24;
+}
+
+/*
+ * Fully empty (no magazine ammo AND no reserve ammo):
+ * both counts turn red to signal "out of ammo — reload required or weapon
+ * exhausted".
+ */
+.weapon-hud__ammo--empty .weapon-hud__ammo-magazine,
+.weapon-hud__ammo--empty .weapon-hud__ammo-reserve,
+.weapon-hud__ammo--empty .weapon-hud__ammo-separator {
+  color: #f0616d;
+}
+
+/* ── Reload progress bar (thin, below the ammo) ── */
+.weapon-hud__reload-track {
+  width: 100%;
+  height: 6px;
+  background: rgb(0 0 0 / 55%);
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.weapon-hud__reload-fill {
+  height: 100%;
+  background: #22d3ee;
+  border-radius: 3px;
+  transition: width 120ms linear;
+}

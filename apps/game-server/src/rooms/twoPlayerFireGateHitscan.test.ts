@@ -19,6 +19,7 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
 import {
+  MatchPhase,
   EVENTS,
   type FireRejectedEvent,
   type HealthUpdateEvent,
@@ -147,6 +148,14 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
     await waitForState(roomA, both);
     await waitForState(roomB, both);
 
+    // The room runs a pre-round COUNTDOWN before combat is allowed. Wait for
+    // the round to be IN_PROGRESS so fire inputs are processed.
+    await waitForState(
+      roomA,
+      (s) => (s as Record<string, any>)?.matchPhase === MatchPhase.IN_PROGRESS,
+      8000,
+    );
+
     roomA.onMessage(EVENTS.FIRE_REJECTED, (m) => fireRejected.push(m as FireRejectedEvent));
     roomA.onMessage(EVENTS.HEALTH_UPDATE, (m) => healthUpdates.push(m as HealthUpdateEvent));
     roomA.onMessage(EVENTS.HIT, (m) => hits.push(m as HitResultEvent));
@@ -193,6 +202,7 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
   });
 
   it("(b) a valid in-range fire-intent applies the correct damage", async () => {
+    await wait(350); // Server-clock cooldown cannot be skipped by sequence jumps.
     // B: shield = MAX_SHIELD - DMG (30), health = 100. seq 20 (20-10=10>=8) ok.
     const healthBefore = healthUpdates.length;
     const hitsBefore = hits.length;
@@ -219,6 +229,7 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
   });
 
   it("(c) emits a HEALTH_UPDATE event with the target's new health/shield", async () => {
+    await wait(350);
     // B: shield = MAX_SHIELD - 2*DMG (10), health = 100. seq 30 (30-20=10>=8) ok.
     // Shield (10) absorbs 10; `DMG - 10` overflows → health 100 → 90.
     const shieldBefore = MAX_SHIELD - 2 * DMG; // 10
@@ -246,6 +257,7 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
   });
 
   it("(d) triggers elimination and emits ELIMINATED when health reaches 0", async () => {
+    await wait(350);
     // B: shield = 0, health = 90. 5 more shots (5×DMG=100>90) at 10-tick gaps.
     let seq = 40;
     for (let i = 0; i < 5; i += 1) {

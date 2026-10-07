@@ -13,7 +13,8 @@
  *  - create/dispose a kinematic character body + capsule collider + character
  *    controller per player;
  *  - resolve each player's desired translation against the arena via that
- *    player's character controller.
+ *    player's character controller;
+ *  - add/remove static collision bodies for placed structures.
  *
  * Deliberately low-level, exactly like the browser layer: it knows how to move
  * one player's collider by a desired translation and report the resulting
@@ -64,11 +65,24 @@ export interface Translation3 {
   z: number;
 }
 
+/** World-space half-extents of a cuboid collider. */
+export interface HalfExtents3 {
+  x: number;
+  y: number;
+  z: number;
+}
+
 /** The per-player physics handle the room stores and drives. */
 interface PlayerPhysics {
   body: RigidBody;
   collider: Collider;
   controller: ReturnType<World["createCharacterController"]>;
+}
+
+/** A static structure collision body tracked by the physics world. */
+interface StructurePhysics {
+  body: RigidBody;
+  collider: Collider;
 }
 
 /**
@@ -81,6 +95,8 @@ export class ServerPhysicsWorld {
   /** Maps a player collider back to its owner so other players' character
    * movement queries can exclude it (task §8). */
   private readonly colliderOwner = new Map<Collider, string>();
+  /** Per-structure static collision bodies, keyed by structure id. */
+  private readonly structures = new Map<string, StructurePhysics>();
   private readonly scratch: Translation3 = { x: 0, y: 0, z: 0 };
   private disposed = false;
 
@@ -229,6 +245,53 @@ export class ServerPhysicsWorld {
     return { x: t.x, y: t.y, z: t.z };
   }
 
+  // ─── Structure collision bodies ──────────────────────────────────────────────
+
+  /**
+   * Adds a static collision body for a placed structure. The collider is a
+   * cuboid centered at `center` with the given `halfExtents` (metres).
+   *
+   * No-op if a structure body already exists for `structureId`.
+   */
+  public addStructureCollider(
+    structureId: string,
+    center: Readonly<Translation3>,
+    halfExtents: Readonly<HalfExtents3>,
+  ): void {
+    if (this.disposed || this.structures.has(structureId)) {
+      return;
+    }
+
+    const body = this.world.createRigidBody(RigidBodyDesc.fixed());
+    body.setTranslation({ x: center.x, y: center.y, z: center.z }, true);
+
+    const colliderDesc = ColliderDesc.cuboid(
+      halfExtents.x,
+      halfExtents.y,
+      halfExtents.z,
+    );
+    const collider = this.world.createCollider(colliderDesc, body);
+
+    this.structures.set(structureId, { body, collider });
+  }
+
+  /**
+   * Removes a structure's collision body from the physics world.
+   * Idempotent and safe to call after {@link dispose}.
+   */
+  public removeStructureCollider(structureId: string): void {
+    const structure = this.structures.get(structureId);
+    if (!structure) {
+      return;
+    }
+    if (!this.disposed) {
+      this.world.removeRigidBody(structure.body);
+    }
+    this.structures.delete(structureId);
+  }
+
+  // ─── Lifecycle ───────────────────────────────────────────────────────────────
+
   /**
    * Removes a player's physics handle (controller, body, and its collider).
    * Idempotent and safe to call after {@link dispose}.
@@ -248,8 +311,9 @@ export class ServerPhysicsWorld {
   }
 
   /**
-   * Frees the whole world (and any remaining player handles). Idempotent —
-   * safe to call from both `onDispose` and per-player cleanup.
+   * Frees the whole world (and any remaining player handles and structure
+   * bodies). Idempotent — safe to call from both `onDispose` and per-player
+   * cleanup.
    */
   public dispose(): void {
     if (this.disposed) {
@@ -260,9 +324,14 @@ export class ServerPhysicsWorld {
     for (const player of this.players.values()) {
       this.world.removeCharacterController(player.controller);
     }
+    // Remove all structure bodies.
+    for (const structure of this.structures.values()) {
+      this.world.removeRigidBody(structure.body);
+    }
     this.world.free();
     this.players.clear();
     this.colliderOwner.clear();
+    this.structures.clear();
     this.disposed = true;
   }
 }

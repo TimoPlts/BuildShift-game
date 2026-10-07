@@ -28,6 +28,51 @@
  * `HitEventPayload`, the shared `WeaponId` vocabulary, and the authoritative
  * `health` / `shield` / `energy` / `ammo` / `lastFireSequence` /
  * `isEliminated` fields on `PlayerStateSchema`.
+ *
+ * The building milestone adds the transport-neutral, server-authoritative
+ * building contract: the `BuildType` vocabulary (wall / floor / ramp / cone),
+ * the grid-snapped `StructurePlacementIntent`, the authoritative
+ * `StructureState` / `BuildingState`, the `BUILD_EVENTS` identifiers, and the
+ * structural `validateStructurePlacementIntent` guard.
+ *
+ * The Energy economy milestone adds the shared Energy limits, regeneration,
+ * per-build cost contract, structure durability state, and the
+ * `ENERGY_EVENTS` / `StructureDamageEvent` / `StructureDestroyedEvent`
+ * payloads along with pure deterministic helpers
+ * (`computeEnergyAfterRegeneration`, `canAffordBuild`,
+ * `computeEnergyAfterBuild`, `applyStructureDamage`,
+ * `isStructureDestroyed`).
+ *
+ * The 1v1 Energy Box Fight milestone adds the first slice of the shotgun /
+ * weapon-switching / reloading / build-editing contract: the
+ * `WeaponSwitch` / `StartReload` client→server messages, the
+ * `currentWeapon` + per-weapon `weapons` state on `PlayerStateSchema` /
+ * `AuthoritativePlayerState` (and the `WeaponAmmoStateSchema` wire schema),
+ * the `BuildEdit` / `BuildEditResult` messages with the structure `openings`
+ * vocabulary, and the shared pellet-spread helpers in `@buildshift/simulation`.
+ *
+ * The 1v1 Energy Box Fight T1 slice adds, *additively*:
+ *  - the player-addressed weapon-switch / reload *request* messages
+ *    (`WeaponSwitchRequest` / `ReloadRequest`) and the server→client
+ *    `WeaponState` payload;
+ *  - the first server-authoritative *cell-based* build-editing request
+ *    (`BuildEditRequest`, `cellIndex` 0–8, `action` = `"remove"`) alongside
+ *    the existing pattern-based `BuildEdit`.
+ *
+ * The 1v1 Energy Box Fight T1 weapon + build-edit protocol adds,
+ * *additively*:
+ *  - the `WeaponType` union and `WEAPON_TYPES` tuple;
+ *  - the `SwitchWeaponRequest` / `FireRequest` client→server messages;
+ *  - the `WeaponStateUpdate` / `FireResult` server→client messages;
+ *  - the `BuildEditType` union, `BuildEditCommand` for the
+ *    server-authoritative build-editing slice.
+ *
+ * The timed-match and rematch lifecycle contract adds, *additively*:
+ *  - the `RoundEndReason` union and `ROUND_END_REASONS` tuple;
+ *  - the `RoundTimerState` / `AntiStallState` interfaces;
+ *  - the `RoundEndResult` / `MatchEndResult` / `RematchRequest` payloads;
+ *  - the `MATCH_LIFECYCLE_EVENTS` event identifiers and
+ *    `RematchAcceptedPayload`.
  */
 
 export { PROTOCOL_VERSION } from "./version.js";
@@ -56,11 +101,12 @@ export {
 export {
   PlayerPositionSemantic,
   type AuthoritativePlayerState,
+  type WeaponAmmoState,
 } from "./state/playerState.js";
 
 export { ROOMS, type RoomType } from "./rooms/rooms.js";
 
-// ───── Weapon vocabulary (canonical hitscan combat) ─────
+// ───── Weapon vocabulary (canonical hitscan combat) ─────────────────────
 export {
   WEAPON_IDS,
   isWeaponId,
@@ -80,7 +126,7 @@ export {
   type HitEventPayload,
 } from "./events/index.js";
 
-// ───── Stage 2D: Colyseus wire schemas ─────
+// ───── Stage 2D: Colyseus wire schemas ─────────────────────────────────
 
 export {
   PlayerStateSchema,
@@ -88,9 +134,11 @@ export {
   type MovementInput,
   RoomStateSchema,
   type RoomStateSchemaInstance,
+  WeaponAmmoStateSchema,
+  type WeaponAmmoStateSchemaInstance,
 } from "./schemas/index.js";
 
-// ───── Stage 2D (consolidated): canonical movement contract ─────
+// ───── Stage 2D (consolidated): canonical movement contract ─────────────
 
 export {
   type PlayerNetworkState,
@@ -105,6 +153,141 @@ export {
   GAME_MODE_IDS,
   type GameModeId,
 } from "./gameModes.js";
+
+// ───── Match / round protocol (1v1 match loop) ──────────────────────────
+
+export {
+  MatchPhase,
+  type RoundResult,
+  RoundResultSchema,
+  type RoundResultSchemaInstance,
+  RoundScoreSchema,
+  type RoundScoreSchemaInstance,
+} from "./match.js";
+
+// ───── Round / match lifecycle state protocol ───────────────────────────
+
+export {
+  RoundState,
+  type MatchState,
+  type RoundResetPayload,
+  GameState,
+  type CountdownState,
+  type RoundScore,
+  type MatchResult,
+  FIRST_TO_N,
+} from "./round-state.js";
+
+// ───── Building contract (server-authoritative multiplayer building) ─────
+
+export {
+  BUILD_TYPES,
+  isBuildType,
+  type BuildType,
+  GRID_ROTATIONS,
+  isGridRotation,
+  type GridRotation,
+  type GridPosition,
+  type StructurePlacementIntent,
+  STRUCTURE_PLACEMENT_INTENT_LIMITS,
+  type StructureState,
+  type BuildingState,
+  OPENING_PATTERNS,
+  isStructureOpeningPattern,
+  type StructureOpeningPattern,
+  type StructureOpening,
+  BUILD_EVENTS,
+  type BuildEventName,
+  type BuildRejectionReason,
+  type StructurePlacedEvent,
+  type StructureRejectedEvent,
+  validateStructurePlacementIntent,
+} from "./building.js";
+
+// ───── Energy economy & structure durability contract ───────────────────
+
+export {
+  ENERGY_LIMITS,
+  type EnergyState,
+  STRUCTURE_DURABILITY_LIMITS,
+  type StructureDurabilityState,
+  ENERGY_EVENTS,
+  type EnergyEventName,
+  type EnergyUpdateEvent,
+  type StructureDamageEvent,
+  type StructureDestroyedEvent,
+  type BuildEnergyCost,
+  computeEnergyAfterRegeneration,
+  canAffordBuild,
+  computeEnergyAfterBuild,
+  applyStructureDamage,
+  isStructureDestroyed,
+} from "./energy.js";
+
+// ───── Energy Box Fight: weapon switch + reload messages ────────────────
+
+export {
+  type WeaponSwitch,
+  type StartReload,
+} from "./messages/weaponMessages.js";
+
+// ───── Energy Box Fight T1: weapon-switch / reload requests + weapon state ─────
+
+export {
+  type WeaponSwitchRequest,
+  type ReloadRequest,
+  type WeaponState,
+} from "./messages/weaponRequestMessages.js";
+
+// ───── Energy Box Fight: server-authoritative build editing ─────────────
+
+export {
+  BUILD_EDIT_EVENTS,
+  type BuildEditEventName,
+  type BuildEdit,
+  type BuildEditResult,
+  BUILD_CELL_INDEX_MIN,
+  BUILD_CELL_INDEX_MAX,
+  BUILD_CELL_INDEX_LIMITS,
+  isBuildCellIndex,
+  type BuildCellIndex,
+  type BuildEditAction,
+  type BuildEditRequest,
+} from "./messages/buildEditMessages.js";
+
+// ───── 1v1 Energy Box Fight T1: weapon + build-edit protocol ────────────
+
+export {
+  WEAPON_TYPES,
+  isWeaponType,
+  type WeaponType,
+  type SwitchWeaponRequest,
+  type Vec3,
+  type FireRequest,
+  type WeaponStateUpdate,
+  type FireHit,
+  type FireResult,
+  BUILD_EDIT_TYPES,
+  isBuildEditType,
+  type BuildEditType,
+  type BuildEditCommand,
+} from "./messages/energyBoxFightMessages.js";
+
+// ───── Timed-match and rematch lifecycle contract ───────────────────────
+
+export {
+  type RoundEndReason,
+  ROUND_END_REASONS,
+  isRoundEndReason,
+  type RoundTimerState,
+  type AntiStallState,
+  type RoundEndResult,
+  type MatchEndResult,
+  type RematchRequest,
+  MATCH_LIFECYCLE_EVENTS,
+  type MatchLifecycleEventName,
+  type RematchAcceptedPayload,
+} from "./matchLifecycle.js";
 
 /** Logical game mode identifiers (legacy union type, kept for compat). */
 export type GameMode = "box-fight" | "king-of-the-tower";

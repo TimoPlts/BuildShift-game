@@ -22,7 +22,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
-import type { PlayerNetworkInput } from "@buildshift/protocol";
+import { MatchPhase, type PlayerNetworkInput } from "@buildshift/protocol";
 
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
@@ -31,7 +31,7 @@ import {
   TWO_PLAYER_MOVEMENT_INPUT,
 } from "./TwoPlayerMovementRoom.js";
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -146,7 +146,7 @@ function makeFireInput(sequence: number): PlayerNetworkInput {
   };
 }
 
-// ─── Test suite ─────────────────────────────────────────────────────────────
+// ─── Test suite ───────────────────────────────────────────────────────────────
 
 describe("Canonical gameplay path — integration contract", () => {
   let server: GameServer;
@@ -186,6 +186,14 @@ describe("Canonical gameplay path — integration contract", () => {
       roomB,
       (s) => hasPlayer(s, roomA.sessionId) && hasPlayer(s, roomB.sessionId),
     );
+
+    // The room runs a pre-round COUNTDOWN before combat is allowed. Wait for
+    // the round to be IN_PROGRESS so fire inputs are processed.
+    await waitForState(
+      roomA,
+      (s) => (s as Record<string, any>)?.matchPhase === MatchPhase.IN_PROGRESS,
+      8000,
+    );
   }, 20_000);
 
   afterAll(async () => {
@@ -197,7 +205,7 @@ describe("Canonical gameplay path — integration contract", () => {
     await withDeadline(shutdownServer(server), 8_000, "shutdown");
   }, 20_000);
 
-  // ── 1. Distinct spawn positions ────────────────────────────────────────
+  // ─── 1. Distinct spawn positions ────────────────────────────────────────────
 
   it("both clients receive distinct spawn positions from the authoritative state", () => {
     const a = getPlayer(roomA.state, roomA.sessionId)!;
@@ -239,7 +247,7 @@ describe("Canonical gameplay path — integration contract", () => {
     expect(bInB.health).toBe(b.health);
   });
 
-  // ── 2. Primary-fire input causes server-authoritative damage ──────────
+  // ─── 2. Primary-fire input causes server-authoritative damage ───────────────
 
   it("client A's primary-fire input decrements client B's health in the authoritative state", async () => {
     // Record B's initial combat state.
@@ -297,7 +305,7 @@ describe("Canonical gameplay path — integration contract", () => {
     expect(aAfter.lastFireSequence).toBe(50);
   });
 
-  // ── 3. Client-facing state reflects both players' health correctly ────
+  // ─── 3. Client-facing state reflects both players' health correctly ─────────
 
   it("the client-facing state reflects both players' health correctly (HealthHud contract)", async () => {
     // Both clients should agree on the authoritative health values.

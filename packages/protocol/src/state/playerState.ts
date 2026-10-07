@@ -8,13 +8,40 @@
  * - horizontal facing needed for rendering (`yaw`),
  * - acknowledging the most recently processed input (`acknowledgedSequence`).
  *
- * Deliberately minimal: no health, weapons, building, ranking, energy, ammo,
- * etc. Those belong to later game-mode contracts.
+ * The 1v1 Energy Box Fight milestone extends it with the player's *weapon*
+ * state: the active {@link WeaponId} (`currentWeapon`) and a per-weapon
+ * {@link weapons} record (magazine / reserve ammo and reload progress), so
+ * clients can render the correct weapon, its ammo, and any reload animation.
+ * The full authoritative combat fields (health, shield, energy, elimination)
+ * live on the Colyseus wire schema (`PlayerStateSchema`); this plain view
+ * mirrors the fields the movement + weapon contracts need.
  *
  * NOTE: this is a *contract / plain-data* shape. The future server may
  * implement an equivalent Colyseus `Schema` class that conforms to it; this
  * package intentionally does not depend on `@colyseus/schema`.
  */
+import type { WeaponId } from "../weapons.js";
+
+/**
+ * The authoritative ammo + reload state of a single weapon carried by a
+ * player. One entry per weapon the player carries, keyed by weapon id on
+ * {@link AuthoritativePlayerState.weapons}.
+ */
+export interface WeaponAmmoState {
+  /** Rounds currently loaded in this weapon's magazine. */
+  magazineAmmo: number;
+  /** Rounds available to reload the magazine. */
+  reserveAmmo: number;
+  /** `true` while this weapon is in the middle of a reload. */
+  isReloading: boolean;
+  /**
+   * Reload progress, in `[0, 1]`. `0` when not reloading (or a reload just
+   * started); `1` when the reload is complete. Ignored while
+   * {@link isReloading} is `false`.
+   */
+  reloadProgress: number;
+}
+
 export interface AuthoritativePlayerState {
   /**
    * Stable identifier for this player/session within the room. Chosen by the
@@ -51,6 +78,23 @@ export interface AuthoritativePlayerState {
    * "none processed yet" (before the first input round-trip).
    */
   acknowledgedSequence: number;
+
+  /**
+   * The weapon the player currently has equipped (the "active" weapon).
+   * Switching weapons (see the `WeaponSwitch` message) updates this field so
+   * it syncs to all clients.
+   */
+  currentWeapon: WeaponId;
+
+  /**
+   * Per-weapon ammo + reload state, keyed by weapon id.
+   *
+   * One {@link WeaponAmmoState} entry per weapon the player carries (typically
+   * one entry per entry in the shared weapon roster). Keys are the
+   * {@link WeaponId} values (`"shotgun"` / `"assault_rifle"`); a weapon the
+   * player does not carry is simply absent from the record (hence `Partial`).
+   */
+  weapons: Partial<Record<WeaponId, WeaponAmmoState>>;
 }
 
 /**
