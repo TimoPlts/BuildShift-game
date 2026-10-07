@@ -32,7 +32,9 @@ Use Pi with the VIVES Qwen model as the interactive coding harness for future Bu
 - The legacy visual-foundation mission completed with all eight tasks integrated. Its `integration/auto` result was merged into `main` locally.
 - After the merge, `pnpm test`, `pnpm typecheck`, and `pnpm build` all passed. The test output includes pre-existing Colyseus “message not registered” warnings; the commands still exited successfully.
 - The two memory files were reviewed and checked for trailing whitespace. No application code was changed for the memory setup itself.
+- Four clean Pi worker worktrees and a private controller were created. The controller can start, steer, inspect, interrupt, and stop the shared, server, client, and UI workers through tmux. No worker task or Pi editing session has been started yet.
+- A non-editing VIVES Pi readiness request succeeded.
 
 ## Next step
 
-Agree on the first small Pi task before changing source code.
+Agree on the first Pi mission before changing source code. The coordinator will split it only when independent work is safe.
