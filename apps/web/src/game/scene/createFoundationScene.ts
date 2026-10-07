@@ -1,6 +1,5 @@
 import type { Engine } from "@babylonjs/core/Engines/engine";
-import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
-import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
@@ -10,9 +9,13 @@ import {
   type ArenaCollider,
 } from "@buildshift/game-config";
 import {
+  ARENA_PALETTE,
   getArenaMaterialKind,
+  setupArenaLighting,
   type ArenaMaterialKind,
 } from "./arena";
+import { setupArenaSky } from "./arenaSky";
+import { setupArenaDecorations } from "./arenaDecorations";
 
 /**
  * Creates the foundation scene: lighting plus the arena geometry.
@@ -31,15 +34,11 @@ import {
  */
 export function createFoundationScene(engine: Engine): Scene {
   const scene = new Scene(engine);
-  scene.clearColor = new Color4(0.055, 0.07, 0.1, 1);
 
-  const light = new HemisphericLight(
-    "foundation-light",
-    new Vector3(0.25, 1, 0.2),
-    scene,
-  );
-  light.intensity = 0.9;
-  light.groundColor = new Color3(0.08, 0.1, 0.14);
+  // Wire in independent visual modules: sky/background, lighting, decorations.
+  setupArenaSky(scene);
+  setupArenaLighting(scene);
+  setupArenaDecorations(scene);
 
   for (const collider of ARENA_COLLIDERS) {
     buildArenaObject(scene, collider, getArenaMaterialKind(collider.id));
@@ -76,11 +75,11 @@ function getMaterial(scene: Scene, kind: ArenaMaterialKind): StandardMaterial {
   const material = new StandardMaterial(`${kind}-material`, scene);
   switch (kind) {
     case "ground":
-      material.diffuseColor = new Color3(0.18, 0.23, 0.3);
+      material.diffuseColor = ARENA_PALETTE.groundColor;
       material.specularColor = new Color3(0.04, 0.05, 0.07);
       break;
     case "accent":
-      material.diffuseColor = new Color3(0.12, 0.55, 0.78);
+      material.diffuseColor = ARENA_PALETTE.accentColor;
       break;
     case "neutral":
       // Muted grey-blue used by the Stage 1E test obstacles so they read as
