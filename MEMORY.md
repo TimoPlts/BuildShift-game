@@ -6,14 +6,13 @@ BuildShift is a TypeScript pnpm monorepo for a server-authoritative multiplayer 
 
 ## Current goal
 
-Finish the remaining legacy visual mission immediately: preserve worker changes, fix the lighting disposal regression, complete production wiring and verification, and run normal integration gates. User approved committing and pushing task branches; main remains unchanged.
-
-Use Pi with the VIVES Qwen model as the interactive coding harness for future BuildShift work. The user directs the work through Codex; no source-code task has yet been agreed for Pi.
+Add small, client-only combat feedback to the production App → GameCanvas → GameRuntime → NetworkClient path: a local muzzle flash for accepted local shots and a center-screen hit marker only after an authoritative confirmed hit. Assault-rifle and shotgun muzzle flashes must differ. Gameplay rules and server authority must not change.
 
 ## Agreed plan
 
-1. Completed: the legacy visual-foundation mission reached completion and was merged into `main`.
-2. For the next agreed feature, discuss a small plan before editing, then use Pi and keep this file current.
+1. Build and test a self-cleaning Babylon combat-feedback component in the UI/scene worker worktree.
+2. Review that component, then have the client worker wire local accepted fire and the authoritative hit event through the canonical runtime/network path.
+3. Review the integrated diff, run the full test, typecheck, and build gates, then update this record with actual results.
 
 ## Decisions
 
@@ -34,7 +33,8 @@ Use Pi with the VIVES Qwen model as the interactive coding harness for future Bu
 - The two memory files were reviewed and checked for trailing whitespace. No application code was changed for the memory setup itself.
 - Four clean Pi worker worktrees and a private controller were created. The controller can start, steer, inspect, interrupt, and stop the shared, server, client, and UI workers through tmux. No worker task or Pi editing session has been started yet.
 - A non-editing VIVES Pi readiness request succeeded.
+- The combat-feedback mission is planned but implementation has not started. Browser/manual visual verification remains required after automated checks.
 
 ## Next step
 
-Agree on the first Pi mission before changing source code. The coordinator will split it only when independent work is safe.
+Review the UI worker's isolated component before assigning canonical client/runtime wiring.
