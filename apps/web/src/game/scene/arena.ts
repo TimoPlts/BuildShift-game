@@ -12,6 +12,10 @@
  * is built from `ARENA_COLLIDERS`; this file just maps `id -> material kind`.
  */
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Scene } from "@babylonjs/core/scene";
+import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
+import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 
 /** The palette of scene materials the arena visual meshes can use. */
 export type ArenaMaterialKind = "ground" | "accent" | "warm" | "neutral";
@@ -64,4 +68,37 @@ export function getArenaMaterialKind(id: string): ArenaMaterialKind {
     );
   }
   return kind;
+}
+
+/**
+ * Configures the arena scene lighting: one hemisphere light (sky/ground
+ * bounce) and one directional light (down-and-slightly-angled key light).
+ *
+ * Replaces any existing lights in the scene so these two are the only
+ * light sources. Colors are sourced from {@link ARENA_PALETTE}.
+ */
+export function setupArenaLighting(scene: Scene): void {
+  // Remove any pre-existing lights so the two below are the only sources.
+  for (const light of scene.lights) {
+    light.dispose();
+  }
+
+  // Hemisphere light – soft ambient fill from above.
+  const hemi = new HemisphericLight(
+    "arena-hemisphere",
+    new Vector3(0, 1, 0), // light comes from directly above the arena centre
+    scene,
+  );
+  hemi.intensity = 0.6;
+  hemi.diffuse = ARENA_PALETTE.skyColor.clone();
+  hemi.groundColor = ARENA_PALETTE.groundColor.clone();
+
+  // Directional light – key light pointing down and slightly angled.
+  const dir = new DirectionalLight(
+    "arena-directional",
+    new Vector3(-0.3, -1, -0.2), // down-and-slightly-angled
+    scene,
+  );
+  dir.intensity = 0.8;
+  dir.diffuse = ARENA_PALETTE.ambientColor.clone();
 }
