@@ -11,9 +11,26 @@
  * Do NOT duplicate collider positions or half-extents here. The visual mesh
  * is built from `ARENA_COLLIDERS`; this file just maps `id -> material kind`.
  */
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 
 /** The palette of scene materials the arena visual meshes can use. */
 export type ArenaMaterialKind = "ground" | "accent" | "warm" | "neutral";
+
+/**
+ * The arena color palette — the single source of truth for scene colors.
+ * All scene-level color decisions (sky, ground, accent, ambient lighting)
+ * are defined here so the palette is testable and consistent.
+ */
+export const ARENA_PALETTE = {
+  /** Background sky color for the scene. */
+  skyColor: new Color3(0.08, 0.1, 0.16),
+  /** Diffuse color of the ground plane material. */
+  groundColor: new Color3(0.18, 0.23, 0.3),
+  /** Accent color for key arena features (center box, towers). */
+  accentColor: new Color3(0.12, 0.55, 0.78),
+  /** Ambient / hemisphere light ground-color bounce. */
+  ambientColor: new Color3(0.08, 0.1, 0.14),
+} as const;
 
 /**
  * Presentation mapping: arena collider id -> scene material kind. Every
