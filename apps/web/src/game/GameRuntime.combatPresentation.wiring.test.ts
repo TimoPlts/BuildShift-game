@@ -40,7 +40,7 @@ describe("GameRuntime combat presentation wiring", () => {
   it("plays a muzzle flash + tracer and kicks recoil on an accepted local shot", () => {
     // The fire path uses the reviewed playShot (muzzle + tracer), ...
     expect(runtime).toContain(
-      "this.combatFeedback.playShot(r.request.weaponType,muzzle,d)",
+      "this.combatFeedback.playShot(r.request.weaponType,this._muzzlePos,d)",
     );
     // ...and registers a per-weapon camera-recoil kick.
     expect(runtime).toContain("this.cameraRecoil.kick(r.request.weaponType)");
