@@ -221,14 +221,8 @@ html, body {
   border-radius: 0.4rem;
   background: rgb(255 255 255 / 4%);
 }
-/* Pre-round countdown: large centred number inside the header. */
-.match-hud__countdown {
-  font-size: 2.2rem;
-  font-weight: 800;
-  line-height: 1;
-  color: #e6e8ee;
-  text-shadow: 0 2px 12px rgb(0 0 0 / 70%), 0 0 24px rgb(52 211 153 / 35%);
-}
+/* Pre-round countdown presentation lives in the full-screen lifecycle
+   overlay (CountdownOverlay); the header keeps only persistent info. */
 /* Round timer: track + remaining time. */
 .match-hud__timer {
   display: flex;
@@ -264,18 +258,8 @@ html, body {
 .match-hud__timer--low .match-hud__timer-value {
   color: #f0616d;
 }
-/* Round-end outcome tag (anti-stall / time-up / elimination / disconnect). */
-.match-hud__reason {
-  font-size: 0.65rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #aeb9ca;
-  padding: 0.12rem 0.45rem;
-  border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 0.35rem;
-  background: rgb(255 255 255 / 5%);
-}
+/* Round-end outcome presentation lives in the RoundEndBanner overlay; the
+   header no longer carries a per-round reason tag. */
 .match-hud__score-value {
   font-size: 1.4rem;
   font-weight: 700;
@@ -292,6 +276,25 @@ html, body {
 .match-hud__score-separator {
   font-size: 1.2rem;
   color: #aeb9ca;
+}
+/* Score-change pulse: the span is re-keyed on its authoritative value, so
+   the animation replays exactly when a round win is scored. */
+.match-hud__score-value--pulse {
+  display: inline-block;
+  animation: match-score-pulse 450ms ease-out;
+}
+
+@keyframes match-score-pulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.35);
+    text-shadow: 0 0 14px currentColor;
+  }
+  100% {
+    transform: scale(1);
+  }
 }
 .match-hud__phase-row {
   display: flex;
@@ -312,23 +315,6 @@ html, body {
 }
 .match-hud__phase--active {
   color: #f5b642;
-}
-.match-hud__banner {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  text-shadow: 0 2px 6px rgb(0 0 0 / 70%);
-}
-.match-hud__banner--success {
-  color: #34d399;
-}
-.match-hud__banner--failure {
-  color: #f0616d;
-}
-.match-hud__banner--match {
-  font-size: 2rem;
-  letter-spacing: 0.18em;
 }
 .build-hud {
   position: absolute;

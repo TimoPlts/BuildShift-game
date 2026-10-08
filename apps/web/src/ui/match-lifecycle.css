@@ -183,6 +183,13 @@
   letter-spacing: 0.04em;
 }
 
+/* Exit: the banner is kept mounted (via useMatchPresentation) briefly after
+   the authoritative phase leaves ROUND_OVER so this transition can play
+   before the banner unmounts. */
+.round-end-banner--leaving {
+  animation: round-banner-out 0.3s ease-in forwards;
+}
+
 @keyframes round-banner-in {
   0% {
     opacity: 0;
@@ -191,6 +198,17 @@
   100% {
     opacity: 1;
     transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes round-banner-out {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.95);
   }
 }
 
@@ -236,6 +254,51 @@
 .match-end-screen__title--defeat {
   color: #f0616d;
   text-shadow: 0 2px 20px rgb(240 97 109 / 60%);
+}
+
+.match-end-screen__winner {
+  margin: 0;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+  color: #aeb9ca;
+}
+
+.match-end-screen__reason {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #f5b642;
+}
+
+.match-end-screen__rounds {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #aeb9ca;
+}
+
+/* Rematch readiness (open window vs. closed). */
+.match-end-screen__rematch {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  font-variant-numeric: tabular-nums;
+  padding: 0.3rem 0.9rem;
+  border-radius: 0.4rem;
+}
+
+.match-end-screen__rematch--ready {
+  color: #34d399;
+  border: 1px solid rgb(52 211 153 / 40%);
+  background: rgb(52 211 153 / 10%);
+}
+
+.match-end-screen__rematch--closed {
+  color: #6b7280;
+  border: 1px solid rgb(255 255 255 / 12%);
+  background: rgb(255 255 255 / 4%);
 }
 
 .match-end-screen__score {
