@@ -2,16 +2,15 @@
  * MatchHud — a presentation-only match HUD overlay for the BuildShift 1v1
  * match loop.
  *
- * Displays:
+ * Displays the persistent, non-blocking in-match information:
  *  - A "waiting for opponent" indicator (lobby / not-yet-full state)
- *  - The pre-round countdown (when provided)
- *  - Round score (local vs. remote)
+ *  - Round score (local vs. remote), with a pulse when a score changes
  *  - The authoritative round timer (remaining time + progress bar)
  *  - Current match phase label
- *  - The latest round-end outcome (elimination / time-up / anti-stall /
- *    disconnect) derived from the authoritative `RoundEndReason`
- *  - Latest round result banner (on ROUND_ENDED)
- *  - Match winner banner (on MATCH_ENDED)
+ *
+ * The full-attention lifecycle moments (pre-round countdown, round win/loss,
+ * final victory/defeat) are presented exclusively by the App-level lifecycle
+ * overlays, so the header never doubles them.
  *
  * This component is purely presentational. All match data is supplied via
  * explicit props; the component performs no networking, no runtime queries,
@@ -22,10 +21,9 @@
  * `matchWinnerId`) into the local-perspective booleans
  * (`localWonLastRound`, `localWonMatch`) before passing them here.
  *
- * Every "timed match" prop (`waitingForOpponent`, `roundTimerRemainingMs`,
- * `roundTimerTotalMs`, `countdownSeconds`, `roundEndReason`) is optional so
- * that existing callers that only supply the core score/phase props keep
- * compiling and rendering exactly as before.
+ * Every optional prop (`waitingForOpponent`, `roundTimerRemainingMs`,
+ * `roundTimerTotalMs`) is optional so that existing callers that only supply
+ * the core score/phase props keep compiling and rendering exactly as before.
  */
 import {
   MatchPhase,
@@ -76,17 +74,6 @@ export interface MatchHudProps {
    * alongside the remaining time. Ignored when omitted.
    */
   roundTimerTotalMs?: number;
-  /**
-   * Pre-round countdown in whole seconds (e.g. 3, 2, 1). Rendered when
-   * greater than `0`; hidden otherwise.
-   */
-  countdownSeconds?: number;
-  /**
-   * The authoritative reason the most recently completed round ended. Used to
-   * present the anti-stall / time-up / elimination / disconnect outcome tag.
-   * `null` (or omitted) when no round has ended yet or the reason is unknown.
-   */
-  roundEndReason?: RoundEndReason | null;
 }
 
 /**
@@ -178,13 +165,9 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
     remoteScore,
     phase,
     currentRound,
-    localWonLastRound,
-    localWonMatch,
     waitingForOpponent,
     roundTimerRemainingMs,
     roundTimerTotalMs,
-    countdownSeconds,
-    roundEndReason,
   } = props;
 
   // ── Round timer ──────────────────────────────────────────────────────────
@@ -208,19 +191,6 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
   const timerLow =
     showTimer && (roundTimerRemainingMs as number) <= 10_000;
 
-  // ── Countdown ────────────────────────────────────────────────────────────
-  const showCountdown =
-    typeof countdownSeconds === "number" &&
-    Number.isFinite(countdownSeconds) &&
-    countdownSeconds > 0;
-
-  // ── Round-end outcome tag (anti-stall / time-up / elimination) ──────────
-  const showReasonTag =
-    phase === MatchPhase.ROUND_ENDED || phase === MatchPhase.MATCH_ENDED;
-  const reasonLabel = showReasonTag
-    ? roundEndReasonLabel(roundEndReason, localWonLastRound)
-    : null;
-
   return (
     <div className="match-hud">
       {/* ── Waiting-for-opponent indicator ── */}
@@ -230,30 +200,21 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
         </div>
       )}
 
-      {/* ── Pre-round countdown (large, centered) ── */}
-      {showCountdown && (
-        <div
-          key={countdownSeconds}
-          className="match-hud__countdown"
-          role="status"
-          aria-live="assertive"
-          aria-label={`${countdownSeconds} second${
-            (countdownSeconds as number) !== 1 ? "s" : ""
-          } until the round starts`}
-        >
-          {countdownSeconds}
-        </div>
-      )}
-
       {/* ── Score row ── */}
       <div className="match-hud__score" aria-live="polite">
-        <span className="match-hud__score-value match-hud__score-value--local">
+        <span
+          key={`local-${localScore}`}
+          className="match-hud__score-value match-hud__score-value--local match-hud__score-value--pulse"
+        >
           {localScore}
         </span>
         <span className="match-hud__score-separator" aria-hidden="true">
           –
         </span>
-        <span className="match-hud__score-value match-hud__score-value--remote">
+        <span
+          key={`remote-${remoteScore}`}
+          className="match-hud__score-value match-hud__score-value--remote match-hud__score-value--pulse"
+        >
           {remoteScore}
         </span>
       </div>
@@ -281,7 +242,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
         </div>
       )}
 
-      {/* ── Phase + round indicator (+ round-end reason tag) ── */}
+      {/* ── Phase + round indicator ── */}
       <div className="match-hud__phase-row">
         <span className="match-hud__round">
           Round {currentRound > 0 ? currentRound : "—"}
@@ -289,36 +250,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
         <span className="match-hud__phase match-hud__phase--active">
           {PHASE_LABELS[phase] ?? "…"}
         </span>
-        {reasonLabel && <span className="match-hud__reason">{reasonLabel}</span>}
       </div>
-
-      {/* ── Latest round result banner (only during ROUND_ENDED) ── */}
-      {phase === MatchPhase.ROUND_ENDED && localWonLastRound !== null && (
-        <div
-          aria-live="polite"
-          className={`match-hud__banner ${
-            localWonLastRound
-              ? "match-hud__banner--success"
-              : "match-hud__banner--failure"
-          }`}
-        >
-          {localWonLastRound ? "ROUND WON" : "ROUND LOST"}
-        </div>
-      )}
-
-      {/* ── Match winner banner (only during MATCH_ENDED) ── */}
-      {phase === MatchPhase.MATCH_ENDED && localWonMatch !== null && (
-        <div
-          aria-live="assertive"
-          className={`match-hud__banner match-hud__banner--match ${
-            localWonMatch
-              ? "match-hud__banner--success"
-              : "match-hud__banner--failure"
-          }`}
-        >
-          {localWonMatch ? "VICTORY" : "DEFEAT"}
-        </div>
-      )}
     </div>
   );
 }

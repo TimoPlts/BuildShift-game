@@ -72,14 +72,17 @@ export interface RoundEndBannerProps {
  * Renders a centered overlay panel with a large "ROUND WON" / "ROUND LOST"
  * title, an optional subtitle describing the authoritative round-end reason,
  * and a subtitle showing which round just ended (and the updated score).
+ *
+ * The parent (via `useMatchPresentation`) keeps the banner mounted briefly
+ * with `visible={false}` after the authoritative phase has left ROUND_OVER so
+ * the exit transition can play before the banner unmounts; while leaving, the
+ * banner is kept out of the accessibility tree.
  */
 export function RoundEndBanner(props: RoundEndBannerProps): JSX.Element | null {
   const { localWon, visible, roundNumber, roundEndReason, localScore, remoteScore } =
     props;
 
-  if (!visible) {
-    return null;
-  }
+  const leaving = visible !== true;
 
   const reasonLabel = roundEndReasonLabel(roundEndReason, localWon);
 
@@ -88,9 +91,10 @@ export function RoundEndBanner(props: RoundEndBannerProps): JSX.Element | null {
 
   return (
     <div
-      className="round-end-banner"
+      className={`round-end-banner ${leaving ? "round-end-banner--leaving" : ""}`}
       role="status"
-      aria-live="assertive"
+      aria-live={leaving ? "off" : "assertive"}
+      aria-hidden={leaving || undefined}
       aria-label={
         localWon ? "You won the round" : "You lost the round"
       }

@@ -50,7 +50,6 @@ function matchProps(): MatchHudProps {
     phase: MatchPhase.IN_PROGRESS,
     currentRound: 1,
     localWonLastRound: null,
-    roundEndReason: null,
     localWonMatch: null,
     waitingForOpponent: false,
   };
@@ -111,15 +110,58 @@ describe("GameHud (cohesive container)", () => {
     expect(html).not.toContain("match-hud__timer");
   });
 
-  it("shows the pre-round countdown number when the server countdown is live", () => {
+  it("does not duplicate the pre-round countdown in the header (overlay owns it)", () => {
     const html = renderToStaticMarkup(
       createElement(GameHud, {
-        match: { ...matchProps(), countdownSeconds: 3 },
+        match: matchProps(),
         local: fullLocalView({ countdownSeconds: 3 }),
       }),
     );
-    expect(html).toContain("match-hud__countdown");
-    expect(html).toMatch(/match-hud__countdown[^>]*>\s*3\s*</);
+    // The countdown is presented exclusively by the full-screen
+    // CountdownOverlay in the App shell, never by the match header.
+    expect(html).not.toContain("match-hud__countdown");
+    expect(html).not.toContain("countdown-overlay");
+  });
+
+  it("pulses the score values so an authoritative score change is visible", () => {
+    const html = renderToStaticMarkup(
+      createElement(GameHud, {
+        match: { ...matchProps(), localScore: 2, remoteScore: 1 },
+        local: fullLocalView(),
+      }),
+    );
+    expect(html).toContain("match-hud__score-value--pulse");
+    expect(html).toMatch(/match-hud__score-value--local match-hud__score-value--pulse/);
+    expect(html).toMatch(/match-hud__score-value--remote match-hud__score-value--pulse/);
+  });
+
+  it("does not duplicate round or match result banners in the header", () => {
+    const roundOver = renderToStaticMarkup(
+      createElement(GameHud, {
+        match: {
+          ...matchProps(),
+          phase: MatchPhase.ROUND_ENDED,
+          localWonLastRound: true,
+        },
+        local: fullLocalView(),
+      }),
+    );
+    const matchOver = renderToStaticMarkup(
+      createElement(GameHud, {
+        match: {
+          ...matchProps(),
+          phase: MatchPhase.MATCH_ENDED,
+          localWonMatch: true,
+        },
+        local: fullLocalView(),
+      }),
+    );
+    // Result presentation is owned by the RoundEndBanner / MatchEndScreen
+    // overlays in the App shell.
+    expect(roundOver).not.toContain("match-hud__banner");
+    expect(matchOver).not.toContain("match-hud__banner");
+    expect(roundOver).not.toContain("ROUND WON");
+    expect(matchOver).not.toContain("VICTORY");
   });
 });
 
