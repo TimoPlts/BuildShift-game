@@ -7,7 +7,7 @@
  * whether a hit occurred.
  */
 import type { Scene } from "@babylonjs/core";
-import type { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { CreateDisc } from "@babylonjs/core/Meshes/Builders/discBuilder";
@@ -47,6 +47,10 @@ export function createHitMarkerGroup(scene: Scene): PooledEffectGroup {
   );
 }
 
+/** Module-level scratch vectors (reused on every activation to avoid per-hit allocation). */
+const _forward = new Vector3();
+const _position = new Vector3();
+
 /**
  * Activates the hit marker in front of the scene's active camera.
  * Does nothing if the scene has no active camera.
@@ -55,11 +59,16 @@ export function activateHitMarker(group: PooledEffectGroup, scene: Scene, nowMs:
   const camera = scene.activeCamera;
   if (!camera) return;
 
-  const forward = camera.getForwardRay().direction;
-  const position: Vector3 = camera.globalPosition.add(forward.scale(HIT_MARKER.cameraOffset));
+  camera.getDirectionToRef(Vector3.Forward(), _forward);
+  const offset = HIT_MARKER.cameraOffset;
+  _position.set(
+    camera.position.x + _forward.x * offset,
+    camera.position.y + _forward.y * offset,
+    camera.position.z + _forward.z * offset,
+  );
 
   group.spawn(nowMs, HIT_MARKER.durationMs, (slot) => {
-    slot.mesh.position.copyFrom(position);
+    slot.mesh.position.copyFrom(_position);
     slot.mesh.scaling.setAll(HIT_MARKER.radius);
     slot.material.diffuseColor.copyFrom(HIT_MARKER.color);
     slot.material.emissiveColor.copyFrom(HIT_MARKER.color);

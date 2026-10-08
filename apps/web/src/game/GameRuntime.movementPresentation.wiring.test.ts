@@ -37,7 +37,7 @@ describe("GameRuntime movement presentation wiring", () => {
     // The step call consumes the predicted sample the runtime already
     // computes (no new input/physics/prediction source).
     expect(block).toContain(
-      "this.movementFeedback.step({x:predicted.x,y:predicted.y,z:predicted.z,grounded:predicted.grounded,velocityY:predicted.velocityY})",
+      "this.movementFeedback.step(this._movSample)",
     );
   });
 
