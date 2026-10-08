@@ -5,8 +5,9 @@
  * A lightweight, stylized low-poly humanoid built ONLY from Babylon
  * primitives and materials (no external assets). The body occupies the same
  * capsule-centre origin the authoritative replicated position is defined at
- * (feet at -0.9 m, top of the collider envelope at +0.9 m), so existing camera
- * framing, match-distance readability, and all gameplay code are unchanged.
+ * (feet at -0.9 m, top of the collider envelope at +0.9 m), so existing
+ * camera framing, match-distance readability, and all gameplay code are
+ * unchanged.
  *
  * Visual contract:
  *  - `local`  and `remote` variants use clearly distinct palettes
@@ -18,11 +19,29 @@
  *    hit-flash tint. It returns the remaining flash frame count (the same
  *    frame-decay contract the runtime already uses).
  *
+ * Procedural presentation (visual-only; local and remote share the same
+ * logic where practical):
+ *  - The display state is DERIVED from the same canonical position stream
+ *    `setTransform` already receives (predicted for the local player,
+ *    interpolated for remote players): horizontal speed → idle / walk /
+ *    run; vertical velocity → jump / fall; the grounded transition → a
+ *    landing dip. See `./player/playerPoseModel` for the pure math.
+ *  - The local player additionally holds a weapon-aim stance derived from
+ *    the scene's active camera (the same canonical aim the runtime uses for
+ *    firing); remote players use the facing-neutral stance because their
+ *    aim pitch is not replicated.
+ *  - The pose advances on the scene's before-render observable, so it is
+ *    smooth at render cadence regardless of the position stream's cadence.
+ *  - Pose transforms are applied to presentation meshes and pivots BELOW
+ *    `visualRoot` only. `root` (the gameplay mirror) and `visualRoot` are
+ *    touched exclusively by `setTransform`, so visual animation can never
+ *    mutate gameplay transforms.
+ *
  * Ownership / lifecycle:
- *  - The component owns every mesh and material it creates (all named with
- *    the provided prefix) and owns no scene observers or listeners.
- *  - `dispose()` is idempotent and releases everything it owns. After
- *    dispose, every method is a safe no-op.
+ *  - The component owns every mesh, material, and pivot it creates (all
+ *    named with the provided prefix) and ONE scene before-render observer.
+ *  - `dispose()` is idempotent and releases everything it owns, including
+ *    the observer. After dispose, every method is a safe no-op.
  *
  * This component is presentation only: it never moves the player, never
  * decides who is hit or eliminated, and never touches gameplay state. The
@@ -33,12 +52,26 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import type { Scene } from "@babylonjs/core/scene";
-import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
-import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
+import type { Observer, Scene } from "@babylonjs/core";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode";import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
+import {
+  DEFAULT_PLAYER_POSE_CONFIG,
+  PlayerPoseModel,
+  type PlayerPose,
+} from "./player/playerPoseModel";
 
 /** Which side of the match this presentation belongs to. */
 export type PlayerVariant = "local" | "remote";
+
+/** Optional presentation construction options. */
+export interface PlayerPresentationOptions {
+  /**
+   * Injectable clock (milliseconds) for the kinematic sampling and the
+   * render-frame pose clock. Defaults to `performance.now()`. Tests pass a
+   * manual clock for determinism.
+   */
+  readonly clock?: () => number;
+}
 
 /**
  * The full material state of the body. Kept as plain pre-allocated Color3
@@ -92,28 +125,98 @@ const FLASH_EMISSIVE = {
   accent: new Color3(0.6, 0.18, 0.05),
 } as const;
 
+/**
+ * Procedural pose tuning (presentation-only radians / metres). The body's
+ * local -Z is its forward (the visor side).
+ */
+const POSE = {
+  /** Forward knee tuck (rotation.x) while jumping: [left, right]. */
+  jumpTuckLeg: [0.55, 0.3] as const,
+  /** Fore/aft leg split while falling: [left, right]. */
+  fallLeg: [0.15, -0.15] as const,
+  /** Lateral knee spread (rotation.z, knees OUT) while falling. */
+  fallLegSpread: [-0.18, 0.18] as const,
+  /** Weapon-aim arm lift (rotation.x, forward-up) for [left, right]. */
+  aimArmX: [-1.35, -1.15] as const,
+  /** How the aim pitch tilts the aiming arms (radians per radian). */
+  aimArmPitchSensitivity: 0.6,
+  aimArmXMin: -2.4,
+  aimArmXMax: -0.5,
+  /** Two-handed grip: hands drawn slightly toward the midline (rotation.z). */
+  aimArmGripZ: [0.25, -0.25] as const,
+  /** Arms flung upward while falling (non-aiming body only). */
+  fallArmX: -1.9,
+  /** Idle arm sway (radians, driven by the breath oscillator). */
+  idleArmSway: 0.03,
+  /** Torso lean per radian of aim pitch while aiming (up = slight back). */
+  aimSpineLean: 0.2,
+  /** Visor tilt per radian of aim pitch. */
+  aimVisorPitch: 0.4,
+  /** Largest render-frame delta fed to the pose clock (seconds). */
+  maxFrameDeltaSeconds: 0.1,
+} as const;
+
+/** The spine pivot's rest position (waist height, spine-local parent = visualRoot). */
+const SPINE_BASE_Y = -0.18;
+
 export class PlayerPresentation {
   /**
    * Root transform. Its position IS the authoritative capsule-centre
    * position. Its Y rotation is the NEGATED shared facing yaw (Babylon's
    * node Y-rotation turns local -Z toward -X for positive angles, while the
    * shared convention turns forward toward +X — see {@link setTransform}).
+   *
+   * GAMEPLAY MIRROR: never animated by the procedural pose.
    */
   readonly root: TransformNode;
-  /** Visual-only child offset used when replicated multiplayer Y is feet-based. */
+  /**
+   * Visual-only child offset used when replicated multiplayer Y is
+   * feet-based. Only `setTransform` writes it — the procedural pose never
+   * touches it.
+   */
   readonly visualRoot: TransformNode;
 
+  private readonly _scene: Scene;
+  private readonly _variant: PlayerVariant;
   private readonly _base: PresentationPalette;
   private readonly _meshes: Mesh[] = [];
   private readonly _materials: StandardMaterial[] = [];
+  private readonly _pivots: TransformNode[] = [];
   private readonly _bodyMaterial: StandardMaterial;
   private readonly _accentMaterial: StandardMaterial;
   private readonly _visorMaterial: StandardMaterial;
   private readonly _visorMesh: Mesh;
+  /** Animation pivots (presentation only, below visualRoot). */
+  private readonly _spinePivot: TransformNode;
+  private readonly _legLeftPivot: TransformNode;
+  private readonly _legRightPivot: TransformNode;
+  private readonly _armLeftPivot: TransformNode;
+  private readonly _armRightPivot: TransformNode;
+
+  private readonly _poseModel: PlayerPoseModel;
+  private readonly _observer: Observer<Scene>;
+  private readonly _clock: () => number;
+  private readonly _aimDirection = new Vector3();
+  /**
+   * The canonical camera forward axis in this engine build (left-handed:
+   * local +Z is the view direction — the same constant the runtime's
+   * AimController reads for firing).
+   */
+  private readonly _cameraForward = Vector3.Forward();
+  private _lastFrameMs: number | null = null;
+  private _componentEnabled = true;
   private _disposed = false;
 
-  private constructor(scene: Scene, variant: PlayerVariant, namePrefix: string) {
+  private constructor(
+    scene: Scene,
+    variant: PlayerVariant,
+    namePrefix: string,
+    clock: (() => number) | undefined,
+  ) {
+    this._scene = scene;
+    this._variant = variant;
     this._base = VARIANT_PALETTES[variant];
+    this._clock = clock ?? (() => performance.now());
 
     this.root = new TransformNode(`${namePrefix}-root`, scene);
     this.visualRoot = new TransformNode(`${namePrefix}-visual-root`, scene);
@@ -124,17 +227,59 @@ export class PlayerPresentation {
     this._visorMaterial = this._makeMaterial(`${namePrefix}-material-visor`, scene);
     this._applyPalette(this._base);
 
+    // --- Animation pivots (presentation-only joint transforms) ------------
+    // Spine at the waist: carries the torso, arms, head, and gear so the
+    // upper body can bob / lean / dip as one unit.
+    this._spinePivot = this._makePivot(`${namePrefix}-pivot-spine`, scene, 0, SPINE_BASE_Y, 0);
+    // Hips: tops of the leg boxes (legs hang from the hip pivots).
+    this._legLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-leg-left`,
+      scene,
+      -0.115,
+      -0.34,
+      0,
+    );
+    this._legRightPivot = this._makePivot(
+      `${namePrefix}-pivot-leg-right`,
+      scene,
+      0.115,
+      -0.34,
+      0,
+    );
+    // Shoulders: tops of the arm boxes, in spine-local space.
+    this._armLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-arm-left`,
+      scene,
+      -0.27,
+      0.36,
+      0,
+      this._spinePivot,
+    );
+    this._armRightPivot = this._makePivot(
+      `${namePrefix}-pivot-arm-right`,
+      scene,
+      0.27,
+      0.36,
+      0,
+      this._spinePivot,
+    );
+
     // --- Body layout (origin = capsule centre; feet at -0.9, top <= +0.9) --
+    // The ABSOLUTE positions of every mesh are exactly the legacy layout;
+    // only the parentage moved (legs/arms under joint pivots, upper body
+    // under the spine pivot) so the pose can animate them.
     // Legs: simple boxes, the boot line comes from the pelvis overlap.
     this._addMesh(
       this._box(`${namePrefix}-leg-left`, scene, 0.17, 0.56, 0.2),
-      new Vector3(-0.115, -0.62, 0),
+      new Vector3(0, -0.28, 0),
       this._bodyMaterial,
+      this._legLeftPivot,
     );
     this._addMesh(
       this._box(`${namePrefix}-leg-right`, scene, 0.17, 0.56, 0.2),
-      new Vector3(0.115, -0.62, 0),
+      new Vector3(0, -0.28, 0),
       this._bodyMaterial,
+      this._legRightPivot,
     );
     // Pelvis: bridges the legs into the torso.
     this._addMesh(
@@ -142,33 +287,38 @@ export class PlayerPresentation {
       new Vector3(0, -0.28, 0),
       this._bodyMaterial,
     );
-    // Torso: the widest body box, broad at the shoulders.
+    // Torso: the widest body box, broad at the shoulders (under the spine).
     this._addMesh(
       this._box(`${namePrefix}-torso`, scene, 0.42, 0.56, 0.24),
-      new Vector3(0, 0.06, 0),
+      new Vector3(0, 0.24, 0),
       this._bodyMaterial,
+      this._spinePivot,
     );
-    // Arms.
+    // Arms (hang from the shoulder pivots).
     this._addMesh(
       this._box(`${namePrefix}-arm-left`, scene, 0.11, 0.44, 0.14),
-      new Vector3(-0.27, -0.04, 0),
+      new Vector3(0, -0.22, 0),
       this._bodyMaterial,
+      this._armLeftPivot,
     );
     this._addMesh(
       this._box(`${namePrefix}-arm-right`, scene, 0.11, 0.44, 0.14),
-      new Vector3(0.27, -0.04, 0),
+      new Vector3(0, -0.22, 0),
       this._bodyMaterial,
+      this._armRightPivot,
     );
     // Shoulder pads: accent contrast on the widest part of the silhouette.
     this._addMesh(
       this._box(`${namePrefix}-pad-left`, scene, 0.15, 0.09, 0.17),
-      new Vector3(-0.235, 0.36, 0),
+      new Vector3(-0.235, 0.54, 0),
       this._accentMaterial,
+      this._spinePivot,
     );
     this._addMesh(
       this._box(`${namePrefix}-pad-right`, scene, 0.15, 0.09, 0.17),
-      new Vector3(0.235, 0.36, 0),
+      new Vector3(0.235, 0.54, 0),
       this._accentMaterial,
+      this._spinePivot,
     );
     // Head: low-segment sphere converted to flat shading for a faceted
     // low-poly look (Babylon 9: flat shading is a per-mesh transform).
@@ -178,16 +328,29 @@ export class PlayerPresentation {
       scene,
     );
     head.convertToFlatShadedMesh();
-    this._addMesh(head, new Vector3(0, 0.47, 0), this._accentMaterial);
+    this._addMesh(head, new Vector3(0, 0.65, 0), this._accentMaterial, this._spinePivot);
     // Visor: emissive strip on the -Z (forward) face of the head. The
-    // primary orientation cue at match distance.
+    // primary orientation cue at match distance; it also tilts with the
+    // aim pitch so the "looking up/down" read is visible.
     this._visorMesh = this._box(`${namePrefix}-visor`, scene, 0.17, 0.055, 0.05);
-    this._addMesh(this._visorMesh, new Vector3(0, 0.49, -0.145), this._visorMaterial);
+    this._addMesh(
+      this._visorMesh,
+      new Vector3(0, 0.67, -0.145),
+      this._visorMaterial,
+      this._spinePivot,
+    );
     // Back pack: accent block on the +Z side so facing is readable from behind.
     this._addMesh(
       this._box(`${namePrefix}-backpack`, scene, 0.17, 0.16, 0.09),
-      new Vector3(0, 0.12, 0.16),
+      new Vector3(0, 0.3, 0.16),
       this._accentMaterial,
+      this._spinePivot,
+    );
+
+    // --- Procedural pose clock: one scene before-render observer ----------
+    this._poseModel = new PlayerPoseModel();
+    this._observer = this._scene.onBeforeRenderObservable.add(() =>
+      this._tickFrame(),
     );
   }
 
@@ -199,8 +362,9 @@ export class PlayerPresentation {
     scene: Scene,
     variant: PlayerVariant,
     namePrefix: string,
+    options: PlayerPresentationOptions = {},
   ): PlayerPresentation {
-    return new PlayerPresentation(scene, variant, namePrefix);
+    return new PlayerPresentation(scene, variant, namePrefix, options.clock);
   }
 
   /** The owned forward-orientation visor mesh (for tests / debugging). */
@@ -213,9 +377,21 @@ export class PlayerPresentation {
     return this._bodyMaterial;
   }
 
+  /** The owned spine (upper-body) animation pivot (for tests / debugging). */
+  public get spinePivot(): TransformNode {
+    return this._spinePivot;
+  }
+
   /** True once {@link dispose} has run. */
   public get isDisposed(): boolean {
     return this._disposed;
+  }
+
+  /**
+   * The current smoothed display pose (read-only; for tests / debugging).
+   */
+  public get pose(): Readonly<PlayerPose> {
+    return this._poseModel.pose;
   }
 
   /**
@@ -227,6 +403,10 @@ export class PlayerPresentation {
    * toward -X for positive angles (right-handed Y rotation), while the shared
    * yaw convention turns forward toward +X. Negating keeps the body's front
    * (local -Z, the visor side) facing the movement forward.
+   *
+   * The same canonical position stream also feeds the procedural pose's
+   * kinematic estimate (visual-only; nothing gameplay is read or written
+   * beyond this transform).
    */
   public setTransform(
     position: Readonly<{ x: number; y: number; z: number }>,
@@ -239,11 +419,14 @@ export class PlayerPresentation {
     // this root intentionally stays at that unmodified gameplay transform.
     // Move only the rendered body into the capsule envelope.
     this.visualRoot.position.y = PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
+    // Display-state kinematics derived from the same canonical stream.
+    this._poseModel.sample(position.x, position.y, position.z, this._clock());
   }
 
   /** Shows or hides every owned mesh (the root transform itself has no mesh). */
   public setEnabled(enabled: boolean): void {
     if (this._disposed) return;
+    this._componentEnabled = enabled;
     for (const mesh of this._meshes) {
       mesh.setEnabled(enabled);
     }
@@ -272,17 +455,22 @@ export class PlayerPresentation {
   }
 
   /**
-   * Idempotent teardown: disposes every owned mesh and material and the root
-   * transform. Safe to call multiple times; afterwards all methods are no-ops.
+   * Idempotent teardown: removes the before-render observer, disposes every
+   * owned mesh, material, and pivot, and the root transform. Safe to call
+   * multiple times; afterwards all methods are no-ops.
    */
   public dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this._scene.onBeforeRenderObservable.remove(this._observer);
     for (const mesh of this._meshes) {
       mesh.dispose();
     }
     for (const material of this._materials) {
       material.dispose();
+    }
+    for (const pivot of this._pivots) {
+      pivot.dispose();
     }
     this.root.dispose();
   }
@@ -293,6 +481,21 @@ export class PlayerPresentation {
     const material = new StandardMaterial(name, scene);
     this._materials.push(material);
     return material;
+  }
+
+  private _makePivot(
+    name: string,
+    scene: Scene,
+    x: number,
+    y: number,
+    z: number,
+    parent: TransformNode = this.visualRoot,
+  ): TransformNode {
+    const pivot = new TransformNode(name, scene);
+    pivot.parent = parent;
+    pivot.position.set(x, y, z);
+    this._pivots.push(pivot);
+    return pivot;
   }
 
   private _box(
@@ -306,14 +509,123 @@ export class PlayerPresentation {
     return MeshBuilder.CreateBox(name, { width, height, depth }, scene);
   }
 
-  private _addMesh(mesh: Mesh, localPosition: Vector3, material: StandardMaterial): void {
+  private _addMesh(
+    mesh: Mesh,
+    localPosition: Vector3,
+    material: StandardMaterial,
+    parent: TransformNode = this.visualRoot,
+  ): void {
     // Presentation safety: never pickable, never a collision source.
     mesh.isPickable = false;
     mesh.checkCollisions = false;
     mesh.material = material;
-    mesh.parent = this.visualRoot;
+    mesh.parent = parent;
     mesh.position.copyFrom(localPosition);
     this._meshes.push(mesh);
+  }
+
+  /**
+   * One render frame: derives the aim input from the existing canonical
+   * state, advances the pose clock, and applies the pose to the
+   * presentation meshes/pivots (never to the gameplay transforms).
+   */
+  private _tickFrame(): void {
+    if (this._disposed) return;
+    const nowMs = this._clock();
+    const dt =
+      this._lastFrameMs === null
+        ? 0
+        : Math.min(
+            POSE.maxFrameDeltaSeconds,
+            Math.max(0, (nowMs - this._lastFrameMs) / 1000),
+          );
+    this._lastFrameMs = nowMs;
+    if (!this._componentEnabled) return;
+
+    if (this._variant === "local") {
+      // The local player's canonical aim is the active camera's direction —
+      // the same source the runtime's AimController reads for firing.
+      const camera = this._scene.activeCamera;
+      if (camera) {
+        camera.getDirectionToRef(this._cameraForward, this._aimDirection);
+        const pitch = Math.asin(
+          Math.min(1, Math.max(-1, this._aimDirection.y)),
+        );
+        this._poseModel.setAim(pitch, true);
+      }
+    } else {
+      // Remote aim pitch is not replicated: the same pose logic runs with
+      // the facing-neutral stance.
+      this._poseModel.setAim(0, false);
+    }
+
+    this._poseModel.advance(dt);
+    this._applyPose(this._poseModel.pose);
+  }
+
+  /**
+   * Applies the smoothed pose to presentation meshes/pivots only. All
+   * values are local-space presentation transforms below `visualRoot`;
+   * `root` / `visualRoot` are untouched, so the animation cannot mutate
+   * gameplay transforms.
+   */
+  private _applyPose(p: PlayerPose): void {
+    const phase = p.walkPhase;
+    const swing = Math.sin(phase);
+
+    // --- Legs: grounded gait, blended to the jump tuck and the fall split --
+    let legLeft = p.legSwing * swing;
+    let legRight = -p.legSwing * swing;
+    legLeft += (POSE.jumpTuckLeg[0] - legLeft) * p.jumpBlend;
+    legRight += (POSE.jumpTuckLeg[1] - legRight) * p.jumpBlend;
+    legLeft += (POSE.fallLeg[0] - legLeft) * p.fallBlend;
+    legRight += (POSE.fallLeg[1] - legRight) * p.fallBlend;
+    this._legLeftPivot.rotation.x = legLeft;
+    this._legRightPivot.rotation.x = legRight;
+    this._legLeftPivot.rotation.z = POSE.fallLegSpread[0] * p.fallBlend;
+    this._legRightPivot.rotation.z = POSE.fallLegSpread[1] * p.fallBlend;
+
+    // --- Arms: counter-swing + breath sway, then the pose overrides --------
+    let armLeft = -p.armSwing * swing + POSE.idleArmSway * p.breath;
+    let armRight = p.armSwing * swing - POSE.idleArmSway * p.breath;
+    // Falling: arms fling up (only for the non-aiming body; the aiming body
+    // keeps its weapon-ready stance).
+    const fling = p.fallBlend * (1 - p.armRaise);
+    armLeft += (POSE.fallArmX - armLeft) * fling;
+    armRight += (POSE.fallArmX - armRight) * fling;
+    // Weapon-aim stance: hands forward-up, tilted by the aim pitch, drawn
+    // slightly together for a two-handed grip.
+    const aimLeft = Math.min(
+      POSE.aimArmXMax,
+      Math.max(
+        POSE.aimArmXMin,
+        POSE.aimArmX[0] - p.aimPitch * POSE.aimArmPitchSensitivity,
+      ),
+    );
+    const aimRight = Math.min(
+      POSE.aimArmXMax,
+      Math.max(
+        POSE.aimArmXMin,
+        POSE.aimArmX[1] - p.aimPitch * POSE.aimArmPitchSensitivity,
+      ),
+    );
+    armLeft += (aimLeft - armLeft) * p.armRaise;
+    armRight += (aimRight - armRight) * p.armRaise;
+    this._armLeftPivot.rotation.x = armLeft;
+    this._armRightPivot.rotation.x = armRight;
+    this._armLeftPivot.rotation.z = POSE.aimArmGripZ[0] * p.armRaise;
+    this._armRightPivot.rotation.z = POSE.aimArmGripZ[1] * p.armRaise;
+
+    // --- Upper body: gait bob, landing dip, forward lean, aim lean ---------
+    this._spinePivot.position.y =
+      SPINE_BASE_Y +
+      p.bob -
+      p.landingDip * DEFAULT_PLAYER_POSE_CONFIG.maxLandingDipMeters;
+    this._spinePivot.rotation.x =
+      p.lean - p.aimPitch * POSE.aimSpineLean * p.armRaise;
+
+    // --- Visor: tilts with the aim pitch so the look direction reads -------
+    this._visorMesh.rotation.x = p.aimPitch * POSE.aimVisorPitch;
   }
 
   private _applyPalette(palette: PresentationPalette): void {
