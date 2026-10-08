@@ -22,18 +22,23 @@ export type ArenaMaterialKind = "ground" | "accent" | "warm" | "neutral";
 
 /**
  * The arena color palette — the single source of truth for scene colors.
- * All scene-level color decisions (sky, ground, accent, ambient lighting)
- * are defined here so the palette is testable and consistent.
+ * All scene-level color decisions (sky, ground, accent, ambient lighting,
+ * perimeter walls, cover pieces) are defined here so the palette is testable
+ * and consistent across the dark/blue Box Fight presentation.
  */
 export const ARENA_PALETTE = {
-  /** Background sky color for the scene. */
-  skyColor: new Color3(0.08, 0.1, 0.16),
-  /** Diffuse color of the ground plane material. */
-  groundColor: new Color3(0.18, 0.23, 0.3),
-  /** Accent color for key arena features (center box, towers). */
-  accentColor: new Color3(0.12, 0.55, 0.78),
-  /** Ambient / hemisphere light ground-color bounce. */
-  ambientColor: new Color3(0.08, 0.1, 0.14),
+  /** Background sky color — deep blue-black night arena. */
+  skyColor: new Color3(0.03, 0.05, 0.1),
+  /** Diffuse color of the ground plane — dark slate-blue. */
+  groundColor: new Color3(0.1, 0.14, 0.22),
+  /** Accent color — bright cyan for key arena features. */
+  accentColor: new Color3(0.15, 0.7, 0.95),
+  /** Ambient / hemisphere light ground-color bounce — deep blue. */
+  ambientColor: new Color3(0.05, 0.07, 0.12),
+  /** Perimeter wall color — dark navy. */
+  wallColor: new Color3(0.08, 0.12, 0.2),
+  /** Cover/obstacle color — medium blue-grey for intentional cover. */
+  coverColor: new Color3(0.18, 0.24, 0.34),
 } as const;
 
 /**
@@ -41,14 +46,17 @@ export const ARENA_PALETTE = {
  * collider in the shared `ARENA_COLLIDERS` table has exactly one entry here,
  * so the browser can tint its visual mesh without that knowledge ever needing
  * to reach the shared config (or the server).
+ *
+ * The Box Fight arena uses three visual tiers:
+ *  - "ground" for the floor slab
+ *  - "accent" for the central feature box (bright cyan)
+ *  - "neutral" for all cover/obstacle pieces (muted blue-grey)
  */
 export const ARENA_MATERIAL_BY_ID: Readonly<Record<string, ArenaMaterialKind>> =
   {
     "foundation-ground": "ground",
     "center-box": "accent",
-    // The original physics-playground landmarks remain gameplay cover, but
-    // share one restrained material so the Box Fight space reads as a single
-    // deliberate arena instead of a collection of debug props.
+    // Cover pieces read as intentional arena furniture, not debug blocks.
     "reference-platform": "neutral",
     "reference-tower": "neutral",
     "slide-corridor-wall-west": "neutral",
@@ -86,22 +94,23 @@ export function setupArenaLighting(scene: Scene): void {
     light.dispose();
   }
 
-  // Hemisphere light – soft ambient fill from above.
+  // Hemisphere light – soft ambient fill from above (cool blue bounce).
   const hemi = new HemisphericLight(
     "arena-hemisphere",
     new Vector3(0, 1, 0), // light comes from directly above the arena centre
     scene,
   );
   hemi.intensity = 0.6;
-  hemi.diffuse = ARENA_PALETTE.skyColor.clone();
-  hemi.groundColor = ARENA_PALETTE.groundColor.clone();
+  hemi.diffuse = ARENA_PALETTE.skyColor.clone().scale(2.5); // brightened sky tint
+  hemi.groundColor = ARENA_PALETTE.groundColor.clone().scale(1.5);
 
-  // Directional light – key light pointing down and slightly angled.
+  // Directional light – key light pointing down and slightly angled,
+  // giving the arena directional depth and readable shadows.
   const dir = new DirectionalLight(
     "arena-directional",
     new Vector3(-0.3, -1, -0.2), // down-and-slightly-angled
     scene,
   );
   dir.intensity = 0.8;
-  dir.diffuse = ARENA_PALETTE.ambientColor.clone();
+  dir.diffuse = ARENA_PALETTE.ambientColor.clone().scale(3); // cool blue key light
 }
