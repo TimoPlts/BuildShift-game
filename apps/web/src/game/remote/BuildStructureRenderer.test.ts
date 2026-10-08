@@ -269,6 +269,89 @@ describe("BuildStructureRenderer", () => {
 
   // ─── Durability and hit feedback ─────────────────────────────────────────
 
+  describe("build-edit target highlight", () => {
+    it("boosts the aimed structure's emissive and removes it on hide", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300); // construction complete
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const material = mesh.material as StandardMaterial;
+      const baseGreen = material.emissiveColor.g;
+
+      renderer.showEditTarget("wall");
+      advance(16);
+      expect(material.emissiveColor.g).toBeGreaterThan(baseGreen);
+
+      renderer.hideEditTarget();
+      advance(16);
+      expect(material.emissiveColor.g).toBeCloseTo(baseGreen, 5);
+    });
+
+    it("self-cleans the highlight when the structure is authoritatively removed", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      renderer.showEditTarget("wall");
+      renderer.syncStructures({ structures: {} }); // wall destroyed
+      advance(300); // destruction fade completes (250ms)
+      // No crash and no residual highlight after the structure is gone.
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+  });
+
+  describe("half-wall result preview", () => {
+    it("shows the top-half ghost at the correct position for half_top", () => {
+      const wall = structure("wall", "wall", "", { x: 1, y: 0, z: -2 });
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      renderer.showEditResultPreview("wall", "half_top", 0);
+      advance(16);
+
+      const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
+      // Wall is 2 layers tall (4m): the top-half ghost centres at y = 3.
+      expect(ghost.position.y).toBeCloseTo(3, 5);
+      expect((ghost.material as StandardMaterial).alpha).toBeCloseTo(0.45, 5);
+    });
+
+    it("shows the bottom-half ghost for half_bottom", () => {
+      const wall = structure("wall", "wall", "", { x: 1, y: 0, z: -2 });
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      renderer.showEditResultPreview("wall", "half_bottom", 0);
+      advance(16);
+
+      const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
+      // The bottom-half ghost centres at y = 1.
+      expect(ghost.position.y).toBeCloseTo(1, 5);
+    });
+
+    it("hides the preview when hidden, for non-wall targets, and on structure removal", () => {
+      const wall = structure("wall", "wall");
+      const floor = structure("floor", "floor");
+      renderer.syncStructures({ structures: { wall, floor } });
+      advance(300);
+
+      renderer.showEditResultPreview("wall", "half_top", 0);
+      expect(scene.getMeshByName("build-edit-result-preview")).not.toBeNull();
+
+      renderer.hideEditResultPreview();
+      expect(scene.getMeshByName("build-edit-result-preview")).toBeNull();
+
+      // A non-wall target never gets a result-preview ghost.
+      renderer.showEditResultPreview("floor", "half_bottom", 0);
+      expect(scene.getMeshByName("build-edit-result-preview")).toBeNull();
+
+      // Self-cleanup: the preview for a destroyed structure is disposed.
+      renderer.showEditResultPreview("wall", "half_top", 0);
+      renderer.syncStructures({ structures: { floor } });
+      expect(scene.getMeshByName("build-edit-result-preview")).toBeNull();
+    });
+  });
+
   describe("durability and hit feedback", () => {
     it("tints structure material toward damaged color as durability decreases", () => {
       renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });

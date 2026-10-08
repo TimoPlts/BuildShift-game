@@ -81,7 +81,7 @@ describe("build-edit authoritative route", () => {
     // runtime hands over each frame ...
     const updateIdx = buildEditController.indexOf("public updateFrame(ctx: BuildEditFrameContext)");
     expect(updateIdx).toBeGreaterThan(-1);
-    const updateBlock = buildEditController.slice(updateIdx, updateIdx + 1500);
+    const updateBlock = buildEditController.slice(updateIdx, updateIdx + 2500);
     expect(updateBlock).toContain("ctx.connected");
     // ... and requestEdit re-checks it before touching the wire.
     const requestIdx = buildEditController.indexOf("public requestEdit(");
