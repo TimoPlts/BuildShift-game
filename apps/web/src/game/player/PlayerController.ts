@@ -251,6 +251,15 @@ export class PlayerController {
     this.jumpController.reset();
   }
 
+  /**
+   * The player's presentation root transform node. External presentation
+   * components (e.g. the weapon model) can parent themselves here so they
+   * move and rotate with the player body automatically.
+   */
+  public get presentationRoot(): TransformNode {
+    return this.mesh;
+  }
+
   /** Capsule *centre* position (the physics body translation), as a Vector3. */
   public getCenterPosition(): Vector3 {
     return new Vector3(
