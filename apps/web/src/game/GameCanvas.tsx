@@ -67,71 +67,80 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
     let unsubMatch: (() => void) | undefined;
     let unsubLocalHud: (() => void) | undefined;
 
-    GameRuntime.create(canvas)
-      .then((r) => {
-        if (!active) {
-          r.dispose();
-          return;
-        }
-        runtime = r;
-        r.start();
+    // React StrictMode deliberately runs an effect setup/cleanup/setup cycle
+    // in development. `GameRuntime.create` has immediate Babylon/WebGL side
+    // effects before its asynchronous Rapier initialisation resolves, so an
+    // `active` check *after* create is too late: two engines can briefly own
+    // the same canvas. Defer creation one macrotask; the synthetic first
+    // cleanup cancels its timer before it can construct a runtime, while the
+    // real mounted effect starts exactly one canonical runtime/network path.
+    const startupTimer = window.setTimeout(() => {
+      void GameRuntime.create(canvas)
+        .then((r) => {
+          if (!active) {
+            r.dispose();
+            return;
+          }
+          runtime = r;
+          r.start();
 
-        // Prime the local HUD (vitals, energy, weapon, build state) from the
-        // runtime's existing authoritative / predicted sources.
-        setLocalHud(r.getLocalHudView());
+          // Prime the local HUD (vitals, energy, weapon, build state) from the
+          // runtime's existing authoritative / predicted sources.
+          setLocalHud(r.getLocalHudView());
 
-        // Build and emit the initial lifecycle view (disconnected state).
-        const initialView = buildMatchLifecycleView(
-          r.getMatchState(),
-          r.getSessionId(),
-          r.getCountdownSeconds(),
-          r.connected,
-        );
-        onLifecycleChangeRef.current?.(initialView);
-
-        // Notify parent that runtime actions are available, including the
-        // canonical in-room rematch action.
-        onRuntimeReadyRef.current?.({
-          leaveRoom: () => r.leaveRoom(),
-          rejoinRoom: () => r.rejoinRoom(),
-          requestRematch: () => r.requestRematch(),
-        });
-
-        // Subscribe to the authoritative match-state updates (score / phase /
-        // banners) and to the runtime's local HUD snapshots (vitals, energy,
-        // weapon, build state, authoritative round timer / countdown).
-        unsubLocalHud = r.onLocalHudChange(setLocalHud);
-        unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
-          const sid = r.getSessionId();
-          if (!sid) return;
-
-          // Build the lifecycle view to derive countdown and connection state.
-          const view = buildMatchLifecycleView(
-            state,
-            sid,
+          // Build and emit the initial lifecycle view (disconnected state).
+          const initialView = buildMatchLifecycleView(
+            r.getMatchState(),
+            r.getSessionId(),
             r.getCountdownSeconds(),
             r.connected,
           );
+          onLifecycleChangeRef.current?.(initialView);
 
-          // Wire the full lifecycle-derived props into the presentation-only
-          // MatchHud: base score/phase data plus the optional countdown and
-          // waiting-for-opponent indicator.
-          const baseHud = mapMatchStateToHudProps(state, sid);
-          setMatchHudProps({
-            ...baseHud,
-            waitingForOpponent:
-              r.connected &&
-              state.matchPhase === MatchPhase.COUNTDOWN &&
-              state.currentRound === 0,
+          // Notify parent that runtime actions are available, including the
+          // canonical in-room rematch action.
+          onRuntimeReadyRef.current?.({
+            leaveRoom: () => r.leaveRoom(),
+            rejoinRoom: () => r.rejoinRoom(),
+            requestRematch: () => r.requestRematch(),
           });
 
-          // Propagate the lifecycle view to the parent for overlay screens.
-          onLifecycleChangeRef.current?.(view);
+          // Subscribe to the authoritative match-state updates (score / phase /
+          // banners) and to the runtime's local HUD snapshots (vitals, energy,
+          // weapon, build state, authoritative round timer / countdown).
+          unsubLocalHud = r.onLocalHudChange(setLocalHud);
+          unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
+            const sid = r.getSessionId();
+            if (!sid) return;
+
+            // Build the lifecycle view to derive countdown and connection state.
+            const view = buildMatchLifecycleView(
+              state,
+              sid,
+              r.getCountdownSeconds(),
+              r.connected,
+            );
+
+            // Wire the full lifecycle-derived props into the presentation-only
+            // MatchHud: base score/phase data plus the optional countdown and
+            // waiting-for-opponent indicator.
+            const baseHud = mapMatchStateToHudProps(state, sid);
+            setMatchHudProps({
+              ...baseHud,
+              waitingForOpponent:
+                r.connected &&
+                state.matchPhase === MatchPhase.COUNTDOWN &&
+                state.currentRound === 0,
+            });
+
+            // Propagate the lifecycle view to the parent for overlay screens.
+            onLifecycleChangeRef.current?.(view);
+          });
+        })
+        .catch((error) => {
+          console.error("Failed to start the game runtime:", error);
         });
-      })
-      .catch((error) => {
-        console.error("Failed to start the game runtime:", error);
-      });
+    }, 0);
 
     const handlePointerLockChange = () => {
       setPointerLocked(document.pointerLockElement === canvas);
@@ -141,6 +150,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
 
     return () => {
       active = false;
+      window.clearTimeout(startupTimer);
       unsubMatch?.();
       unsubLocalHud?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);

@@ -22,7 +22,7 @@ export default defineConfig({
     },
   },
   test: {
-    include: ["packages/**/*.test.ts", "apps/**/*.test.ts"],
+    include: ["packages/**/*.test.ts", "apps/**/*.test.{ts,tsx}"],
     exclude: [
       // Retired legacy networking test stubs — physically empty (export {} only).
       // These directories/files are scheduled for physical deletion; the vitest
