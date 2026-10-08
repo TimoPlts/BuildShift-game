@@ -37,6 +37,15 @@ export class ThirdPersonCameraController {
    * {@link pitch}, so recoil never disturbs the player's aim state.
    */
   private pitchOffset = 0;
+  /**
+   * Transient vertical (world-Y, metres) nudge applied on top of the tracked
+   * look target for this frame. Driven by the movement-presentation module —
+   * it is set every frame by the runtime and is *not* persisted. Because the
+   * same offset is applied to BOTH the camera position and the look target,
+   * the camera's aim direction is never changed: this is pure camera motion,
+   * unlike the pitch nudge which rotates the view.
+   */
+  private transientVerticalOffset = 0;
   private disposed = false;
 
   public constructor(scene: Scene) {
@@ -108,6 +117,24 @@ export class ThirdPersonCameraController {
   }
 
   /**
+   * Sets the transient vertical (world-Y) camera nudge for the next
+   * {@link update}, in metres (positive = up). The offset translates both
+   * the look target and the camera position by the same amount, so the aim
+   * direction is untouched. Defaults to `0` (no nudge).
+   */
+  public setTransientVerticalOffset(offsetMeters: number): void {
+    if (this.disposed) {
+      return;
+    }
+    this.transientVerticalOffset = offsetMeters;
+  }
+
+  /** The current transient vertical nudge (for inspection / tests). */
+  public getTransientVerticalOffset(): number {
+    return this.transientVerticalOffset;
+  }
+
+  /**
    * Repositions the camera behind and above the player for the current
    * yaw/pitch. `feetPosition` is the player's ground anchor.
    */
@@ -117,9 +144,12 @@ export class ThirdPersonCameraController {
     }
 
     const { distance, targetHeight } = THIRD_PERSON_CAMERA;
+    // Fold in the transient vertical movement nudge. It is a pure
+    // translation shared by the look target and the camera position, so the
+    // aim direction is unchanged.
     this.lookTarget.set(
       feetPosition.x,
-      feetPosition.y + targetHeight,
+      feetPosition.y + targetHeight + this.transientVerticalOffset,
       feetPosition.z,
     );
 
