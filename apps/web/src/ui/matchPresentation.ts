@@ -64,6 +64,8 @@ export interface LifecyclePresentation {
   moment: PresentationMoment;
   /** Remaining countdown seconds (meaningful only for the `countdown` moment). */
   countdownSeconds: number;
+  /** The 1-based round number (meaningful for `countdown` and `roundResult`). */
+  roundNumber: number;
   /** Round-result banner data, or `null` when no round result is presented. */
   round: RoundResultData | null;
   /** Match-result screen data, or `null` while the match is still in play. */
@@ -83,12 +85,19 @@ export function deriveLifecyclePresentation(
   const none: LifecyclePresentation = {
     moment: "none",
     countdownSeconds: 0,
+    roundNumber: view !== null ? view.currentRound : 0,
     round: null,
     match: null,
   };
 
   if (view === null || view.connected === false) {
-    return none;
+    return {
+      moment: "none",
+      countdownSeconds: 0,
+      roundNumber: 0,
+      round: null,
+      match: null,
+    };
   }
 
   switch (view.roundState) {
@@ -98,6 +107,7 @@ export function deriveLifecyclePresentation(
           ...none,
           moment: "countdown",
           countdownSeconds: view.countdownRemainingSeconds,
+          roundNumber: view.currentRound,
         };
       }
       return none;

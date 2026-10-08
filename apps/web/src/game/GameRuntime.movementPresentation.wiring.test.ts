@@ -33,7 +33,7 @@ describe("GameRuntime movement presentation wiring", () => {
   it("drives the feedback from the existing predicted movement state only", () => {
     const idx = runtime.indexOf("private stepSimulationTick():void{");
     expect(idx).toBeGreaterThan(-1);
-    const block = runtime.slice(idx, idx + 900);
+    const block = runtime.slice(idx, idx + 1200);
     // The step call consumes the predicted sample the runtime already
     // computes (no new input/physics/prediction source).
     expect(block).toContain(

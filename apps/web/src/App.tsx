@@ -57,11 +57,22 @@ export function App() {
         onRuntimeReady={handleRuntimeReady}
       />
 
-      {/* ── Pre-round countdown (full attention; the only countdown UI) ── */}
+      {/* ── Pre-round countdown / round-intro (the only countdown UI) ── */}
       {presentation.countdownSeconds > 0 && (
         <CountdownOverlay
           remainingSeconds={presentation.countdownSeconds}
+          roundNumber={presentation.roundNumber}
           visible={true}
+          phase="counting"
+        />
+      )}
+
+      {/* ── Post-countdown "GO!" transition to live play ── */}
+      {presentation.goTransition && (
+        <CountdownOverlay
+          remainingSeconds={0}
+          visible={true}
+          phase="go"
         />
       )}
 
