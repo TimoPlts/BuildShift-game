@@ -8,12 +8,14 @@ import type { MovementDebugHUD } from "../ui/MovementDebugHUD";
 import type { PlayerController } from "./player/PlayerController";
 import type { EnergyRuntimeConsumer } from "./energy";
 import type { BuildingSystem } from "./building";
+import type { BuildEditSystem } from "./buildEdit";
 import type { WeaponController } from "./weapon";
 import type { PlayerPresentation } from "./scene/PlayerPresentation";
 
 export interface GameRuntimeDisposables {
   energyConsumer: EnergyRuntimeConsumer;
   buildingSystem: BuildingSystem;
+  buildEditSystem: BuildEditSystem;
   weaponController: WeaponController;
   networkClient: NetworkClient;
   debugHud: MovementDebugHUD;
@@ -27,6 +29,7 @@ export interface GameRuntimeDisposables {
 export function disposeGameRuntimeResources(d: GameRuntimeDisposables): void {
   d.energyConsumer.dispose();
   d.buildingSystem.dispose();
+  d.buildEditSystem.dispose();
   d.weaponController.dispose();
   d.networkClient.dispose();
   d.debugHud.dispose();

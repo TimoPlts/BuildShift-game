@@ -35,6 +35,7 @@ function baselineInput(): LocalHudViewInput {
     selectedBuildType: "wall",
     placementValid: null,
     gridPosition: null,
+    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null },
     roundTimer: null,
     countdownSeconds: 0,
   };
@@ -204,6 +205,33 @@ describe("localHudChangeKey", () => {
       { ...base, selectedBuildType: "cone" },
       { ...base, placementValid: true },
       { ...base, gridPosition: { x: 1, y: 0, z: 1 } },
+    ];
+    for (const variant of variants) {
+      expect(localHudChangeKey(variant)).not.toBe(baseKey);
+    }
+  });
+
+  it("changes when the build-edit presentation state changes", () => {
+    const base = buildLocalHudView(baselineInput());
+    const baseKey = localHudChangeKey(base);
+
+    const variants: LocalHudView[] = [
+      { ...base, buildEdit: { ...base.buildEdit, mode: true } },
+      { ...base, buildEdit: { ...base.buildEdit, selectedEdit: "window" } },
+      {
+        ...base,
+        buildEdit: {
+          ...base.buildEdit,
+          target: { structureId: "wall1", buildType: "wall", grid: { x: 1, y: 0, z: 1 } },
+        },
+      },
+      {
+        ...base,
+        buildEdit: {
+          ...base.buildEdit,
+          feedback: { kind: "accepted", message: "Edit applied" },
+        },
+      },
     ];
     for (const variant of variants) {
       expect(localHudChangeKey(variant)).not.toBe(baseKey);
