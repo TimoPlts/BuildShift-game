@@ -222,7 +222,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
     : null;
 
   return (
-    <div className="match-hud" aria-live="polite">
+    <div className="match-hud">
       {/* ── Waiting-for-opponent indicator ── */}
       {waitingForOpponent && (
         <div className="match-hud__waiting" role="status">
@@ -246,7 +246,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
       )}
 
       {/* ── Score row ── */}
-      <div className="match-hud__score">
+      <div className="match-hud__score" aria-live="polite">
         <span className="match-hud__score-value match-hud__score-value--local">
           {localScore}
         </span>
@@ -295,6 +295,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
       {/* ── Latest round result banner (only during ROUND_ENDED) ── */}
       {phase === MatchPhase.ROUND_ENDED && localWonLastRound !== null && (
         <div
+          aria-live="polite"
           className={`match-hud__banner ${
             localWonLastRound
               ? "match-hud__banner--success"
@@ -308,6 +309,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
       {/* ── Match winner banner (only during MATCH_ENDED) ── */}
       {phase === MatchPhase.MATCH_ENDED && localWonMatch !== null && (
         <div
+          aria-live="assertive"
           className={`match-hud__banner match-hud__banner--match ${
             localWonMatch
               ? "match-hud__banner--success"

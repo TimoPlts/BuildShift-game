@@ -11,7 +11,31 @@
  *
  * This is a DOM-based overlay driven from the game render loop. It reads
  * from a mutable debug state object that the GameRuntime updates each frame.
+ *
+ * The overlay is HIDDEN BY DEFAULT. It is only attached when the caller
+ * explicitly opts in through the `?debug=1` / `?debug=true` URL query
+ * parameter (see {@link debugHudEnabledFromUrl}).
  */
+
+/**
+ * Resolve whether the development/debug HUD was explicitly requested through
+ * a URL query parameter (`?debug=1` or `?debug=true`).
+ *
+ * The debug HUD is hidden by default; it is only shown when the caller
+ * explicitly opts in via the query parameter. Passing an explicit `url`
+ * keeps the helper unit-testable without a browser; when omitted the
+ * helper reads the current page URL (or defaults to disabled in
+ * non-browser environments).
+ */
+export function debugHudEnabledFromUrl(url?: URL): boolean {
+  const target =
+    url ??
+    (typeof window !== "undefined"
+      ? new URL(window.location.href)
+      : new URL("about:blank"));
+  const value = target.searchParams.get("debug");
+  return value === "1" || value === "true";
+}
 
 /**
  * The mutable debug state that the GameRuntime updates each frame.

@@ -209,6 +209,73 @@ html, body {
   align-items: center;
   gap: 0.5rem;
 }
+/* Waiting-for-opponent pill (lobby state). */
+.match-hud__waiting {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #aeb9ca;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.4rem;
+  background: rgb(255 255 255 / 4%);
+}
+/* Pre-round countdown: large centred number inside the header. */
+.match-hud__countdown {
+  font-size: 2.2rem;
+  font-weight: 800;
+  line-height: 1;
+  color: #e6e8ee;
+  text-shadow: 0 2px 12px rgb(0 0 0 / 70%), 0 0 24px rgb(52 211 153 / 35%);
+}
+/* Round timer: track + remaining time. */
+.match-hud__timer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.match-hud__timer-track {
+  width: 11rem;
+  height: 6px;
+  background: rgb(0 0 0 / 55%);
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.match-hud__timer-fill {
+  height: 100%;
+  background: #67e8f9;
+  border-radius: 3px;
+  /* The authoritative timer updates at whole-second resolution; a linear
+     1s transition keeps the bar visibly smooth between updates. */
+  transition: width 1s linear;
+}
+.match-hud__timer--low .match-hud__timer-fill {
+  background: #f0616d;
+}
+.match-hud__timer-value {
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e6e8ee;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+.match-hud__timer--low .match-hud__timer-value {
+  color: #f0616d;
+}
+/* Round-end outcome tag (anti-stall / time-up / elimination / disconnect). */
+.match-hud__reason {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #aeb9ca;
+  padding: 0.12rem 0.45rem;
+  border: 1px solid rgb(255 255 255 / 14%);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 5%);
+}
 .match-hud__score-value {
   font-size: 1.4rem;
   font-weight: 700;
