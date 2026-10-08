@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import "./styles.css";
+import "./developer-diagnostics.css";
 
 // Application entry point.
 // The Babylon render loop will be mounted separately and kept independent of
