@@ -10,7 +10,7 @@
  *    combat state (authoritative, reconciled from server state),
  *  - energy — the energy runtime consumer's mirrored authoritative value,
  *  - weapon type / magazine size / reload state — the weapon controller
- *    (reconciled from the authoritative `weapon:state_update` event),
+ *    (reconciled from the authoritative `combat:weapon_state` event),
  *  - build mode / selected piece / placement preview — the client building
  *    system (player intent + non-authoritative preview),
  *  - round timer / countdown — the authoritative server lifecycle

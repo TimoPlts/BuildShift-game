@@ -13,11 +13,10 @@
  *  - the first-person weapon model is the modular `WeaponModelPresentation`,
  *    owned by the runtime and parented to the local player's presentation
  *    root (no separate player rig or second scene graph);
- *  - local weapon input (switch / reload / fire) goes through the existing
- *    `WeaponController` and reaches the server ONLY via the shared
- *    `NetworkClient.send` route — the runtime never opens a second
- *    connection or sends weapon traffic on a side channel;
- *  - the authoritative `weapon:state_update` broadcast reconciles the local
+ *  - local weapon input uses the existing `WeaponController` and the canonical
+ *    `NetworkClient` commands/input frame — no retired `weapon:*` messages
+ *    can leave the runtime;
+ *  - the authoritative `combat:weapon_state` broadcast reconciles the local
  *    weapon state only for the local session (canonical authoritative
  *    state, not a client-predicted mirror);
  *  - round reset / rematch and (re)connect restore the default weapon on the
@@ -45,31 +44,38 @@ describe("GameRuntime weapon model wiring", () => {
     );
   });
 
-  it("routes local weapon-switch intent through the shared NetworkClient", () => {
+  it("routes both weapon-slot intents through the canonical switch command", () => {
     const idx = runtime.indexOf("consumeWeaponSlot1Pressed()");
     expect(idx).toBeGreaterThan(-1);
     const block = runtime.slice(idx, idx + 300);
     // The switch is accepted by the existing controller first ...
     expect(block).toContain("this.weaponController.switchWeapon(\"assault_rifle\")");
-    // ... and only then is the canonical switch message sent on the shared
-    // network client, with the model mirroring the accepted weapon.
-    expect(block).toContain("this.networkClient.send(SWITCH_WEAPON_MESSAGE,msg)");
+    // ... and only then is the canonical switch command sent on the shared
+    // client, with the model mirroring the accepted weapon.
+    expect(block).toContain("this.networkClient.sendWeaponSwitch(r.targetWeapon)");
     expect(block).toContain("this.weaponModel.setEquippedWeapon(r.targetWeapon)");
+    expect(runtime).toContain("consumeWeaponSlot2Pressed()");
+    expect(runtime).toContain("sendWeaponSwitch(r.targetWeapon)");
   });
 
-  it("routes local reload and fire intents through the shared NetworkClient", () => {
-    // Reload: the request carries the local session id read from the client.
+  it("routes local reload and fire intent through the canonical network path", () => {
+    // Reload is sent by the NetworkClient's canonical command.
     const reloadIdx = runtime.indexOf("consumeReloadPressed()");
     expect(reloadIdx).toBeGreaterThan(-1);
     const reloadBlock = runtime.slice(reloadIdx, reloadIdx + 300);
-    expect(reloadBlock).toContain("this.networkClient.sessionId");
-    expect(reloadBlock).toContain("this.networkClient.send(RELOAD_MESSAGE,msg)");
-    // Fire: the controller-produced request is sent on the shared client.
-    expect(runtime).toContain("this.networkClient.send(FIRE_MESSAGE,r.request);");
+    expect(reloadBlock).toContain("this.networkClient.sendWeaponReload()");
+    // Fire authority is carried by `primaryFire` in the shared input batch.
+    // No retired direct weapon message may be sent by the runtime.
+    expect(runtime).toContain("primaryFire:fi");
+    expect(runtime).toContain("this.inputBatcher.send(sample,this.networkClient");
+    expect(runtime).not.toContain("weapon:");
+    expect(runtime).not.toContain("FIRE_MESSAGE");
+    expect(runtime).not.toContain("SWITCH_WEAPON_MESSAGE");
+    expect(runtime).not.toContain("RELOAD_MESSAGE");
   });
 
-  it("reconciles the authoritative weapon-state broadcast for the local session only", () => {
-    const idx = runtime.indexOf("onEvent(WEAPON_STATE_UPDATE_EVENT");
+  it("reconciles the canonical authoritative weapon-state broadcast for the local session only", () => {
+    const idx = runtime.indexOf("onEvent(WEAPON_STATE_EVENT");
     expect(idx).toBeGreaterThan(-1);
     const block = runtime.slice(idx, idx + 200);
     // Canonical authoritative state: gated on a known local session id ...

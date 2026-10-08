@@ -2,12 +2,6 @@ import type { WeaponType, FireRequest, Vec3 } from "@buildshift/protocol";
 import { isWeaponType } from "@buildshift/protocol";
 import { getEnergyFightWeaponById, type EnergyFightWeaponId, ASSAULT_RIFLE_WEAPON_ID } from "@buildshift/game-config";
 
-export const SWITCH_WEAPON_MESSAGE = "weapon:switch" as const;
-export const RELOAD_MESSAGE = "weapon:reload" as const;
-export const FIRE_MESSAGE = "weapon:fire" as const;
-export const WEAPON_STATE_UPDATE_EVENT = "weapon:state_update" as const;
-export const FIRE_RESULT_EVENT = "weapon:fire_result" as const;
-
 export interface LocalWeaponState {
   weaponType: WeaponType;
   currentAmmo: number;
