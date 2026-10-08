@@ -32,6 +32,7 @@ import { EnergyHud } from "../EnergyHud";
 import { BuildHud } from "../BuildHud";
 import { WeaponHUD } from "./WeaponHud";
 import { CombatVitalsHud } from "./CombatVitalsHud";
+import { BuildEditHud } from "./BuildEditHud";
 import type { LocalHudView } from "../../game/localHudView";
 import "./game-hud.css";
 
@@ -109,6 +110,13 @@ export function GameHud(props: GameHudProps): JSX.Element | null {
             selectedBuildType={local.selectedBuildType}
             placementValid={local.placementValid}
             gridPosition={local.gridPosition}
+          />
+          <BuildEditHud
+            mode={local.buildEdit.mode}
+            target={local.buildEdit.target}
+            selectedEdit={local.buildEdit.selectedEdit}
+            allowedEdits={local.buildEdit.allowedEdits}
+            feedback={local.buildEdit.feedback}
           />
         </>
       )}

@@ -421,3 +421,112 @@ html, body {
   color: #6b7280;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── BuildEditHud — owned-wall edit panel (sits above the build HUD) ── */
+.build-edit-hud {
+  position: absolute;
+  bottom: 5.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid rgb(96 165 250 / 28%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 20 / 80%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.build-edit-hud--feedback-only {
+  border-color: rgb(255 255 255 / 12%);
+}
+.build-edit-hud__top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.build-edit-hud__mode-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+}
+.build-edit-hud__mode-label--active {
+  color: #60a5fa;
+}
+.build-edit-hud__target {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e6e8ee;
+  letter-spacing: 0.02em;
+}
+.build-edit-hud__edits {
+  display: flex;
+  gap: 0.35rem;
+}
+.build-edit-hud__edit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.12rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 4%);
+  min-width: 3.6rem;
+}
+.build-edit-hud__edit--empty {
+  border-style: dashed;
+}
+.build-edit-hud__edit--selected {
+  border-color: rgb(96 165 250 / 65%);
+  background: rgb(96 165 250 / 14%);
+}
+.build-edit-hud__edit-key {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #8b93a7;
+}
+.build-edit-hud__edit--selected .build-edit-hud__edit-key {
+  color: #60a5fa;
+}
+.build-edit-hud__edit-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+.build-edit-hud__edit--selected .build-edit-hud__edit-label {
+  color: #93c5fd;
+}
+.build-edit-hud__feedback {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0.35rem;
+}
+.build-edit-hud__feedback--accepted {
+  color: #34d399;
+  background: rgb(52 211 153 / 12%);
+}
+.build-edit-hud__feedback--rejected {
+  color: #f0616d;
+  background: rgb(240 97 109 / 12%);
+}
+.build-edit-hud__hint {
+  font-size: 0.62rem;
+  color: #6b7280;
+  letter-spacing: 0.04em;
+}
+.build-edit-hud__hint span {
+  color: #8b93a7;
+  font-weight: 700;
+}

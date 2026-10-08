@@ -28,6 +28,10 @@ import type {
   GridPosition,
   WeaponType,
 } from "@buildshift/protocol";
+import {
+  buildEditHudChangeKey,
+  type BuildEditHudState,
+} from "./buildEdit/buildEditHudView";
 
 /**
  * One snapshot of the authoritative round timer (the server's
@@ -83,6 +87,12 @@ export interface LocalHudView {
   placementValid: boolean | null;
   /** The grid cell the selected piece would anchor to (null without a candidate). */
   gridPosition: GridPosition | null;
+  /**
+   * The build-edit presentation snapshot (owned-wall selection + chosen edit
+   * + accepted/rejected feedback). Presentation-only — never feeds back into
+   * gameplay or networking.
+   */
+  buildEdit: BuildEditHudState;
   /** The authoritative round timer, or `null` outside an active round. */
   roundTimer: LocalRoundTimer | null;
   /** The authoritative pre-round countdown in whole seconds (0 otherwise). */
@@ -109,6 +119,7 @@ export interface LocalHudViewInput {
   selectedBuildType: BuildType;
   placementValid: boolean | null;
   gridPosition: GridPosition | null;
+  buildEdit: BuildEditHudState;
   roundTimer: LocalRoundTimer | null;
   countdownSeconds: number;
 }
@@ -175,6 +186,7 @@ export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
     selectedBuildType: input.selectedBuildType,
     placementValid: input.placementValid,
     gridPosition: input.gridPosition,
+    buildEdit: input.buildEdit,
     roundTimer,
     countdownSeconds: floorNonNegative(input.countdownSeconds, 0),
   };
@@ -214,6 +226,7 @@ export function localHudChangeKey(view: LocalHudView): string {
     view.selectedBuildType,
     validity,
     grid,
+    buildEditHudChangeKey(view.buildEdit),
     timerRemainingSec,
     timerTotalMs,
     Math.round(view.countdownSeconds),
