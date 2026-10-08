@@ -1,28 +1,25 @@
 import {
   JUMP_INPUT_TIMING,
-  PLAYER_COLLIDER,
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
-  PLAYER_COLLIDER_TOTAL_HEIGHT,
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
 import {
   JumpController,
   stepVerticalMovement,
 } from "@buildshift/simulation";
-import { Color3 } from "@babylonjs/core/Maths/math.color";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
-import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Scene } from "@babylonjs/core/scene";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { SubstepInput } from "./substepInput";
 import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
+import { PlayerPresentation } from "../scene/PlayerPresentation";
 
 /**
- * The local (Stage 1) player: a visible capsule plus a small marker showing
- * the forward direction.
+ * The local (Stage 1) player: a stylized low-poly body (see
+ * {@link PlayerPresentation}) whose root transform mirrors the physics
+ * position and facing yaw.
  *
  * From Stage 1D on this controller is *presentation only*. It no longer owns
  * the position — the Rapier character controller (via {@link PhysicsWorld})
@@ -50,9 +47,16 @@ import { computePredictionTranslation } from "./predictionMovement";
  * = camera yaw).
  */
 export class PlayerController {
-  private readonly mesh: AbstractMesh;
-  private readonly material: StandardMaterial;
-  private readonly forwardMarker: AbstractMesh;
+  /** Owns every visual mesh/material of the local player body. */
+  private readonly presentation: PlayerPresentation;
+  /**
+   * Presentation root (transform only, no geometry). Its position is the
+   * mirrored capsule-centre position. Its Y rotation is the NEGATED facing
+   * yaw (Babylon's node Y-rotation turns local -Z toward -X for positive
+   * angles, while the shared movement convention turns forward toward +X).
+   * The prediction state always stores the shared-convention yaw.
+   */
+  private readonly mesh: TransformNode;
   private readonly physics: PhysicsWorld;
   /** Owns the jump-buffer / coyote-time timing and the launch decision. */
   private readonly jumpController: JumpController;
@@ -76,40 +80,13 @@ export class PlayerController {
     this.physics = physics;
     this.jumpController = new JumpController(JUMP_INPUT_TIMING);
 
-    this.material = new StandardMaterial("local-player-material", scene);
-    this.material.diffuseColor = new Color3(0.25, 0.9, 0.48);
-    this.material.emissiveColor = new Color3(0.02, 0.12, 0.05);
-
-    this.mesh = MeshBuilder.CreateCapsule(
-      "local-player",
-      {
-        height: PLAYER_COLLIDER_TOTAL_HEIGHT,
-        radius: PLAYER_COLLIDER.radius,
-        tessellation: 16,
-      },
-      scene,
-    );
-    this.mesh.material = this.material;
+    // Presentation only: the modular low-poly body (green "local" variant).
+    // Its root starts exactly where the physics world says the character is
+    // (capsule centre = PLAYER_SPAWN).
+    this.presentation = PlayerPresentation.create(scene, "local", "local-player");
+    this.mesh = this.presentation.root;
     const center = this.physics.getPosition();
     this.mesh.position.set(center.x, center.y, center.z);
-
-    // Small visual forward indicator on the otherwise symmetric capsule:
-    // a thin box on the chest, offset 0.35 m forward (Babylon -Z local).
-    const markerMaterial = new StandardMaterial(
-      "local-player-forward-marker",
-      scene,
-    );
-    markerMaterial.diffuseColor = new Color3(0.95, 0.95, 0.95);
-    markerMaterial.emissiveColor = new Color3(0.25, 0.25, 0.25);
-
-    this.forwardMarker = MeshBuilder.CreateBox(
-      "local-player-forward-marker",
-      { width: 0.22, height: 0.08, depth: 0.06 },
-      scene,
-    );
-    this.forwardMarker.material = markerMaterial;
-    this.forwardMarker.parent = this.mesh;
-    this.forwardMarker.position.set(0, 0.2, -0.35);
   }
 
   /**
@@ -173,9 +150,10 @@ export class PlayerController {
     const center = this.physics.getPosition();
     this.mesh.position.set(center.x, center.y, center.z);
 
-    // Face the camera look direction (Babylon Y rotation: 0 = -Z, positive
-    // rotates toward +X — the same convention as the movement math).
-    this.mesh.rotation.y = lookYawRadians;
+    // Face the camera look direction. The shared convention is yaw 0 = -Z,
+    // positive toward +X; the Babylon root rotation is negated (see the
+    // mesh field docs) so the body's front faces the movement forward.
+    this.mesh.rotation.y = -lookYawRadians;
   }
 
   /**
@@ -192,7 +170,7 @@ export class PlayerController {
     yaw: number,
   ): void {
     this.mesh.position.set(position.x, position.y, position.z);
-    this.mesh.rotation.y = yaw;
+    this.mesh.rotation.y = -yaw;
   }
 
   /**
@@ -212,7 +190,9 @@ export class PlayerController {
       verticalVelocity: this.verticalVelocity,
       lastGrounded: this.lastGrounded,
       jump: this.jumpController.captureState(),
-      facingYaw: this.mesh.rotation.y,
+      // The mesh rotation is the negated yaw (Babylon convention); the
+      // prediction state stores the shared-movement yaw.
+      facingYaw: -this.mesh.rotation.y,
     };
   }
 
@@ -233,13 +213,14 @@ export class PlayerController {
     this.verticalVelocity = state.verticalVelocity;
     this.lastGrounded = state.lastGrounded;
     this.jumpController.restoreState(state.jump);
-    // Presentation mirror: mesh position + facing yaw.
+    // Presentation mirror: mesh position + facing yaw (negated for the
+    // Babylon root rotation — see the mesh field docs).
     this.mesh.position.set(
       state.position.x,
       state.position.y,
       state.position.z,
     );
-    this.mesh.rotation.y = state.facingYaw;
+    this.mesh.rotation.y = -state.facingYaw;
   }
 
   /**
@@ -258,7 +239,7 @@ export class PlayerController {
   ): void {
     this.physics.setPosition(position);
     this.mesh.position.set(position.x, position.y, position.z);
-    this.mesh.rotation.y = yaw;
+    this.mesh.rotation.y = -yaw;
   }
 
   /**
@@ -307,9 +288,7 @@ export class PlayerController {
       return;
     }
 
-    this.forwardMarker.dispose();
-    this.mesh.dispose();
-    this.material.dispose();
+    this.presentation.dispose();
     this.physics.dispose();
     this.disposed = true;
   }
