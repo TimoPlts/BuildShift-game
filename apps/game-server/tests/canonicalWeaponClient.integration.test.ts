@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import { ASSAULT_RIFLE, SHOTGUN } from "@buildshift/game-config";
-import { BUILD_EVENTS, MatchPhase } from "@buildshift/protocol";
+import { BUILD_EDIT_EVENTS, BUILD_EVENTS, MatchPhase } from "@buildshift/protocol";
 import { NetworkClient } from "../../web/src/game/network/NetworkClient";
 import { startServer, shutdownServer } from "../src/server.js";
 
@@ -55,7 +55,7 @@ it("real NetworkClient fire, reload, and build edits round-trip through the cano
     await until(() => a.state.building.structures[id]?.openings?.[0]?.pattern === "window_center" && b.state.building.structures[id]?.openings?.[0]?.pattern === "window_center");
     a.sendBuildEdit(id, "none");
     await until(() => a.state.building.structures[id]?.openings?.length === 0 && b.state.building.structures[id]?.openings?.length === 0);
-    a.send("two-player:build_edit", { structureId: id, editType: "half_top", gridOffset: { x: 1, y: 1, z: 0 } });
+    a.send(BUILD_EDIT_EVENTS.EDIT_REQUEST, { structureId: id, editType: "half_top", gridOffset: { x: 1, y: 1, z: 0 } });
     await until(() => a.state.building.structures[id]?.editType === "half_top" && b.state.building.structures[id]?.editType === "half_top");
   } finally {
     a.stop(); b.stop();

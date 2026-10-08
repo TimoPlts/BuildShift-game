@@ -33,6 +33,7 @@ import {
   type ParsedPlayerState,
 } from "./playerStateParse";
 import { resolveGameServerUrl } from "./serverUrl";
+import { REMATCH_REQUEST_MESSAGE } from "./matchEvents";
 
 export const ROOM_NAME = "two-player-movement";
 export const INPUT_MESSAGE_TYPE = "two-player:input";
@@ -169,6 +170,11 @@ export class NetworkClient {
     editPattern: StructureOpeningPattern,
   ): boolean {
     return this.send(BUILD_EDIT_MESSAGE, { structureId, editPattern });
+  }
+
+  /** Send one canonical mutual-rematch vote without leaving the current room. */
+  public sendRematchRequest(): boolean {
+    return this.send(REMATCH_REQUEST_MESSAGE, {});
   }
 
   public send(type: string, payload?: unknown): boolean {

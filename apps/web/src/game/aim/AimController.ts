@@ -19,7 +19,11 @@ export class AimController {
    */
   public getAimDirection(camera: Camera, out?: Vector3): Vector3 {
     const result = out ?? new Vector3();
-    camera.getDirection(result);
+    // `getDirection` returns a vector for the *local axis passed to it*; it
+    // does not write a camera forward vector into an output parameter.  Using
+    // `result` for that argument therefore asked for the direction of the
+    // zero vector and left the build preview with no downward aim ray.
+    camera.getDirectionToRef(Vector3.Forward(), result);
     result.normalize();
     return result;
   }

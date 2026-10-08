@@ -7,6 +7,7 @@ describe("NetworkClient canonical weapon commands", () => {
     const client = new NetworkClient() as unknown as {
       sendWeaponSwitch(weaponId: "assault_rifle" | "shotgun"): boolean;
       sendWeaponReload(): boolean;
+      sendRematchRequest(): boolean;
       room: { send(type: string, payload?: unknown): void } | null;
       _isConnected: boolean;
     };
@@ -20,9 +21,11 @@ describe("NetworkClient canonical weapon commands", () => {
 
     expect(client.sendWeaponSwitch("shotgun")).toBe(true);
     expect(client.sendWeaponReload()).toBe(true);
+    expect(client.sendRematchRequest()).toBe(true);
     expect(sent).toEqual([
       { type: "two-player:weapon_switch", payload: { targetWeaponId: "shotgun" } },
       { type: "two-player:weapon_reload", payload: {} },
+      { type: "match:rematch_request", payload: {} },
     ]);
     expect(sent.some(message => message.type.startsWith("weapon:"))).toBe(false);
   });

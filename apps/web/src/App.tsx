@@ -43,7 +43,7 @@ export function App() {
   }, []);
 
   const handlePlayAgain = useCallback(() => {
-    actionsRef.current?.rejoinRoom();
+    actionsRef.current?.requestRematch();
   }, []);
 
   const handleLeave = useCallback(() => {

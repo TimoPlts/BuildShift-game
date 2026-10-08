@@ -10,7 +10,6 @@ import { handleBuildPlacement } from "../match/buildPlacement.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
 export const WEAPON_SWITCH_INPUT = "two-player:weapon_switch";
-const BUILD_EDIT_INPUT = "two-player:build_edit";
 const THZ = 30, TD = 1 / THZ;
 const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gravity, jumpVelocity: VERTICAL_MOVEMENT.jumpVelocity, terminalVelocity: VERTICAL_MOVEMENT.terminalVelocity, groundY: VERTICAL_MOVEMENT.groundY };
 const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
@@ -65,7 +64,7 @@ export class TwoPlayerMovementRoom extends Room<{
     private readonly rematchVotes = new Set<string>();
     private matchEndedAt = 0;
     constructor(...args: ConstructorParameters<typeof Room>) { super(...args); this.bld.structures = this.state.structures; this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; }); }
-    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EDIT_INPUT, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
+    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
     onJoin(c: Client): void { const si = this.jc % SP.length, sp = SP[si]; this.jc++; this.ss.set(c.sessionId, si); const p = new PlayerStateSchema(); p.x = sp.x; p.y = sp.y; p.z = sp.z; p.yaw = 0; p.velocityY = 0; p.grounded = true; p.lastProcessedSequence = -1; p.health = MAX_HEALTH; p.shield = MAX_SHIELD; p.energy = ENERGY.startingEnergy; p.alive = true; p.isEliminated = false; initW(p); this.wps.set(c.sessionId, cws()); this.state.players.set(c.sessionId, p); const r = new RoundScoreSchema(); r.value = 0; this.state.roundScore.set(c.sessionId, r); if (this.state.matchPhase === MatchPhase.MATCH_ENDED)
         this.resetMatch(); }
     onLeave(c: Client, _e?: number): void { const ph = this.state.matchPhase as MatchPhase; if (ph === MatchPhase.IN_PROGRESS) {

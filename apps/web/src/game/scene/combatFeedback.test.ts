@@ -233,6 +233,16 @@ describe("CombatFeedback", () => {
     expect(liveFeedbackMeshes(scene).length).toBe(0);
   });
 
+  it("keeps every pooled presentation mesh out of gameplay picking", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    const presentationMeshes = scene.meshes.filter((mesh) => mesh.name.startsWith(NAME_PREFIX));
+    expect(presentationMeshes.length).toBeGreaterThan(0);
+    expect(presentationMeshes.every((mesh) => mesh.isPickable === false)).toBe(true);
+  });
+
   it("rapid fire beyond the pool size reuses slots instead of growing", () => {
     engine = new NullEngine();
     scene = makeScene(engine);

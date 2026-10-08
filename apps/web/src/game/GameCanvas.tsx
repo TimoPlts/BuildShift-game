@@ -17,12 +17,12 @@ export interface GameRuntimeActions {
   /**
    * Request a rematch after the match has ended.
    *
-   * Routes through the runtime's existing rejoin mechanism to start a
-   * fresh match without the caller needing to know the transport details.
+   * Routes through the runtime's canonical rematch command without leaving
+   * the authoritative room.
    * The parent (e.g. App) calls this from the MatchEndScreen's
    * "Play Again" / "Rematch" button.
    */
-  requestRematch: () => Promise<void>;
+  requestRematch: () => boolean;
 }
 
 /**
@@ -89,12 +89,12 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         );
         onLifecycleChangeRef.current?.(initialView);
 
-        // Notify parent that runtime actions are available, including
-        // the rematch action routed through the existing runtime rejoin.
+        // Notify parent that runtime actions are available, including the
+        // canonical in-room rematch action.
         onRuntimeReadyRef.current?.({
           leaveRoom: () => r.leaveRoom(),
           rejoinRoom: () => r.rejoinRoom(),
-          requestRematch: () => r.rejoinRoom(),
+          requestRematch: () => r.requestRematch(),
         });
 
         // Subscribe to the authoritative match-state updates (score / phase /

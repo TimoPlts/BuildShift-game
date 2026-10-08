@@ -19,9 +19,9 @@
  *  - the runtime's match state comes from the shared `NetworkClient`'s
  *    `onStateChange` (the canonical authoritative route) and is republished
  *    through `onMatchStateChange` for the React layer;
- *  - rematch routes through the runtime's EXISTING rejoin mechanism
- *    (`rejoinRoom` -> `networkClient.stop()` + `start()`) — the same
- *    NetworkClient that runs the match, never a second connection;
+ *  - rematch routes through the runtime's canonical in-room command
+ *    (`requestRematch` -> `NetworkClient.sendRematchRequest`) — the same
+ *    NetworkClient that runs the match, without a second connection;
  *  - the authoritative match mapping (`buildMatchLifecycleView`) translates
  *    the parsed server state into the local player's perspective and
  *    connection-gates the countdown (unit-tested below with the real parser
@@ -51,8 +51,9 @@ describe("App round / match lifecycle presentation", () => {
     expect(app).toContain("onPlayAgain={handlePlayAgain}");
   });
 
-  it("routes Play Again through the runtime's rejoin action", () => {
-    expect(app).toContain("actionsRef.current?.rejoinRoom();");
+  it("routes Play Again through the runtime's canonical rematch action", () => {
+    expect(app).toContain("actionsRef.current?.requestRematch();");
+    expect(app).not.toContain("actionsRef.current?.rejoinRoom();");
   });
 });
 
@@ -75,11 +76,11 @@ describe("GameCanvas round / match lifecycle wiring", () => {
     expect(canvas).toContain("unsubMatch?.();");
   });
 
-  it("exposes rematch through the runtime's existing rejoin mechanism", () => {
-    // Both the rejoin action and the rematch action delegate to the SAME
-    // runtime rejoin — no second client or second connection surface.
+  it("exposes rematch through the runtime's canonical in-room command", () => {
+    // Rejoin remains a separate lifecycle action. Rematch must leave neither
+    // the room nor the canonical client connection.
     expect(canvas).toContain("rejoinRoom: () => r.rejoinRoom(),");
-    expect(canvas).toContain("requestRematch: () => r.rejoinRoom(),");
+    expect(canvas).toContain("requestRematch: () => r.requestRematch(),");
     expect(canvas).toContain("leaveRoom: () => r.leaveRoom(),");
   });
 });
@@ -102,12 +103,16 @@ describe("GameRuntime round / match state route", () => {
   });
 
   it("rejoins a room through the existing NetworkClient stop/start route", () => {
-    // Rematch = stop the current room and start a fresh one on the SAME
-    // client instance (the canonical route, no second connection).
     expect(runtime).toContain(
       "public async rejoinRoom():Promise<void>{this.networkClient.stop();await this.networkClient.start();}",
     );
     expect(runtime).toContain("public leaveRoom():void{this.networkClient.stop();}");
+  });
+
+  it("sends rematch through the existing NetworkClient without rejoining", () => {
+    expect(runtime).toContain(
+      "public requestRematch():boolean{return this.networkClient.sendRematchRequest();}",
+    );
   });
 
   it("clears match bookkeeping on (re)connect so a rematch starts clean", () => {
