@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
-import { MatchHud, type MatchHudProps } from "../ui/MatchHud";
+import type { MatchHudProps } from "../ui/MatchHud";
+import { GameHud } from "../ui/hud/GameHud";
+import type { LocalHudView } from "./localHudView";
 import { mapMatchStateToHudProps } from "./matchHudMapper";
 import { buildMatchLifecycleView, type MatchLifecycleView } from "./matchLifecycleView";
 import type { ParsedMatchState } from "./network";
@@ -48,6 +50,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [matchHudProps, setMatchHudProps] = useState<MatchHudProps | null>(null);
+  const [localHud, setLocalHud] = useState<LocalHudView | null>(null);
   const onLifecycleChangeRef = useRef(onMatchLifecycleChange);
   const onRuntimeReadyRef = useRef(onRuntimeReady);
   onLifecycleChangeRef.current = onMatchLifecycleChange;
@@ -62,6 +65,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
     let active = true;
     let runtime: GameRuntime | undefined;
     let unsubMatch: (() => void) | undefined;
+    let unsubLocalHud: (() => void) | undefined;
 
     GameRuntime.create(canvas)
       .then((r) => {
@@ -72,11 +76,15 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         runtime = r;
         r.start();
 
+        // Prime the local HUD (vitals, energy, weapon, build state) from the
+        // runtime's existing authoritative / predicted sources.
+        setLocalHud(r.getLocalHudView());
+
         // Build and emit the initial lifecycle view (disconnected state).
         const initialView = buildMatchLifecycleView(
           r.getMatchState(),
           r.getSessionId(),
-          0,
+          r.getCountdownSeconds(),
           r.connected,
         );
         onLifecycleChangeRef.current?.(initialView);
@@ -89,14 +97,21 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
           requestRematch: () => r.rejoinRoom(),
         });
 
-        // Subscribe to authoritative match-state updates to drive the HUD
-        // and the match lifecycle view.
+        // Subscribe to the authoritative match-state updates (score / phase /
+        // banners) and to the runtime's local HUD snapshots (vitals, energy,
+        // weapon, build state, authoritative round timer / countdown).
+        unsubLocalHud = r.onLocalHudChange(setLocalHud);
         unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
           const sid = r.getSessionId();
           if (!sid) return;
 
           // Build the lifecycle view to derive countdown and connection state.
-          const view = buildMatchLifecycleView(state, sid, 0, r.connected);
+          const view = buildMatchLifecycleView(
+            state,
+            sid,
+            r.getCountdownSeconds(),
+            r.connected,
+          );
 
           // Wire the full lifecycle-derived props into the presentation-only
           // MatchHud: base score/phase data plus the optional countdown and
@@ -128,6 +143,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
     return () => {
       active = false;
       unsubMatch?.();
+      unsubLocalHud?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
       runtime?.dispose();
     };
@@ -141,7 +157,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         aria-label="BuildShift 3D game viewport"
       />
       {pointerLocked && <div className="crosshair" aria-hidden="true" />}
-      {matchHudProps && <MatchHud {...matchHudProps} />}
+      {matchHudProps !== null && <GameHud match={matchHudProps} local={localHud} />}
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>

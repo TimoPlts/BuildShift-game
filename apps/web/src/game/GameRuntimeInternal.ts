@@ -10,9 +10,6 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { Scene } from "@babylonjs/core/scene";
 import { PLAYER_COLLIDER, PLAYER_COLLIDER_TOTAL_HEIGHT } from "@buildshift/game-config";
 import type { NetworkClient } from "./network";
-import type { LocalCombatState } from "./network";
-import type { HealthHud } from "./network/HealthHud";
-import { reconcileHealthDisplay } from "./network";
 import type { MovementDebugHUD } from "../ui/MovementDebugHUD";
 import type { PlayerController } from "./player/PlayerController";
 import type { EnergyRuntimeConsumer } from "./energy";
@@ -25,7 +22,6 @@ export interface GameRuntimeDisposables {
   weaponController: WeaponController;
   networkClient: NetworkClient;
   debugHud: MovementDebugHUD;
-  combatHud: HealthHud;
   playerController: PlayerController;
   inputManager: { dispose(): void };
   cameraController: { dispose(): void };
@@ -41,7 +37,6 @@ export function disposeGameRuntimeResources(d: GameRuntimeDisposables): void {
   d.weaponController.dispose();
   d.networkClient.dispose();
   d.debugHud.dispose();
-  d.combatHud.dispose();
   if (d.remoteMesh) d.remoteMesh.dispose();
   if (d.remoteMarker) d.remoteMarker.dispose();
   if (d.remoteMaterial) d.remoteMaterial.dispose();
@@ -111,18 +106,6 @@ export function updateRemotePlayersVisuals(
 export function setRemoteVisible(visuals: RemotePlayerVisuals, v: boolean): void {
   if (visuals.remoteMesh) visuals.remoteMesh.setEnabled(v);
   if (visuals.remoteMarker) visuals.remoteMarker.setEnabled(v);
-}
-
-export function updateCombatHudFn(
-  combatHud: HealthHud,
-  combatState: LocalCombatState,
-): void {
-  reconcileHealthDisplay(combatHud, {
-    health: combatState.health,
-    shield: combatState.shield,
-    ammo: combatState.ammo,
-    isEliminated: combatState.isEliminated,
-  });
 }
 
 export function updateDebugHudFn(
