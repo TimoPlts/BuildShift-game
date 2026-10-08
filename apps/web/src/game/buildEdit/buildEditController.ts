@@ -15,7 +15,8 @@
  *    (`BUILD_EDIT_EVENTS.EDIT_REQUEST`) message; and
  *  - turns the authoritative `build:edit_result`
  *    (`BUILD_EDIT_EVENTS.EDIT_RESULT`) broadcast into accepted/rejected
- *    feedback for the HUD.
+ *    feedback for the HUD, and reports edit-mode enter/exit transitions as
+ *    brief informational banners;
  *
  * Authority contract: this controller NEVER edits structures on its own
  * authority. It sends *intents* and consumes the server's result. The
@@ -28,6 +29,7 @@
 import {
   BUILD_EDIT_EVENTS,
   BUILD_EDIT_TYPES,
+  isBuildEditType,
   type BuildEditType,
   type BuildingState,
 } from "@buildshift/protocol";
@@ -77,13 +79,16 @@ export interface BuildEditResultInfo {
   structureId: string;
   success: boolean;
   reason?: string;
+  /** The edit the server confirmed ("" when the opening was cleared). */
+  editType?: string;
 }
 
-/** Accepted/rejected feedback shown (briefly) in the HUD. */
+/** Accepted/rejected/informational feedback shown (briefly) in the HUD. */
 export interface BuildEditFeedback {
-  kind: "accepted" | "rejected";
+  kind: "accepted" | "rejected" | "info";
   message: string;
-  structureId: string;
+  /** Set for accepted/rejected feedback tied to a structure. */
+  structureId?: string;
 }
 
 /**
@@ -95,6 +100,17 @@ export const BUILD_EDIT_RANGE = BUILD_RANGE.maxPlacementDistance;
 
 /** How long (ms) an accepted/rejected feedback banner stays on screen. */
 const FEEDBACK_TTL_MS = 3000;
+
+/** How long (ms) an edit-mode enter/exit (info) banner stays on screen. */
+const MODE_FEEDBACK_TTL_MS = 2000;
+
+/** Short, human-readable labels for edits confirmed by an accepted result. */
+const EDIT_TYPE_LABELS: Readonly<Record<string, string>> = {
+  door: "Door",
+  window: "Window",
+  half_top: "Top half",
+  half_bottom: "Bottom half",
+};
 
 /** A short, human-readable label per authoritative rejection reason. */
 const REJECTION_LABELS: Readonly<Record<string, string>> = {
@@ -177,7 +193,8 @@ export class BuildEditController {
    * Drives the build-edit system for one render frame:
    *
    *  1. expires stale feedback,
-   *  2. mirrors the input controller's edit-mode state (and clears the
+   *  2. mirrors the input controller's edit-mode state, reporting a
+   *     genuine enter/exit transition to the HUD (and clearing the
    *     preview when the mode turns off),
    *  3. resolves the aim target,
    *  4. applies any latched edit choice (clamped to the target's allowed set),
@@ -196,8 +213,27 @@ export class BuildEditController {
       this.feedback = null;
     }
 
-    // 2. mirror edit mode; exiting mode drops the preview.
-    this.mode = this.input.isEditModeActive();
+    // 2. mirror edit mode; report user enter/exit transitions to the HUD.
+    //    A forced exit (round reset / disconnect) sets this.mode directly in
+    //    reset()/clearOnDisconnect(), so it is never observed as a transition
+    //    here and never produces a banner.
+    const nextMode = this.input.isEditModeActive();
+    if (nextMode !== this.mode) {
+      this.mode = nextMode;
+      // Never clobber a live accepted/rejected banner: the server's verdict
+      // is more important than the mode-transition notice.
+      const keepResult =
+        this.feedback !== null &&
+        this.feedback.kind !== "info" &&
+        this.now() < this.feedbackUntil;
+      if (!keepResult) {
+        this.feedback = {
+          kind: "info",
+          message: nextMode ? "Edit mode on" : "Edit mode off",
+        };
+        this.feedbackUntil = this.now() + MODE_FEEDBACK_TTL_MS;
+      }
+    }
 
     // 3. resolve the aim target (only while in edit mode with a known id).
     if (this.mode && ctx.sessionId !== null) {
@@ -390,16 +426,31 @@ export function parseBuildEditResult(
   if (typeof r.success !== "boolean") {
     return null;
   }
+  const rawEditType = r.editType;
+  const editType =
+    typeof rawEditType === "string" &&
+    (rawEditType === "" || isBuildEditType(rawEditType))
+      ? rawEditType
+      : undefined;
   return {
     structureId: r.structureId,
     success: r.success,
     ...(typeof r.reason === "string" ? { reason: r.reason } : {}),
+    ...(editType !== undefined ? { editType } : {}),
   };
 }
 
 /** Builds the short feedback banner text for a parsed build-edit result. */
 function buildFeedbackMessage(result: BuildEditResultInfo): string {
   if (result.success) {
+    // The canonical room echoes the applied edit on success; name it so the
+    // banner confirms exactly what changed.
+    if (result.editType === "") {
+      return "Opening cleared";
+    }
+    if (result.editType !== undefined) {
+      return `Edit applied: ${EDIT_TYPE_LABELS[result.editType] ?? result.editType}`;
+    }
     return "Edit applied";
   }
   if (result.reason !== undefined && result.reason in REJECTION_LABELS) {

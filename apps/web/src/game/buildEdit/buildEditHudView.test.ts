@@ -30,6 +30,7 @@ function input(overrides: Partial<BuildEditHudInput> = {}): BuildEditHudInput {
     selectedEdit: "door",
     allowedEdits: [],
     feedback: null,
+    connected: false,
     ...overrides,
   };
 }
@@ -42,6 +43,15 @@ describe("buildBuildEditHudView", () => {
     expect(view.selectedEdit).toBe("door");
     expect(view.allowedEdits).toEqual([]);
     expect(view.feedback).toBeNull();
+    expect(view.applyReady).toBe(false);
+  });
+
+  it("computes applyReady from mode + target + connection", () => {
+    const both = { mode: true, target: target(), connected: true } as const;
+    expect(buildBuildEditHudView(input(both)).applyReady).toBe(true);
+    expect(buildBuildEditHudView(input({ ...both, connected: false })).applyReady).toBe(false);
+    expect(buildBuildEditHudView(input({ ...both, target: null })).applyReady).toBe(false);
+    expect(buildBuildEditHudView(input({ ...both, mode: false })).applyReady).toBe(false);
   });
 
   it("copies the target + allowed edits (cloned, not by reference)", () => {
@@ -119,5 +129,17 @@ describe("buildEditHudChangeKey", () => {
       feedback: { kind: "accepted", message: "Something else" },
     } as BuildEditHudState;
     expect(buildEditHudChangeKey(otherMsg)).not.toBe(buildEditHudChangeKey(withFb));
+  });
+
+  it("changes when apply readiness flips", () => {
+    const baseReady = buildBuildEditHudView(
+      input({ mode: true, target: target(), connected: true }),
+    );
+    const baseBlocked = buildBuildEditHudView(
+      input({ mode: true, target: target(), connected: false }),
+    );
+    expect(baseReady.applyReady).toBe(true);
+    expect(baseBlocked.applyReady).toBe(false);
+    expect(buildEditHudChangeKey(baseReady)).not.toBe(buildEditHudChangeKey(baseBlocked));
   });
 });

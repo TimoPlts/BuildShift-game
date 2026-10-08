@@ -36,7 +36,7 @@ function fullLocalView(overrides: Partial<LocalHudViewInput> = {}): LocalHudView
     selectedBuildType: "wall",
     placementValid: true,
     gridPosition: { x: 1, y: 0, z: -2 },
-    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null },
+    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null, applyReady: false },
     roundTimer: { remainingMs: 45_000, totalMs: 90_000 },
     countdownSeconds: 0,
     ...overrides,

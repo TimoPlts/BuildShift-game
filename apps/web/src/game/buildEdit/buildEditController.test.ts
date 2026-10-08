@@ -202,8 +202,9 @@ describe("BuildEditController — authoritative route", () => {
     expect(s.network.sent).toHaveLength(1);
     expect(s.network.sent[0]!.type).toBe(BUILD_EDIT_EVENTS.EDIT_REQUEST);
     expect(s.network.sent[0]!.payload).toEqual({ structureId: "wall1", editType: "door" });
-    // No feedback until the server replies.
-    expect(s.controller.getFeedback()).toBeNull();
+    // No accepted/rejected feedback until the server replies — only the
+    // edit-mode enter (info) banner is on screen.
+    expect(s.controller.getFeedback()?.kind).toBe("info");
   });
 
   it("turns an accepted result into accepted feedback", () => {
@@ -219,6 +220,29 @@ describe("BuildEditController — authoritative route", () => {
     const fb = s.controller.getFeedback();
     expect(fb?.kind).toBe("accepted");
     expect(fb?.message).toBe("Edit applied");
+  });
+
+  it("names the confirmed edit in the accepted feedback", () => {
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const s = setup(building);
+    enterEditMode(s, building);
+    s.network.emitResult({ structureId: "wall1", success: true, editType: "door" });
+    expect(s.controller.getFeedback()?.message).toBe("Edit applied: Door");
+
+    s.network.emitResult({ structureId: "wall1", success: true, editType: "half_top" });
+    expect(s.controller.getFeedback()?.message).toBe("Edit applied: Top half");
+
+    // A cleared opening ("" editType) gets its own message.
+    s.network.emitResult({ structureId: "wall1", success: true, editType: "" });
+    expect(s.controller.getFeedback()?.message).toBe("Opening cleared");
+  });
+
+  it("ignores an out-of-vocabulary editType on the wire", () => {
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const s = setup(building);
+    s.network.emitResult({ structureId: "wall1", success: true, editType: "bogus" });
+    // The corrupt field is dropped; the accepted message falls back.
+    expect(s.controller.getFeedback()?.message).toBe("Edit applied");
   });
 
   it("turns a rejected result into labelled rejected feedback", () => {
@@ -290,6 +314,64 @@ describe("BuildEditController — selection clamping", () => {
     expect(s.controller.getSelectedEdit()).toBe("window");
     s.controller.updateFrame(frame(building)); // no new choice → stays
     expect(s.controller.getSelectedEdit()).toBe("window");
+  });
+});
+
+describe("BuildEditController — edit-mode enter/exit feedback", () => {
+  it("shows an info banner when edit mode is entered and exited", () => {
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const s = setup(building, 0);
+    s.lock();
+    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toEqual({
+      kind: "info",
+      message: "Edit mode on",
+    });
+
+    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toEqual({
+      kind: "info",
+      message: "Edit mode off",
+    });
+
+    // The info banner expires on its (shorter) TTL.
+    s.setClock(2_000);
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toBeNull();
+  });
+
+  it("does not clobber a live accepted/rejected banner with an exit notice", () => {
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const s = setup(building, 0);
+    enterEditMode(s, building);
+    s.network.emitResult({ structureId: "wall1", success: true, editType: "door" });
+    expect(s.controller.getFeedback()?.kind).toBe("accepted");
+
+    // Exiting within the result banner's TTL keeps the server's verdict on screen.
+    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toEqual({
+      kind: "accepted",
+      message: "Edit applied: Door",
+      structureId: "wall1",
+    });
+  });
+
+  it("shows no exit banner for a forced exit (round reset / disconnect)", () => {
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const s = setup(building);
+    enterEditMode(s, building);
+
+    s.controller.reset();
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toBeNull();
+
+    enterEditMode(s, building);
+    s.controller.clearOnDisconnect();
+    s.controller.updateFrame(frame(building));
+    expect(s.controller.getFeedback()).toBeNull();
   });
 });
 

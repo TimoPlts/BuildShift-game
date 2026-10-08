@@ -13,6 +13,8 @@
  *    (damage) state, with a brief white flash on each hit.
  *  - Play a destruction fade-out when a structure is authoritatively removed.
  *  - Smoothly transition half-wall edit shapes.
+ *  - Highlight the structure currently aimed for a build edit, and show a
+ *    semi-transparent half-wall result preview before the edit is confirmed.
  *  - Clean up all meshes on dispose.
  *
  * This module is **presentation-only**: it reads from `@buildshift/game-config`
@@ -93,6 +95,16 @@ function getEffectiveHeight(buildType: BuildType): number {
 function rotationToYAxis(rotation: GridRotation): number {
   const steps = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
   return steps[rotation] ?? 0;
+}
+
+/**
+ * Centre offset (metres) for a half-wall edit pose: a quarter of the
+ * structure's full world height, so the scaled half sits exactly in the top
+ * or bottom half of the structure's volume. Walls are 2 layers tall, so
+ * this equals `layerHeight / 2`.
+ */
+function halfWallPoseOffset(buildType: BuildType): number {
+  return getFootprintWorldDims(buildType)[1] / 4;
 }
 
 // ─── Color lerp helper ─────────────────────────────────────────────────────
@@ -191,6 +203,14 @@ const PREVIEW_OPACITY_PULSE = 0.1;
 /** Pulse frequency: cycles per second. */
 const PREVIEW_PULSE_FREQ = 2.5;
 
+/** Emissive boost (RGB) applied while a structure is the aimed build-edit target. */
+const EDIT_TARGET_EMISSIVE_BOOST = [0.18, 0.38, 0.22] as const;
+
+/** Ghost colour for the half-wall result preview (pre-confirmation). */
+const EDIT_PREVIEW_COLOR = new Color3(0.3, 0.95, 0.6);
+/** Opacity of the half-wall result preview ghost. */
+const EDIT_PREVIEW_OPACITY = 0.45;
+
 // ─── Per-structure runtime state ───────────────────────────────────────────
 
 interface StructureRuntime {
@@ -224,6 +244,13 @@ export class BuildStructureRenderer {
   private previewMesh: AbstractMesh | null = null;
   private previewMaterial: StandardMaterial | null = null;
   private previewBuildType: BuildType | null = null;
+
+  /** The structure currently aimed for a build edit (emissive highlight). */
+  private editTargetId: string | null = null;
+  private editPreviewMesh: AbstractMesh | null = null;
+  private editPreviewMaterial: StandardMaterial | null = null;
+  /** The structure the half-wall result preview is shown for (self-cleanup). */
+  private editPreviewStructureId: string | null = null;
 
   private structures = new Map<string, StructureRuntime>();
 
@@ -293,6 +320,89 @@ export class BuildStructureRenderer {
     this.disposePreview();
   }
 
+  /**
+   * Highlight the structure currently aimed for a build edit (a subtle
+   * green emissive boost on its existing mesh). Idempotent — the same id
+   * keeps the highlight; the boost is recomposed every frame.
+   */
+  public showEditTarget(structureId: string): void {
+    if (this.disposed) return;
+    this.editTargetId = structureId;
+  }
+
+  /** Remove the build-edit target highlight. */
+  public hideEditTarget(): void {
+    this.editTargetId = null;
+  }
+
+  /**
+   * Show a semi-transparent ghost of the half-wall *result* shape (the top
+   * or bottom half of the wall) at the target's position — the shape the
+   * structure will have once the edit is accepted. Walls only: the renderer
+   * models half-wall results for walls, so the preview is hidden for other
+   * build types.
+   */
+  public showEditResultPreview(
+    structureId: string,
+    pose: "half_top" | "half_bottom",
+    rotation: GridRotation,
+  ): void {
+    if (this.disposed) return;
+    const runtime = this.structures.get(structureId);
+    if (!runtime || runtime.buildType !== "wall") {
+      this.disposeEditPreview();
+      return;
+    }
+    const [w, h, d] = getFootprintWorldDims(runtime.buildType);
+    if (!this.editPreviewMesh || !this.editPreviewMaterial) {
+      const mesh = MeshBuilder.CreateBox("build-edit-result-preview", {
+        width: w,
+        height: h / 2,
+        depth: d * 0.15,
+      }, this.scene);
+      const mat = new StandardMaterial(
+        "build-edit-result-preview-material",
+        this.scene,
+      );
+      mat.diffuseColor = EDIT_PREVIEW_COLOR;
+      mat.emissiveColor = EDIT_PREVIEW_COLOR;
+      mat.specularColor = new Color3(0, 0, 0);
+      mat.alpha = EDIT_PREVIEW_OPACITY;
+      mesh.material = mat;
+      mesh.isPickable = false;
+      mesh.checkCollisions = false;
+      this.editPreviewMesh = mesh;
+      this.editPreviewMaterial = mat;
+    }
+    const worldPos = gridToWorld(runtime.grid);
+    const offset = pose === "half_top" ? h / 4 : -h / 4;
+    this.editPreviewMesh.position = new Vector3(
+      worldPos.x,
+      worldPos.y + h / 2 + offset,
+      worldPos.z,
+    );
+    this.editPreviewMesh.rotation.y =
+      rotation === 0 ? 0 : rotationToYAxis(rotation);
+    this.editPreviewStructureId = structureId;
+  }
+
+  /** Hide the half-wall result preview. */
+  public hideEditResultPreview(): void {
+    this.disposeEditPreview();
+  }
+
+  private disposeEditPreview(): void {
+    if (this.editPreviewMesh) {
+      this.editPreviewMesh.dispose();
+      this.editPreviewMesh = null;
+    }
+    if (this.editPreviewMaterial) {
+      this.editPreviewMaterial.dispose();
+      this.editPreviewMaterial = null;
+    }
+    this.editPreviewStructureId = null;
+  }
+
   private disposePreview(): void {
     if (this.previewMesh) {
       this.previewMesh.dispose();
@@ -334,6 +444,17 @@ export class BuildStructureRenderer {
         this.startDestruction(id, runtime, now);
       }
     }
+
+    // Self-clean build-edit presentation for vanished structures.
+    if (this.editTargetId !== null && !currentIds.has(this.editTargetId)) {
+      this.editTargetId = null;
+    }
+    if (
+      this.editPreviewStructureId !== null &&
+      !currentIds.has(this.editPreviewStructureId)
+    ) {
+      this.disposeEditPreview();
+    }
   }
 
   /**
@@ -369,6 +490,8 @@ export class BuildStructureRenderer {
 
     this.scene.onBeforeRenderObservable.remove(this._observer);
     this.disposePreview();
+    this.disposeEditPreview();
+    this.editTargetId = null;
 
     for (const runtime of this.structures.values()) {
       runtime.mesh.dispose();
@@ -410,10 +533,10 @@ export class BuildStructureRenderer {
     if (structure.buildType === "wall") {
       if (structure.editType === "half_top") {
         targetScaleY = 0.5;
-        targetYOffset = BUILD_GRID.layerHeight * 0.25;
+        targetYOffset = halfWallPoseOffset("wall");
       } else if (structure.editType === "half_bottom") {
         targetScaleY = 0.5;
-        targetYOffset = -BUILD_GRID.layerHeight * 0.25;
+        targetYOffset = -halfWallPoseOffset("wall");
       }
     }
 
@@ -442,10 +565,10 @@ export class BuildStructureRenderer {
     if (structure.buildType === "wall") {
       if (structure.editType === "half_top") {
         targetScaleY = 0.5;
-        targetYOffset = BUILD_GRID.layerHeight * 0.25;
+        targetYOffset = halfWallPoseOffset("wall");
       } else if (structure.editType === "half_bottom") {
         targetScaleY = 0.5;
-        targetYOffset = -BUILD_GRID.layerHeight * 0.25;
+        targetYOffset = -halfWallPoseOffset("wall");
       }
     }
 
@@ -505,8 +628,8 @@ export class BuildStructureRenderer {
     const now = Date.now();
 
     // Update active structure meshes
-    for (const runtime of this.structures.values()) {
-      this._applyRuntimeVisual(runtime, now);
+    for (const [id, runtime] of this.structures) {
+      this._applyRuntimeVisual(runtime, now, id === this.editTargetId);
     }
 
     // Update pending destruction meshes
@@ -537,7 +660,11 @@ export class BuildStructureRenderer {
     }
   }
 
-  private _applyRuntimeVisual(runtime: StructureRuntime, now: number): void {
+  private _applyRuntimeVisual(
+    runtime: StructureRuntime,
+    now: number,
+    isEditTargeted: boolean,
+  ): void {
     const { visual } = composeVisual(
       runtime.effects,
       runtime.targetScaleY,
@@ -564,12 +691,12 @@ export class BuildStructureRenderer {
     // Alpha (for destruction fade — though destruction is in pendingDestruction)
     runtime.material.alpha = visual.alpha;
 
-    // Emissive: base damaged emissive + hit flash boost
+    // Emissive: base damaged emissive + hit flash boost + build-edit target boost
     const baseEmissive = this._computeBaseEmissive(runtime);
     runtime.material.emissiveColor = new Color3(
-      baseEmissive.r + visual.emissiveBoost[0],
-      baseEmissive.g + visual.emissiveBoost[1],
-      baseEmissive.b + visual.emissiveBoost[2],
+      baseEmissive.r + visual.emissiveBoost[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0),
+      baseEmissive.g + visual.emissiveBoost[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0),
+      baseEmissive.b + visual.emissiveBoost[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0),
     );
   }
 

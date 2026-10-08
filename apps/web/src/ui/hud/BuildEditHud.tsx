@@ -3,12 +3,16 @@
  * build-edit system (editing an already-placed, owned structure).
  *
  * Displays, while build-edit mode is active:
- *  - an "EDIT MODE" indicator and the targeted structure (or an
- *    "aim at your wall" prompt),
+ *  - an "EDIT MODE" indicator and the targeted structure (or a prompt to
+ *    aim at an owned wall, roof, or floor),
  *  - a selector row of the edits the targeted structure allows
  *    (door / window / half_top / half_bottom / clear), each with its
  *    number-key hint, the chosen one highlighted,
- *  - the accepted/rejected feedback banner once the server replies.
+ *  - a contextual control hint that reflects the valid/invalid state
+ *    (apply when a target is aimed and connected; a "Not connected"
+ *    warning otherwise),
+ *  - the accepted/rejected feedback banner once the server replies, plus
+ *    brief "Edit mode on" / "Edit mode off" informational banners.
  *
  * The panel renders nothing when edit mode is off and no feedback is
  * pending (keeps the HUD uncluttered); after a result it briefly shows just
@@ -27,9 +31,9 @@ export interface BuildEditTargetView {
   grid: { x: number; y: number; z: number };
 }
 
-/** An accepted/rejected build-edit feedback banner (presentation data). */
+/** An accepted/rejected/informational build-edit feedback banner. */
 export interface BuildEditFeedbackView {
-  kind: "accepted" | "rejected";
+  kind: "accepted" | "rejected" | "info";
   message: string;
 }
 
@@ -45,6 +49,11 @@ export interface BuildEditHudProps {
   allowedEdits: readonly string[];
   /** The accepted/rejected feedback banner, or `null` when none is pending. */
   feedback: BuildEditFeedbackView | null;
+  /**
+   * Whether the chosen edit can be applied right now (edit mode on, a
+   * structure aimed, connection live) — drives the contextual hint.
+   */
+  applyReady: boolean;
 }
 
 /** Human-readable labels for each build-edit choice (including `clear`). */
@@ -71,6 +80,7 @@ const BUILD_TYPE_LABELS: Readonly<Record<string, string>> = {
   floor: "Floor",
   ramp: "Ramp",
   cone: "Cone",
+  roof: "Roof",
 };
 
 /**
@@ -81,7 +91,8 @@ const BUILD_TYPE_LABELS: Readonly<Record<string, string>> = {
  * accepted/rejected feedback.
  */
 export function BuildEditHud(props: BuildEditHudProps): JSX.Element | null {
-  const { mode, target, selectedEdit, allowedEdits, feedback } = props;
+  const { mode, target, selectedEdit, allowedEdits, feedback, applyReady } =
+    props;
 
   // Render nothing when out of edit mode and no feedback is pending — the
   // build HUD already owns the bottom-centre real estate.
@@ -94,7 +105,7 @@ export function BuildEditHud(props: BuildEditHudProps): JSX.Element | null {
       className={`build-edit-hud__feedback build-edit-hud__feedback--${feedback.kind}`}
       role="status"
     >
-      <span aria-hidden="true">{feedback.kind === "accepted" ? "✓ " : "✕ "}</span>
+      <span aria-hidden="true">{feedback.kind === "accepted" ? "✓ " : feedback.kind === "rejected" ? "✕ " : ""}</span>
       {feedback.message}
     </div>
   ) : null;
@@ -127,7 +138,7 @@ export function BuildEditHud(props: BuildEditHudProps): JSX.Element | null {
         <span className="build-edit-hud__target">
           {target && targetName
             ? `Aim: ${targetName} (${target.grid.x}, ${target.grid.y}, ${target.grid.z})`
-            : "Aim at your wall"}
+            : "Aim at an owned wall, roof, or floor"}
         </span>
       </div>
 
@@ -165,8 +176,23 @@ export function BuildEditHud(props: BuildEditHudProps): JSX.Element | null {
       {/* ── Accepted/rejected feedback ── */}
       {feedbackEl}
 
-      <div className="build-edit-hud__hint">
-        <span>F</span> exit &middot; <span>Enter</span> apply
+      {/* ── Contextual control hint (valid/invalid state) ── */}
+      <div
+        className={`build-edit-hud__hint ${
+          target !== null && !applyReady ? "build-edit-hud__hint--warn" : ""
+        }`}
+      >
+        {target === null ? (
+          <>
+            <span>F</span> exit
+          </>
+        ) : applyReady ? (
+          <>
+            <span>Enter</span> apply &middot; <span>F</span> exit
+          </>
+        ) : (
+          "Not connected"
+        )}
       </div>
     </div>
   );

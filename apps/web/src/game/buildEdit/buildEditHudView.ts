@@ -21,9 +21,9 @@ export interface BuildEditTargetHud {
   grid: { x: number; y: number; z: number };
 }
 
-/** An accepted/rejected build-edit feedback banner (presentation data). */
+/** An accepted/rejected/informational build-edit feedback banner. */
 export interface BuildEditFeedbackHud {
-  kind: "accepted" | "rejected";
+  kind: "accepted" | "rejected" | "info";
   message: string;
 }
 
@@ -42,6 +42,12 @@ export interface BuildEditHudState {
   allowedEdits: BuildEditType[];
   /** The accepted/rejected feedback banner, or `null` when none is pending. */
   feedback: BuildEditFeedbackHud | null;
+  /**
+   * Whether the chosen edit can be applied right now: edit mode is on, a
+   * structure is aimed, and the connection is live. Drives the HUD's
+   * valid/invalid state and contextual hint.
+   */
+  applyReady: boolean;
 }
 
 /** The raw controller presentation values fed into {@link buildBuildEditHudView}. */
@@ -51,6 +57,8 @@ export interface BuildEditHudInput {
   selectedEdit: BuildEditSelection;
   allowedEdits: readonly BuildEditType[];
   feedback: BuildEditFeedback | null;
+  /** Whether the canonical network connection is live. */
+  connected: boolean;
 }
 
 /**
@@ -73,6 +81,7 @@ export function buildBuildEditHudView(input: BuildEditHudInput): BuildEditHudSta
     feedback: input.feedback
       ? { kind: input.feedback.kind, message: input.feedback.message }
       : null,
+    applyReady: input.mode && input.target !== null && input.connected,
   };
 }
 
@@ -93,5 +102,6 @@ export function buildEditHudChangeKey(state: BuildEditHudState): string {
     state.selectedEdit,
     state.allowedEdits.join(","),
     feedback,
+    state.applyReady ? "r" : "-",
   ].join("|");
 }
