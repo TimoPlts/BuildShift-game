@@ -1,20 +1,15 @@
 /**
- * GameRuntime internal helpers — remote player rendering, HUD updates,
- * and disposal. Extracted from GameRuntime.ts to keep the main class file
- * within manageable size while preserving the same logic.
+ * GameRuntime internal helpers — HUD updates, and disposal. The remote
+ * player's visuals are owned by the modular {@link PlayerPresentation}
+ * component (created on demand by the runtime and disposed here).
  */
-import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
-import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import { Color3 } from "@babylonjs/core/Maths/math.color";
-import type { Scene } from "@babylonjs/core/scene";
-import { PLAYER_COLLIDER, PLAYER_COLLIDER_TOTAL_HEIGHT } from "@buildshift/game-config";
 import type { NetworkClient } from "./network";
 import type { MovementDebugHUD } from "../ui/MovementDebugHUD";
 import type { PlayerController } from "./player/PlayerController";
 import type { EnergyRuntimeConsumer } from "./energy";
 import type { BuildingSystem } from "./building";
 import type { WeaponController } from "./weapon";
+import type { PlayerPresentation } from "./scene/PlayerPresentation";
 
 export interface GameRuntimeDisposables {
   energyConsumer: EnergyRuntimeConsumer;
@@ -25,10 +20,8 @@ export interface GameRuntimeDisposables {
   playerController: PlayerController;
   inputManager: { dispose(): void };
   cameraController: { dispose(): void };
-  remoteMesh: AbstractMesh | null;
-  remoteMarker: AbstractMesh | null;
-  remoteMaterial: StandardMaterial | null;
-  remoteMarkerMat: StandardMaterial | null;
+  /** The remote player's presentation component, once created. */
+  remotePresentation: PlayerPresentation | null;
 }
 
 export function disposeGameRuntimeResources(d: GameRuntimeDisposables): void {
@@ -37,75 +30,11 @@ export function disposeGameRuntimeResources(d: GameRuntimeDisposables): void {
   d.weaponController.dispose();
   d.networkClient.dispose();
   d.debugHud.dispose();
-  if (d.remoteMesh) d.remoteMesh.dispose();
-  if (d.remoteMarker) d.remoteMarker.dispose();
-  if (d.remoteMaterial) d.remoteMaterial.dispose();
-  if (d.remoteMarkerMat) d.remoteMarkerMat.dispose();
+  // Self-cleaning presentation: releases every owned mesh and material.
+  d.remotePresentation?.dispose();
   d.playerController.dispose();
   d.inputManager.dispose();
   d.cameraController.dispose();
-}
-
-export interface RemotePlayerVisuals {
-  remoteMesh: AbstractMesh | null;
-  remoteMaterial: StandardMaterial | null;
-  remoteMarker: AbstractMesh | null;
-  remoteMarkerMat: StandardMaterial | null;
-}
-
-export function ensureRemoteMesh(
-  scene: Scene,
-  visuals: RemotePlayerVisuals,
-): void {
-  if (visuals.remoteMesh) return;
-  const mat = new StandardMaterial("remote-player-material", scene);
-  mat.diffuseColor = new Color3(0.9, 0.25, 0.25);
-  mat.emissiveColor = new Color3(0.05, 0.02, 0.15);
-  const mesh = MeshBuilder.CreateCapsule("remote-player", {
-    height: PLAYER_COLLIDER_TOTAL_HEIGHT,
-    radius: PLAYER_COLLIDER.radius,
-    tessellation: 16,
-  }, scene);
-  mesh.material = mat;
-  const markerMat = new StandardMaterial("remote-player-marker", scene);
-  markerMat.diffuseColor = new Color3(0.95, 0.95, 0.95);
-  const marker = MeshBuilder.CreateBox("remote-player-marker", {
-    width: 0.22, height: 0.08, depth: 0.06,
-  }, scene);
-  marker.material = markerMat;
-  marker.parent = mesh;
-  marker.position.set(0, 0.2, -0.35);
-  visuals.remoteMesh = mesh;
-  visuals.remoteMaterial = mat;
-  visuals.remoteMarker = marker;
-  visuals.remoteMarkerMat = markerMat;
-}
-
-export function updateRemotePlayersVisuals(
-  visuals: RemotePlayerVisuals,
-  pos: { x: number; y: number; z: number; yaw: number },
-  wasEliminated: boolean,
-  hitFlashFrames: number,
-): number {
-  if (!visuals.remoteMesh || !visuals.remoteMaterial) return hitFlashFrames;
-  visuals.remoteMesh.position.set(pos.x, pos.y, pos.z);
-  visuals.remoteMesh.rotation.y = pos.yaw;
-  if (wasEliminated) {
-    visuals.remoteMaterial.emissiveColor = new Color3(0.1, 0, 0);
-    visuals.remoteMaterial.diffuseColor = new Color3(0.3, 0.1, 0.1);
-  } else if (hitFlashFrames > 0) {
-    visuals.remoteMaterial.emissiveColor = new Color3(1, 0.3, 0);
-    return hitFlashFrames - 1;
-  } else {
-    visuals.remoteMaterial.emissiveColor = new Color3(0.05, 0.02, 0.15);
-    visuals.remoteMaterial.diffuseColor = new Color3(0.9, 0.25, 0.25);
-  }
-  return hitFlashFrames;
-}
-
-export function setRemoteVisible(visuals: RemotePlayerVisuals, v: boolean): void {
-  if (visuals.remoteMesh) visuals.remoteMesh.setEnabled(v);
-  if (visuals.remoteMarker) visuals.remoteMarker.setEnabled(v);
 }
 
 export function updateDebugHudFn(

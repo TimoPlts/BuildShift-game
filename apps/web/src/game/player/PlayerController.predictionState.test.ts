@@ -71,7 +71,11 @@ describe("PlayerController — capturePredictionState", () => {
     expect(body).toContain("verticalVelocity: this.verticalVelocity");
     expect(body).toContain("lastGrounded: this.lastGrounded");
     expect(body).toContain("jump: this.jumpController.captureState()");
-    expect(body).toContain("facingYaw: this.mesh.rotation.y");
+    // The presentation root's Y rotation is the NEGATED yaw (Babylon's node
+    // Y-rotation turns local -Z toward -X, while the shared movement
+    // convention turns forward toward +X); the prediction state stores the
+    // shared-movement yaw, so capture negates the mesh rotation.
+    expect(body).toContain("facingYaw: -this.mesh.rotation.y");
     // It reads the capsule centre from the physics authority, not the mesh.
     expect(body).toContain("this.physics.getPosition()");
   });
@@ -85,7 +89,8 @@ describe("PlayerController — restorePredictionState", () => {
     expect(body).toContain("this.lastGrounded = state.lastGrounded");
     expect(body).toContain("this.jumpController.restoreState(state.jump)");
     expect(body).toContain("this.mesh.position.set(");
-    expect(body).toContain("this.mesh.rotation.y = state.facingYaw");
+    // Negated for the Babylon presentation root (see capture above).
+    expect(body).toContain("this.mesh.rotation.y = -state.facingYaw");
   });
 });
 
@@ -94,7 +99,8 @@ describe("PlayerController — setAuthoritativePosition (narrow override)", () =
     const body = methodBody("setAuthoritativePosition");
     expect(body).toContain("this.physics.setPosition(position)");
     expect(body).toContain("this.mesh.position.set(position.x, position.y, position.z)");
-    expect(body).toContain("this.mesh.rotation.y = yaw");
+    // Negated for the Babylon presentation root (see capture above).
+    expect(body).toContain("this.mesh.rotation.y = -yaw");
   });
 
   it("does NOT touch verticalVelocity, lastGrounded, or JumpController timing", () => {

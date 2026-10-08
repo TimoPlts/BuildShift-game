@@ -1,5 +1,4 @@
 import { useState, useCallback, useRef } from "react";
-import { RoundState } from "@buildshift/protocol";
 import { GameCanvas, type GameRuntimeActions } from "./game/GameCanvas";
 import type { MatchLifecycleView } from "./game/matchLifecycleView";
 import {
@@ -7,23 +6,33 @@ import {
   RoundEndBanner,
   MatchEndScreen,
 } from "./ui";
+import { useMatchPresentation } from "./ui/useMatchPresentation";
 
 /**
  * App — the top-level BuildShift 1v1 Energy Box Fight shell.
  *
- * Wires the full match lifecycle screen transitions:
- *  - COUNTDOWN  → game view + CountdownOverlay
- *  - PLAYING    → normal gameplay
- *  - ROUND_OVER → game view + RoundEndBanner
- *  - MATCH_OVER → MatchEndScreen (full-screen result with actions)
+ * Wires the full match lifecycle screen transitions through the single
+ * presentation layer (`useMatchPresentation`), which derives every moment
+ * exclusively from the authoritative, normalized match lifecycle view:
  *
- * The GameCanvas owns the game runtime (Babylon scene, physics, network).
- * App subscribes to the normalized MatchLifecycleView via a callback and
- * renders the appropriate presentation overlay on top of the canvas.
+ *  - COUNTDOWN  → game view + CountdownOverlay (the only countdown display)
+ *  - PLAYING    → normal gameplay (in-game HUD only)
+ *  - ROUND_OVER → game view + RoundEndBanner (enter/hold/exit lifecycle;
+ *                 the banner keeps rendering briefly after the phase moves
+ *                 on so its exit transition can complete)
+ *  - MATCH_OVER → MatchEndScreen (full-screen result, final score, and the
+ *                 rematch-readiness state counting down from the
+ *                 authoritative match-end moment)
+ *
+ * The in-game HUD (inside GameCanvas) presents only persistent, non-blocking
+ * information (score, round, timer, phase) and never doubles a lifecycle
+ * moment presented here.
  */
 export function App() {
   const [lifecycle, setLifecycle] = useState<MatchLifecycleView | null>(null);
   const actionsRef = useRef<GameRuntimeActions | null>(null);
+
+  const presentation = useMatchPresentation(lifecycle);
 
   const handleLifecycleChange = useCallback((view: MatchLifecycleView) => {
     setLifecycle(view);
@@ -41,11 +50,6 @@ export function App() {
     actionsRef.current?.leaveRoom();
   }, []);
 
-  const { roundState, connected } = lifecycle ?? {
-    roundState: RoundState.COUNTDOWN,
-    connected: false,
-  };
-
   return (
     <main className="game-shell">
       <GameCanvas
@@ -53,37 +57,37 @@ export function App() {
         onRuntimeReady={handleRuntimeReady}
       />
 
-      {/* ── Match lifecycle overlays (only when connected) ── */}
-      {connected && (
-        <>
-          {/* COUNTDOWN: show the pre-round countdown over the game view */}
-          {roundState === RoundState.COUNTDOWN && lifecycle && (
-            <CountdownOverlay
-              remainingSeconds={lifecycle.countdownRemainingSeconds}
-              visible={true}
-            />
-          )}
+      {/* ── Pre-round countdown (full attention; the only countdown UI) ── */}
+      {presentation.countdownSeconds > 0 && (
+        <CountdownOverlay
+          remainingSeconds={presentation.countdownSeconds}
+          visible={true}
+        />
+      )}
 
-          {/* ROUND_OVER: show the round result banner over the game view */}
-          {roundState === RoundState.ROUND_OVER && lifecycle && lifecycle.localWonLastRound !== null && (
-            <RoundEndBanner
-              localWon={lifecycle.localWonLastRound}
-              visible={true}
-              roundNumber={lifecycle.currentRound}
-            />
-          )}
+      {/* ── Round win/loss banner (mounted through its exit transition) ── */}
+      {presentation.roundResult !== null && (
+        <RoundEndBanner
+          localWon={presentation.roundResult.localWon}
+          visible={presentation.roundResultVisible}
+          roundNumber={presentation.roundResult.roundNumber}
+          localScore={presentation.roundResult.localScore}
+          remoteScore={presentation.roundResult.remoteScore}
+        />
+      )}
 
-          {/* MATCH_OVER: show the full match end screen */}
-          {roundState === RoundState.MATCH_OVER && lifecycle && lifecycle.localWonMatch !== null && (
-            <MatchEndScreen
-              localWon={lifecycle.localWonMatch}
-              localScore={lifecycle.localScore}
-              remoteScore={lifecycle.remoteScore}
-              onPlayAgain={handlePlayAgain}
-              onLeave={handleLeave}
-            />
-          )}
-        </>
+      {/* ── Final victory/defeat screen with the rematch state ── */}
+      {presentation.matchResult !== null && (
+        <MatchEndScreen
+          localWon={presentation.matchResult.localWon}
+          localScore={presentation.matchResult.localScore}
+          remoteScore={presentation.matchResult.remoteScore}
+          totalRounds={presentation.matchResult.totalRounds}
+          rematchAvailable={presentation.rematchAvailable}
+          rematchWindowSeconds={presentation.rematchWindowSeconds}
+          onPlayAgain={handlePlayAgain}
+          onLeave={handleLeave}
+        />
       )}
     </main>
   );

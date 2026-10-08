@@ -119,7 +119,6 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
           const baseHud = mapMatchStateToHudProps(state, sid);
           setMatchHudProps({
             ...baseHud,
-            countdownSeconds: view.countdownRemainingSeconds,
             waitingForOpponent:
               r.connected &&
               state.matchPhase === MatchPhase.COUNTDOWN &&
