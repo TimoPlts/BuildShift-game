@@ -82,25 +82,21 @@ describe("PlayerController — capturePredictionState", () => {
 });
 
 describe("PlayerController — restorePredictionState", () => {
-  it("restores physics position, vy, grounded, jump, mesh position, and yaw", () => {
+  it("restores physics position, vy, grounded, jump, and presentation transform", () => {
     const body = methodBody("restorePredictionState");
     expect(body).toContain("this.physics.setPosition(state.position)");
     expect(body).toContain("this.verticalVelocity = state.verticalVelocity");
     expect(body).toContain("this.lastGrounded = state.lastGrounded");
     expect(body).toContain("this.jumpController.restoreState(state.jump)");
-    expect(body).toContain("this.mesh.position.set(");
-    // Negated for the Babylon presentation root (see capture above).
-    expect(body).toContain("this.mesh.rotation.y = -state.facingYaw");
+    expect(body).toContain("this.presentation.setTransform(state.position, state.facingYaw)");
   });
 });
 
 describe("PlayerController — setAuthoritativePosition (narrow override)", () => {
-  it("updates ONLY physics position, mesh position, and facing yaw", () => {
+  it("updates ONLY physics position and presentation transform", () => {
     const body = methodBody("setAuthoritativePosition");
     expect(body).toContain("this.physics.setPosition(position)");
-    expect(body).toContain("this.mesh.position.set(position.x, position.y, position.z)");
-    // Negated for the Babylon presentation root (see capture above).
-    expect(body).toContain("this.mesh.rotation.y = -yaw");
+    expect(body).toContain("this.presentation.setTransform(position, yaw)");
   });
 
   it("does NOT touch verticalVelocity, lastGrounded, or JumpController timing", () => {

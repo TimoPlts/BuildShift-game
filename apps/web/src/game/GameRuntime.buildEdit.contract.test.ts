@@ -53,9 +53,10 @@ describe("GameRuntime build-edit wiring", () => {
 
   it("drives the build-edit frame from the runtime's existing sources each render frame", () => {
     // The update is called right after the building frame update in the render
-    // loop, before the HUD emit.
+    // loop. Build presentation synchronizes the same authoritative mirror
+    // before edit targeting and HUD emission.
     expect(runtime).toContain(
-      "this.playerController.getFeetPosition(),this.isConnected);this.updateBuildEditFrame();if(this.debugHudEnabled)",
+      "this.playerController.getFeetPosition(),this.isConnected);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame():void");
@@ -86,7 +87,9 @@ describe("GameRuntime build-edit wiring", () => {
     const msIdx = runtime.indexOf("handleMatchState(match:ParsedMatchState)");
     expect(msIdx).toBeGreaterThan(-1);
     // The build-edit reset rides on the same `shouldReset` block as the building reset.
-    expect(runtime).toContain("this.buildingSystem.reset();this.buildEditSystem.reset();");
+    expect(runtime).toContain(
+      "this.buildingSystem.reset();this.buildStructureRenderer.syncStructures(this.buildingSystem.store.getBuildingState());this.buildEditSystem.reset();",
+    );
   });
 
   it("clears build-edit preview + feedback when the connection drops", () => {

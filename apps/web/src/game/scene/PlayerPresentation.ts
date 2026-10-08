@@ -35,6 +35,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { Scene } from "@babylonjs/core/scene";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
 
 /** Which side of the match this presentation belongs to. */
 export type PlayerVariant = "local" | "remote";
@@ -99,6 +100,8 @@ export class PlayerPresentation {
    * shared convention turns forward toward +X — see {@link setTransform}).
    */
   readonly root: TransformNode;
+  /** Visual-only child offset used when replicated multiplayer Y is feet-based. */
+  readonly visualRoot: TransformNode;
 
   private readonly _base: PresentationPalette;
   private readonly _meshes: Mesh[] = [];
@@ -113,6 +116,8 @@ export class PlayerPresentation {
     this._base = VARIANT_PALETTES[variant];
 
     this.root = new TransformNode(`${namePrefix}-root`, scene);
+    this.visualRoot = new TransformNode(`${namePrefix}-visual-root`, scene);
+    this.visualRoot.parent = this.root;
 
     this._bodyMaterial = this._makeMaterial(`${namePrefix}-material-body`, scene);
     this._accentMaterial = this._makeMaterial(`${namePrefix}-material-accent`, scene);
@@ -230,6 +235,10 @@ export class PlayerPresentation {
     if (this._disposed) return;
     this.root.position.set(position.x, position.y, position.z);
     this.root.rotation.y = -yaw;
+    // The two-player room replicates feet at y=0 on grounded players while
+    // this root intentionally stays at that unmodified gameplay transform.
+    // Move only the rendered body into the capsule envelope.
+    this.visualRoot.position.y = PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
   }
 
   /** Shows or hides every owned mesh (the root transform itself has no mesh). */
@@ -302,7 +311,7 @@ export class PlayerPresentation {
     mesh.isPickable = false;
     mesh.checkCollisions = false;
     mesh.material = material;
-    mesh.parent = this.root;
+    mesh.parent = this.visualRoot;
     mesh.position.copyFrom(localPosition);
     this._meshes.push(mesh);
   }

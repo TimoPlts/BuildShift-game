@@ -169,8 +169,7 @@ export class PlayerController {
     position: Readonly<{ x: number; y: number; z: number }>,
     yaw: number,
   ): void {
-    this.mesh.position.set(position.x, position.y, position.z);
-    this.mesh.rotation.y = -yaw;
+    this.presentation.setTransform(position, yaw);
   }
 
   /**
@@ -215,12 +214,7 @@ export class PlayerController {
     this.jumpController.restoreState(state.jump);
     // Presentation mirror: mesh position + facing yaw (negated for the
     // Babylon root rotation — see the mesh field docs).
-    this.mesh.position.set(
-      state.position.x,
-      state.position.y,
-      state.position.z,
-    );
-    this.mesh.rotation.y = -state.facingYaw;
+    this.presentation.setTransform(state.position, state.facingYaw);
   }
 
   /**
@@ -238,8 +232,7 @@ export class PlayerController {
     yaw: number,
   ): void {
     this.physics.setPosition(position);
-    this.mesh.position.set(position.x, position.y, position.z);
-    this.mesh.rotation.y = -yaw;
+    this.presentation.setTransform(position, yaw);
   }
 
   /**
@@ -257,7 +250,7 @@ export class PlayerController {
    * move and rotate with the player body automatically.
    */
   public get presentationRoot(): TransformNode {
-    return this.mesh;
+    return this.presentation.visualRoot;
   }
 
   /** Capsule *centre* position (the physics body translation), as a Vector3. */

@@ -127,6 +127,8 @@ function createStructureMesh(
   if (rotation !== 0) {
     mesh.rotation.y = rotationToYAxis(rotation);
   }
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
 
   return mesh;
 }
@@ -170,6 +172,7 @@ export class BuildStructureRenderer {
   private structureMeshes = new Map<string, AbstractMesh>();
   private structureMaterials = new Map<string, StandardMaterial>();
   private structureBuildTypes = new Map<string, BuildType>();
+  private structureEditTypes = new Map<string, StructureState["editType"]>();
   private structureDurabilities = new Map<string, StructureDurabilityState>();
 
   constructor(scene: Scene) {
@@ -266,16 +269,7 @@ export class BuildStructureRenderer {
       if (!existing) {
         this.createStructureMesh(structure);
       } else {
-        const worldPos = gridToWorld(structure.grid);
-        const [, h] = getFootprintWorldDims(structure.buildType);
-        const effectiveHeight = structure.buildType === "floor" ? 0.2 : h;
-        existing.position = new Vector3(
-          worldPos.x,
-          worldPos.y + effectiveHeight / 2,
-          worldPos.z,
-        );
-        existing.rotation.y =
-          structure.rotation === 0 ? 0 : rotationToYAxis(structure.rotation);
+        this.updateStructureMesh(existing, structure);
       }
     }
 
@@ -286,9 +280,10 @@ export class BuildStructureRenderer {
         const mat = this.structureMaterials.get(id);
         if (mat) {
           mat.dispose();
-          this.structureMaterials.delete(id);
-        }
-        this.structureBuildTypes.delete(id);
+        this.structureMaterials.delete(id);
+      }
+      this.structureBuildTypes.delete(id);
+      this.structureEditTypes.delete(id);
         this.structureDurabilities.delete(id);
       }
     }
@@ -337,6 +332,7 @@ export class BuildStructureRenderer {
     this.structureMeshes.clear();
     this.structureMaterials.clear();
     this.structureBuildTypes.clear();
+    this.structureEditTypes.clear();
     this.structureDurabilities.clear();
   }
 
@@ -362,6 +358,8 @@ export class BuildStructureRenderer {
     this.structureMeshes.set(structure.structureId, mesh);
     this.structureMaterials.set(structure.structureId, mat);
     this.structureBuildTypes.set(structure.structureId, structure.buildType);
+    this.structureEditTypes.set(structure.structureId, structure.editType);
+    this.updateStructureMesh(mesh, structure);
 
     // If a durability value was already stored for this structure (e.g. the
     // damage event arrived before the mesh was created), apply the tint now.
@@ -369,6 +367,27 @@ export class BuildStructureRenderer {
     if (dur) {
       this.applyDurabilityTint(structure.structureId, dur);
     }
+  }
+
+  /** Applies the replicated transform and the lightweight edited-wall shape. */
+  private updateStructureMesh(mesh: AbstractMesh, structure: StructureState): void {
+    const worldPos = gridToWorld(structure.grid);
+    const [, h] = getFootprintWorldDims(structure.buildType);
+    const effectiveHeight = structure.buildType === "floor" ? 0.2 : h;
+    mesh.position.set(worldPos.x, worldPos.y + effectiveHeight / 2, worldPos.z);
+    mesh.rotation.y = structure.rotation === 0 ? 0 : rotationToYAxis(structure.rotation);
+    mesh.scaling.setAll(1);
+
+    // The server's build-edit state is authoritative. Half edits alter the
+    // rendered wall silhouette without touching collision or placement data.
+    if (structure.buildType === "wall" && structure.editType === "half_top") {
+      mesh.scaling.y = 0.5;
+      mesh.position.y += h * 0.25;
+    } else if (structure.buildType === "wall" && structure.editType === "half_bottom") {
+      mesh.scaling.y = 0.5;
+      mesh.position.y -= h * 0.25;
+    }
+    this.structureEditTypes.set(structure.structureId, structure.editType);
   }
 
   /**

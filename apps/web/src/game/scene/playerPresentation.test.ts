@@ -94,7 +94,7 @@ describe("PlayerPresentation", () => {
     for (const mesh of meshes) {
       expect(mesh.isPickable).toBe(false);
       expect(mesh.checkCollisions).toBe(false);
-      expect(mesh.parent).toBe(local.root);
+      expect(mesh.parent).toBe(local.visualRoot);
     }
 
     // The body stands on the same feet line the capsule collider implies
@@ -137,6 +137,21 @@ describe("PlayerPresentation", () => {
     const visorPos = local.visorMesh.getAbsolutePosition();
     expect(visorPos.x).toBeGreaterThan(local.root.position.x + 0.1);
     expect(Math.abs(visorPos.z - local.root.position.z)).toBeLessThan(0.1);
+  });
+
+  it("keeps the gameplay root unchanged while lifting replicated feet-based visuals", () => {
+    engine = new NullEngine();
+    scene = new Scene(engine);
+    local = PlayerPresentation.create(scene, "local", "local-player");
+    remote = PlayerPresentation.create(scene, "remote", "remote-player");
+
+    local.setTransform({ x: 1, y: 0, z: 2 }, 0);
+    remote.setTransform({ x: -1, y: 0, z: -2 }, 0);
+
+    expect(local.root.position.y).toBe(0);
+    expect(remote.root.position.y).toBe(0);
+    expect(local.visualRoot.position.y).toBeCloseTo(0.9, 6);
+    expect(remote.visualRoot.position.y).toBeCloseTo(0.9, 6);
   });
 
   it("applyState: eliminated darkens, hit flash decays, base colors restore", () => {

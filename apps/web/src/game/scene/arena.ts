@@ -46,12 +46,15 @@ export const ARENA_MATERIAL_BY_ID: Readonly<Record<string, ArenaMaterialKind>> =
   {
     "foundation-ground": "ground",
     "center-box": "accent",
-    "reference-platform": "warm",
-    "reference-tower": "accent",
+    // The original physics-playground landmarks remain gameplay cover, but
+    // share one restrained material so the Box Fight space reads as a single
+    // deliberate arena instead of a collection of debug props.
+    "reference-platform": "neutral",
+    "reference-tower": "neutral",
     "slide-corridor-wall-west": "neutral",
     "slide-corridor-wall-east": "neutral",
     "low-block": "neutral",
-    "jump-platform": "warm",
+    "jump-platform": "neutral",
   };
 
 /**
