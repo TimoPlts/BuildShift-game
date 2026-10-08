@@ -108,7 +108,7 @@ export class TwoPlayerMovementRoom extends Room<{
         }
         this.state.players.delete(c.sessionId); this.inb.delete(c.sessionId); this.inactiveTicks.delete(c.sessionId); this.rematchVotes.delete(c.sessionId); this.ss.delete(c.sessionId); this.lpt.delete(c.sessionId); this.wps.delete(c.sessionId); this.nextFireTick.delete(c.sessionId);
     }
-    onDispose(): void { this.reconnectGrace.dispose(); this.inb.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); if (this.pw) {
+    onDispose(): void { this.reconnectGrace.dispose(); this.inb.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); this.inactiveTicks.clear(); this.nextFireTick.clear(); this.rematchVotes.clear(); if (this.pw) {
         this.pw.dispose();
         this.pw = null;
     } }
@@ -395,7 +395,7 @@ export class TwoPlayerMovementRoom extends Room<{
         return;
     } this.state.matchPhase = MatchPhase.ROUND_ENDED; this.ptl = RT; }
     private resetMatch(): void { this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.roundTicks = 0; this.matchEndedAt = 0; this.rematchVotes.clear(); for (const [, r] of this.state.roundScore)
-        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.inb.clear(); }
+        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.inb.clear(); this.reconnectGrace.clearAll(); }
     private resolveTimeout(): void { const players = [...this.state.players.entries()]; if (players.length < 2)
         return; const [a, ap] = players[0], [b, bp] = players[1]; this.endRound(ap.health > bp.health || (ap.health === bp.health && a < b) ? a : b, ap.health > bp.health || (ap.health === bp.health && a < b) ? b : a, "time_expired"); }
     private rm(c: Client): void { if (this.state.matchPhase !== MatchPhase.MATCH_ENDED || Date.now() - this.matchEndedAt > REMATCH_WINDOW_SECONDS * 1000) {

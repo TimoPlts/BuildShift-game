@@ -23,7 +23,7 @@
 import { describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
-import { VERTICAL_MOVEMENT, MAX_HEALTH } from "@buildshift/game-config";
+import { VERTICAL_MOVEMENT, MAX_HEALTH, MAX_SHIELD } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
 import { startServer, shutdownServer } from "../server.js";
@@ -544,6 +544,122 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       expect(aState).toBeDefined();
       expect(aState.health).toBe(MAX_HEALTH);
       expect(aState.alive).toBe(true);
+    } finally {
+      await withDeadline(teardownRoom(roomA), 5_000, "teardown roomA");
+      await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
+    }
+  }, 30_000);
+
+  // ─── Test 10: Round reset restores all player state (repeated rounds) ────────
+
+  it("round reset restores position, health, and weapon state for all players", async () => {
+    const { server, rooms: [roomA, roomB] } = await setupRoomWithPlayers(2);
+
+    try {
+      const sidA = roomA.sessionId;
+      const sidB = roomB.sessionId;
+
+      // Wait for IN_PROGRESS.
+      await waitForState(roomA, (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS, 8_000);
+
+      // B disconnects mid-round → grace expires → round ends for A.
+      try { roomB.connection.close(); } catch { /* ignore */ }
+      await waitForState(roomA, (s) => !playerFromState(s, sidB), 5_000);
+      await waitForState(
+        roomA,
+        (s) => (s?.matchPhase as string) === MatchPhase.ROUND_ENDED,
+        RECONNECT_GRACE_MS + 4_000,
+      );
+
+      // Wait for the round to reset and the next round to begin.
+      // Sequence: ROUND_ENDED → (reset delay) → COUNTDOWN → IN_PROGRESS.
+      await waitForState(
+        roomA,
+        (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS,
+        12_000,
+      );
+
+      // A should be reset: spawn position, full health, alive.
+      const aReset = playerFromState(roomA.state, sidA);
+      expect(aReset).toBeDefined();
+      expect(aReset.x).toBeCloseTo(-5, 0); // spawn[0].x
+      expect(aReset.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 0);
+      expect(aReset.z).toBeCloseTo(0, 0);
+      expect(aReset.health).toBe(MAX_HEALTH);
+      expect(aReset.shield).toBe(MAX_SHIELD);
+      expect(aReset.alive).toBe(true);
+      expect(aReset.isEliminated).toBe(false);
+
+      // B is not present (grace expired, no reconnection).
+      expect(playerFromState(roomA.state, sidB)).toBeUndefined();
+
+      // A new player C joins to fill B's slot.
+      const port = (server as any).transport.server.address().port;
+      const newClient = new Client(`ws://127.0.0.1:${port}`);
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
+      const sidC = roomC.sessionId;
+
+      try {
+        await waitForState(roomC, (s) => playerFromState(s, sidC), 5_000);
+        const cState = playerFromState(roomC.state, sidC);
+        expect(cState).toBeDefined();
+        expect(cState.health).toBe(MAX_HEALTH);
+        expect(cState.lastProcessedSequence).toBe(-1);
+
+        // Verify exactly 2 players in the room.
+        const players = (roomC.state as any)?.players;
+        const keys = players ? (typeof players.keys === "function" ? [...players.keys()] : Object.keys(players)) : [];
+        expect(keys.length).toBe(2);
+        expect(keys).toContain(sidA);
+        expect(keys).toContain(sidC);
+        expect(keys).not.toContain(sidB);
+      } finally {
+        await withDeadline(teardownRoom(roomC), 5_000, "teardown roomC");
+      }
+    } finally {
+      await withDeadline(teardownRoom(roomA), 5_000, "teardown roomA");
+      await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
+    }
+  }, 30_000);
+
+  // ─── Test 11: Disconnect during ROUND_ENDED does not stall the next round ──
+
+  it("disconnect during round reset: countdown to next round proceeds normally", async () => {
+    const { server, rooms: [roomA, roomB] } = await setupRoomWithPlayers(2);
+
+    try {
+      const sidB = roomB.sessionId;
+
+      // Wait for IN_PROGRESS.
+      await waitForState(roomA, (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS, 8_000);
+
+      // B disconnects → grace → round ends for A → ROUND_ENDED phase.
+      try { roomB.connection.close(); } catch { /* ignore */ }
+      await waitForState(roomA, (s) => !playerFromState(s, sidB), 5_000);
+      await waitForState(
+        roomA,
+        (s) => (s?.matchPhase as string) === MatchPhase.ROUND_ENDED,
+        RECONNECT_GRACE_MS + 4_000,
+      );
+
+      // The round reset (ROUND_ENDED → COUNTDOWN → IN_PROGRESS) should proceed
+      // without interference from the grace timer. The reset delay is
+      // ROUND_RESET_DELAY_SECONDS (2s) followed by countdown (3s).
+      // Total max wait: ~6s from ROUND_ENDED to IN_PROGRESS.
+      await waitForState(
+        roomA,
+        (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS,
+        12_000,
+      );
+
+      // A is the only player, at spawn position, full health.
+      const aState = playerFromState(roomA.state, roomA.sessionId);
+      expect(aState).toBeDefined();
+      expect(aState.health).toBe(MAX_HEALTH);
+      expect(aState.alive).toBe(true);
+
+      // B is definitively absent.
+      expect(playerFromState(roomA.state, sidB)).toBeUndefined();
     } finally {
       await withDeadline(teardownRoom(roomA), 5_000, "teardown roomA");
       await withDeadline(shutdownServer(server), 8_000, "shutdownServer");
