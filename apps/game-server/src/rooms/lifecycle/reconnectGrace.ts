@@ -40,6 +40,11 @@ export interface ReconnectGraceManager {
   /** Cancel all pending timers and clear the map (room dispose). */
   dispose(): void;
 
+  /** Cancel all pending timers and clear the map without signaling room
+   *  disposal. Use when the match context is invalidated (e.g. match reset
+   *  or rematch) so that stale snapshots are not restored into a new match. */
+  clearAll(): void;
+
   /** Number of sessions currently in the grace period (for tests/observability). */
   readonly pendingCount: number;
 }
@@ -92,9 +97,13 @@ export function createReconnectGraceManager(
     pending.delete(sessionId);
   }
 
-  function dispose(): void {
+  function clearAll(): void {
     for (const [, entry] of pending) clearTimeout(entry.timer);
     pending.clear();
+  }
+
+  function dispose(): void {
+    clearAll();
   }
 
   return {
@@ -102,6 +111,7 @@ export function createReconnectGraceManager(
     save,
     restore,
     cancel,
+    clearAll,
     dispose,
     get pendingCount() {
       return pending.size;
