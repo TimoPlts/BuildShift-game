@@ -32,6 +32,9 @@ export default defineConfig({
       "apps/web/src/network/**",
       "apps/web/src/game/remote/**",
       "apps/web/src/game/GameRuntime.twoPlayer.integration.test.ts",
+      // Browser/E2E tests are run via Playwright, not Vitest.
+      "**/*.browser.test.ts",
+      "apps/web/tests/**",
       "**/node_modules/**",
     ],
     environment: "node",

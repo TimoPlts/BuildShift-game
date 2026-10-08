@@ -13,9 +13,11 @@
     "dev:server": "pnpm --filter @buildshift/game-server dev",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run --passWithNoTests",
+    "test:browser": "playwright test"
   },
   "devDependencies": {
+    "@playwright/test": "^1.48.0",
     "happy-dom": "^14.11.0",
     "vitest": "^2.1.0"
   }
