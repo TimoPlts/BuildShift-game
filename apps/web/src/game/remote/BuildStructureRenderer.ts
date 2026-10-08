@@ -4,17 +4,25 @@
  *
  * Responsibilities:
  *  - Show a grid-snapped placement preview (semi-transparent ghost mesh) at
- *    a given grid cell, coloured green (valid) or red (invalid).
+ *    a given grid cell, coloured green (valid) or red (invalid) with a subtle
+ *    pulsing opacity for readability.
  *  - Render authoritative structures replicated from the server
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
+ *  - Play a short construction pop-in animation when a structure first appears.
  *  - Tint structure meshes to reflect their authoritative durability
- *    (damage) state, so players can see which builds are weakened.
+ *    (damage) state, with a brief white flash on each hit.
+ *  - Play a destruction fade-out when a structure is authoritatively removed.
+ *  - Smoothly transition half-wall edit shapes.
  *  - Clean up all meshes on dispose.
  *
  * This module is **presentation-only**: it reads from `@buildshift/game-config`
  * (shared grid / structure tuning) and `@buildshift/protocol` (structure state
  * types) to position and size meshes. It never mutates game state, never
  * sends network messages, and never performs client-side authority checks.
+ *
+ * Visuals derive exclusively from the canonical replicated structure state
+ * and the public renderer API. Temporary Babylon resources are reused and
+ * cleaned up via the scene render observer lifecycle.
  *
  * Usage:
  * ```ts
@@ -27,7 +35,7 @@
  * ```
  */
 
-import type { Scene } from "@babylonjs/core/scene";
+import type { Scene, Observer } from "@babylonjs/core";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
@@ -42,6 +50,14 @@ import type {
   BuildingState,
   StructureDurabilityState,
 } from "@buildshift/protocol";
+import {
+  createConstructionEffects,
+  createDestructionEffects,
+  startEditTransition,
+  triggerHitFlash,
+  composeVisual,
+  type StructureEffects,
+} from "./buildPresentation/structureEffects";
 
 // ─── Grid → World conversion ───────────────────────────────────────────────
 
@@ -66,6 +82,14 @@ function getFootprintWorldDims(buildType: BuildType): [number, number, number] {
   ];
 }
 
+/** Compute the effective rendered height for a build type (used for Y-centering). */
+function getEffectiveHeight(buildType: BuildType): number {
+  const [, h] = getFootprintWorldDims(buildType);
+  if (buildType === "floor") return 0.15;
+  if (buildType === "ramp") return h * 0.6;
+  return h;
+}
+
 function rotationToYAxis(rotation: GridRotation): number {
   const steps = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
   return steps[rotation] ?? 0;
@@ -84,6 +108,13 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 
 // ─── Mesh factory per build type ───────────────────────────────────────────
 
+/**
+ * Create a structure mesh with improved silhouettes:
+ *  - wall: a thin panel (reduced depth) for visual distinction from solid blocks
+ *  - floor: a thin slab
+ *  - ramp: a reduced-height box suggesting an incline
+ *  - cone: a pointed cone (cylinder with near-zero top diameter)
+ */
 function createStructureMesh(
   scene: Scene,
   name: string,
@@ -97,13 +128,16 @@ function createStructureMesh(
 
   switch (buildType) {
     case "wall":
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+      // Thin panel: 15% of cell depth to read as a wall, not a block.
+      mesh = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d * 0.15 }, scene);
       break;
     case "floor":
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: 0.2, depth: d }, scene);
+      // Thin slab at the base of the cell.
+      mesh = MeshBuilder.CreateBox(name, { width: w, height: 0.15, depth: d }, scene);
       break;
     case "ramp":
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
+      // Reduced-height box suggesting an incline across the footprint.
+      mesh = MeshBuilder.CreateBox(name, { width: w, height: h * 0.6, depth: d }, scene);
       break;
     case "cone":
       mesh = MeshBuilder.CreateCylinder(name, {
@@ -117,7 +151,7 @@ function createStructureMesh(
       mesh = MeshBuilder.CreateBox(name, { width: 1, height: 1, depth: 1 }, scene);
   }
 
-  const effectiveHeight = buildType === "floor" ? 0.2 : h;
+  const effectiveHeight = getEffectiveHeight(buildType);
   mesh.position = new Vector3(
     worldPos.x,
     worldPos.y + effectiveHeight / 2,
@@ -136,9 +170,9 @@ function createStructureMesh(
 // ─── Material palette ──────────────────────────────────────────────────────
 
 const SOLID_COLORS: Record<BuildType, Color3> = {
-  wall: new Color3(0.45, 0.52, 0.62),
+  wall: new Color3(0.42, 0.50, 0.60),
   floor: new Color3(0.55, 0.42, 0.28),
-  ramp: new Color3(0.65, 0.55, 0.38),
+  ramp: new Color3(0.68, 0.56, 0.35),
   cone: new Color3(0.85, 0.65, 0.2),
 };
 
@@ -152,7 +186,28 @@ const DAMAGED_EMISSIVE = new Color3(0.35, 0.12, 0.03);
 
 const PREVIEW_VALID_COLOR = new Color3(0.2, 0.9, 0.4);
 const PREVIEW_INVALID_COLOR = new Color3(0.95, 0.25, 0.2);
-const PREVIEW_OPACITY = 0.45;
+const PREVIEW_OPACITY_BASE = 0.4;
+const PREVIEW_OPACITY_PULSE = 0.1;
+/** Pulse frequency: cycles per second. */
+const PREVIEW_PULSE_FREQ = 2.5;
+
+// ─── Per-structure runtime state ───────────────────────────────────────────
+
+interface StructureRuntime {
+  mesh: AbstractMesh;
+  material: StandardMaterial;
+  buildType: BuildType;
+  effects: StructureEffects;
+  /** The target edit pose (scaleY, yOffset) for the current edit state. */
+  targetScaleY: number;
+  targetYOffset: number;
+  /** The authoritative grid position (for tick position computation). */
+  grid: GridPosition;
+  /** Current durability (null if no damage event received yet). */
+  durability: StructureDurabilityState | null;
+  /** Previous durability value to detect hits. */
+  prevDurability: number;
+}
 
 // ─── BuildStructureRenderer ────────────────────────────────────────────────
 
@@ -160,6 +215,7 @@ const PREVIEW_OPACITY = 0.45;
  * Presentation-only renderer for building previews and replicated structures.
  *
  * All meshes are owned by this class and disposed on `dispose()`.
+ * A scene render observer drives per-frame animation updates.
  */
 export class BuildStructureRenderer {
   private readonly scene: Scene;
@@ -169,14 +225,16 @@ export class BuildStructureRenderer {
   private previewMaterial: StandardMaterial | null = null;
   private previewBuildType: BuildType | null = null;
 
-  private structureMeshes = new Map<string, AbstractMesh>();
-  private structureMaterials = new Map<string, StandardMaterial>();
-  private structureBuildTypes = new Map<string, BuildType>();
-  private structureEditTypes = new Map<string, StructureState["editType"]>();
-  private structureDurabilities = new Map<string, StructureDurabilityState>();
+  private structures = new Map<string, StructureRuntime>();
+
+  /** Structures awaiting destruction animation completion before mesh disposal. */
+  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number }>();
+
+  private readonly _observer: Observer<Scene>;
 
   constructor(scene: Scene) {
     this.scene = scene;
+    this._observer = scene.onBeforeRenderObservable.add(() => this._tick());
   }
 
   /**
@@ -203,7 +261,7 @@ export class BuildStructureRenderer {
         rotation,
       );
       const mat = new StandardMaterial("build-preview-material", this.scene);
-      mat.alpha = PREVIEW_OPACITY;
+      mat.alpha = PREVIEW_OPACITY_BASE;
       mat.diffuseColor = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
       mat.emissiveColor = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
       mat.specularColor = new Color3(0, 0, 0);
@@ -213,8 +271,7 @@ export class BuildStructureRenderer {
       this.previewBuildType = buildType;
     } else {
       const worldPos = gridToWorld(grid);
-      const [, h] = getFootprintWorldDims(buildType);
-      const effectiveHeight = buildType === "floor" ? 0.2 : h;
+      const effectiveHeight = getEffectiveHeight(buildType);
       this.previewMesh.position = new Vector3(
         worldPos.x,
         worldPos.y + effectiveHeight / 2,
@@ -250,61 +307,39 @@ export class BuildStructureRenderer {
 
   /**
    * Synchronize scene structure meshes with the authoritative
-   * `BuildingState`. Creates new meshes, removes stale ones, and
-   * updates positions if needed. Idempotent.
-   *
-   * When a structure is removed from the `BuildingState` (e.g. it was
-   * destroyed by a weapon), its mesh and associated durability data are
-   * disposed and removed from this renderer.
+   * `BuildingState`. Creates new meshes (with construction animation),
+   * removes stale ones (with destruction animation), and updates positions
+   * and edit shapes if needed. Idempotent.
    */
   public syncStructures(state: BuildingState): void {
     if (this.disposed) return;
 
+    const now = Date.now();
     const currentIds = new Set<string>();
 
     for (const structure of Object.values(state.structures)) {
       currentIds.add(structure.structureId);
-      const existing = this.structureMeshes.get(structure.structureId);
+      const existing = this.structures.get(structure.structureId);
 
       if (!existing) {
-        this.createStructureMesh(structure);
+        this.createStructure(structure, now);
       } else {
-        this.updateStructureMesh(existing, structure);
+        this.updateStructure(existing, structure, now);
       }
     }
 
-    for (const [id, mesh] of this.structureMeshes) {
+    // Detect removed structures → start destruction animation
+    for (const [id, runtime] of this.structures) {
       if (!currentIds.has(id)) {
-        mesh.dispose();
-        this.structureMeshes.delete(id);
-        const mat = this.structureMaterials.get(id);
-        if (mat) {
-          mat.dispose();
-        this.structureMaterials.delete(id);
-      }
-      this.structureBuildTypes.delete(id);
-      this.structureEditTypes.delete(id);
-        this.structureDurabilities.delete(id);
+        this.startDestruction(id, runtime, now);
       }
     }
   }
 
   /**
    * Update the durability (damage state) of a single structure, tinting
-   * its mesh material to visually reflect the damage.
-   *
-   * Called by the runtime when a `build:structure_damaged` event is
-   * received from the server. The tint lerps from the structure's normal
-   * solid colour toward a warm orange-red as durability decreases, and
-   * the emissive glow increases to make damaged builds easy to spot.
-   *
-   * If the structure is not currently rendered (e.g. the durability event
-   * arrived before the structure mesh was created), the durability value
-   * is stored and will be applied the next time the structure mesh is
-   * created via {@link syncStructures}.
-   *
-   * @param structureId  The `structureId` of the affected structure.
-   * @param durability   The authoritative durability state for this structure.
+   * its mesh material to visually reflect the damage. Triggers a hit flash
+   * when durability decreases.
    */
   public updateStructureDurability(
     structureId: string,
@@ -312,8 +347,17 @@ export class BuildStructureRenderer {
   ): void {
     if (this.disposed) return;
 
-    this.structureDurabilities.set(structureId, durability);
-    this.applyDurabilityTint(structureId, durability);
+    const runtime = this.structures.get(structureId);
+    if (!runtime) return;
+
+    // Detect hit: durability decreased from a positive value
+    if (runtime.prevDurability > 0 && durability.currentDurability < runtime.prevDurability) {
+      triggerHitFlash(runtime.effects, Date.now());
+    }
+
+    runtime.prevDurability = durability.currentDurability;
+    runtime.durability = durability;
+    this.applyDurabilityTint(runtime);
   }
 
   /**
@@ -322,23 +366,26 @@ export class BuildStructureRenderer {
   public dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+
+    this.scene.onBeforeRenderObservable.remove(this._observer);
     this.disposePreview();
-    for (const mesh of this.structureMeshes.values()) {
-      mesh.dispose();
+
+    for (const runtime of this.structures.values()) {
+      runtime.mesh.dispose();
+      runtime.material.dispose();
     }
-    for (const mat of this.structureMaterials.values()) {
-      mat.dispose();
+    this.structures.clear();
+
+    for (const pending of this.pendingDestruction.values()) {
+      pending.mesh.dispose();
+      pending.material.dispose();
     }
-    this.structureMeshes.clear();
-    this.structureMaterials.clear();
-    this.structureBuildTypes.clear();
-    this.structureEditTypes.clear();
-    this.structureDurabilities.clear();
+    this.pendingDestruction.clear();
   }
 
-  // ─── Private helpers ─────────────────────────────────────────────────────
+  // ─── Private: structure lifecycle ────────────────────────────────────────
 
-  private createStructureMesh(structure: StructureState): void {
+  private createStructure(structure: StructureState, now: number): void {
     const mesh = createStructureMesh(
       this.scene,
       `structure-${structure.structureId}`,
@@ -350,68 +397,188 @@ export class BuildStructureRenderer {
       `structure-material-${structure.structureId}`,
       this.scene,
     );
-    mat.diffuseColor =
-      SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
+    mat.diffuseColor = SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
     mat.emissiveColor = SOLID_EMISSIVE;
-    mat.specularColor = new Color3(0.1, 0.1, 0.1);
+    mat.specularColor = new Color3(0.15, 0.15, 0.15);
     mesh.material = mat;
-    this.structureMeshes.set(structure.structureId, mesh);
-    this.structureMaterials.set(structure.structureId, mat);
-    this.structureBuildTypes.set(structure.structureId, structure.buildType);
-    this.structureEditTypes.set(structure.structureId, structure.editType);
-    this.updateStructureMesh(mesh, structure);
 
-    // If a durability value was already stored for this structure (e.g. the
-    // damage event arrived before the mesh was created), apply the tint now.
-    const dur = this.structureDurabilities.get(structure.structureId);
-    if (dur) {
-      this.applyDurabilityTint(structure.structureId, dur);
+    const effects = createConstructionEffects(now);
+
+    // Compute initial edit pose
+    let targetScaleY = 1;
+    let targetYOffset = 0;
+    if (structure.buildType === "wall") {
+      if (structure.editType === "half_top") {
+        targetScaleY = 0.5;
+        targetYOffset = BUILD_GRID.layerHeight * 0.25;
+      } else if (structure.editType === "half_bottom") {
+        targetScaleY = 0.5;
+        targetYOffset = -BUILD_GRID.layerHeight * 0.25;
+      }
+    }
+
+    const runtime: StructureRuntime = {
+      mesh,
+      material: mat,
+      buildType: structure.buildType,
+      effects,
+      targetScaleY,
+      targetYOffset,
+      grid: { ...structure.grid },
+      durability: null,
+      prevDurability: 0,
+    };
+
+    this.structures.set(structure.structureId, runtime);
+  }
+
+  private updateStructure(runtime: StructureRuntime, structure: StructureState, now: number): void {
+    // Update grid position (may have moved)
+    runtime.grid = { ...structure.grid };
+
+    // Compute the target edit pose
+    let targetScaleY = 1;
+    let targetYOffset = 0;
+    if (structure.buildType === "wall") {
+      if (structure.editType === "half_top") {
+        targetScaleY = 0.5;
+        targetYOffset = BUILD_GRID.layerHeight * 0.25;
+      } else if (structure.editType === "half_bottom") {
+        targetScaleY = 0.5;
+        targetYOffset = -BUILD_GRID.layerHeight * 0.25;
+      }
+    }
+
+    // If the edit pose changed, start a smooth transition
+    if (targetScaleY !== runtime.targetScaleY || targetYOffset !== runtime.targetYOffset) {
+      startEditTransition(
+        runtime.effects,
+        // The "from" is the current target (where we're visually at or transitioning to)
+        runtime.targetScaleY,
+        runtime.targetYOffset,
+        targetScaleY,
+        targetYOffset,
+        now,
+      );
+      runtime.targetScaleY = targetScaleY;
+      runtime.targetYOffset = targetYOffset;
     }
   }
 
-  /** Applies the replicated transform and the lightweight edited-wall shape. */
-  private updateStructureMesh(mesh: AbstractMesh, structure: StructureState): void {
-    const worldPos = gridToWorld(structure.grid);
-    const [, h] = getFootprintWorldDims(structure.buildType);
-    const effectiveHeight = structure.buildType === "floor" ? 0.2 : h;
-    mesh.position.set(worldPos.x, worldPos.y + effectiveHeight / 2, worldPos.z);
-    mesh.rotation.y = structure.rotation === 0 ? 0 : rotationToYAxis(structure.rotation);
-    mesh.scaling.setAll(1);
-
-    // The server's build-edit state is authoritative. Half edits alter the
-    // rendered wall silhouette without touching collision or placement data.
-    if (structure.buildType === "wall" && structure.editType === "half_top") {
-      mesh.scaling.y = 0.5;
-      mesh.position.y += h * 0.25;
-    } else if (structure.buildType === "wall" && structure.editType === "half_bottom") {
-      mesh.scaling.y = 0.5;
-      mesh.position.y -= h * 0.25;
-    }
-    this.structureEditTypes.set(structure.structureId, structure.editType);
+  private startDestruction(id: string, runtime: StructureRuntime, now: number): void {
+    const effects = createDestructionEffects(now);
+    this.pendingDestruction.set(id, {
+      mesh: runtime.mesh,
+      material: runtime.material,
+      effects,
+      scaleY: runtime.targetScaleY,
+    });
+    this.structures.delete(id);
   }
+
+  // ─── Private: durability tint ────────────────────────────────────────────
 
   /**
-   * Apply a durability-based tint to a structure's material.
-   *
-   * The tint lerps the diffuse colour from the structure's undamaged solid
-   * colour toward DAMAGED_COLOR and the emissive from SOLID_EMISSIVE toward
-   * DAMAGED_EMISSIVE, with the interpolation factor driven by the damage
-   * fraction `(1 - currentDurability / maxDurability)`.
+   * Apply a durability-based diffuse tint to a structure's material.
+   * Emissive is computed per-frame in _tick to allow hit flash overlay.
    */
-  private applyDurabilityTint(
-    structureId: string,
-    durability: StructureDurabilityState,
-  ): void {
-    const mat = this.structureMaterials.get(structureId);
-    const buildType = this.structureBuildTypes.get(structureId);
-    if (!mat || !buildType) return;
+  private applyDurabilityTint(runtime: StructureRuntime): void {
+    const durability = runtime.durability;
+    if (!durability) return;
 
-    const baseColor = SOLID_COLORS[buildType] ?? new Color3(0.5, 0.5, 0.5);
+    const baseColor = SOLID_COLORS[runtime.buildType] ?? new Color3(0.5, 0.5, 0.5);
     const maxDur = Math.max(1, durability.maxDurability);
     const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
     const damage = 1 - fraction;
 
-    mat.diffuseColor = lerpColor(baseColor, DAMAGED_COLOR, damage);
-    mat.emissiveColor = lerpColor(SOLID_EMISSIVE, DAMAGED_EMISSIVE, damage);
+    runtime.material.diffuseColor = lerpColor(baseColor, DAMAGED_COLOR, damage);
+  }
+
+  // ─── Private: per-frame tick ─────────────────────────────────────────────
+
+  /**
+   * Called every frame by the scene render observer.
+   * Advances all animations and applies composed visuals to meshes.
+   */
+  private _tick(): void {
+    if (this.disposed) return;
+    const now = Date.now();
+
+    // Update active structure meshes
+    for (const runtime of this.structures.values()) {
+      this._applyRuntimeVisual(runtime, now);
+    }
+
+    // Update pending destruction meshes
+    const toRemove: string[] = [];
+    for (const [id, pending] of this.pendingDestruction) {
+      const { visual, shouldRemove } = composeVisual(pending.effects, 1, 0, now);
+      pending.mesh.scaling.set(
+        visual.uniformScale,
+        visual.uniformScale * pending.scaleY,
+        visual.uniformScale,
+      );
+      pending.material.alpha = visual.alpha;
+      if (shouldRemove) {
+        toRemove.push(id);
+      }
+    }
+    for (const id of toRemove) {
+      const pending = this.pendingDestruction.get(id)!;
+      pending.mesh.dispose();
+      pending.material.dispose();
+      this.pendingDestruction.delete(id);
+    }
+
+    // Update preview pulsing
+    if (this.previewMesh && this.previewMaterial) {
+      const pulse = Math.sin((now / 1000) * PREVIEW_PULSE_FREQ * Math.PI * 2);
+      this.previewMaterial.alpha = PREVIEW_OPACITY_BASE + PREVIEW_OPACITY_PULSE * pulse;
+    }
+  }
+
+  private _applyRuntimeVisual(runtime: StructureRuntime, now: number): void {
+    const { visual } = composeVisual(
+      runtime.effects,
+      runtime.targetScaleY,
+      runtime.targetYOffset,
+      now,
+    );
+
+    // Compose scaling: uniform * (1, scaleY, 1)
+    runtime.mesh.scaling.set(
+      visual.uniformScale,
+      visual.uniformScale * visual.scaleY,
+      visual.uniformScale,
+    );
+
+    // Position: base world position + yOffset (half-wall shift)
+    const worldPos = gridToWorld(runtime.grid);
+    const effectiveHeight = getEffectiveHeight(runtime.buildType);
+    runtime.mesh.position.set(
+      worldPos.x,
+      worldPos.y + effectiveHeight / 2 + visual.yOffset,
+      worldPos.z,
+    );
+
+    // Alpha (for destruction fade — though destruction is in pendingDestruction)
+    runtime.material.alpha = visual.alpha;
+
+    // Emissive: base damaged emissive + hit flash boost
+    const baseEmissive = this._computeBaseEmissive(runtime);
+    runtime.material.emissiveColor = new Color3(
+      baseEmissive.r + visual.emissiveBoost[0],
+      baseEmissive.g + visual.emissiveBoost[1],
+      baseEmissive.b + visual.emissiveBoost[2],
+    );
+  }
+
+  private _computeBaseEmissive(runtime: StructureRuntime): Color3 {
+    const durability = runtime.durability;
+    if (!durability) return SOLID_EMISSIVE;
+    const maxDur = Math.max(1, durability.maxDurability);
+    const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
+    const damage = 1 - fraction;
+    return lerpColor(SOLID_EMISSIVE, DAMAGED_EMISSIVE, damage);
   }
 }
