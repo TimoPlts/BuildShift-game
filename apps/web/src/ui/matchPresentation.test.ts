@@ -46,6 +46,7 @@ describe("deriveLifecyclePresentation (authoritative wiring)", () => {
     const p = deriveLifecyclePresentation(null);
     expect(p.moment).toBe("none");
     expect(p.countdownSeconds).toBe(0);
+    expect(p.roundNumber).toBe(0);
     expect(p.round).toBeNull();
     expect(p.match).toBeNull();
   });
@@ -60,14 +61,16 @@ describe("deriveLifecyclePresentation (authoritative wiring)", () => {
     );
     expect(d.moment).toBe("none");
     expect(d.countdownSeconds).toBe(0);
+    expect(d.roundNumber).toBe(0);
   });
 
-  it("maps COUNTDOWN to the countdown moment with the authoritative seconds", () => {
+  it("maps COUNTDOWN to the countdown moment with the authoritative seconds and round number", () => {
     const p = deriveLifecyclePresentation(
-      view({ roundState: RoundState.COUNTDOWN, countdownRemainingSeconds: 2 }),
+      view({ roundState: RoundState.COUNTDOWN, countdownRemainingSeconds: 2, currentRound: 3 }),
     );
     expect(p.moment).toBe("countdown");
     expect(p.countdownSeconds).toBe(2);
+    expect(p.roundNumber).toBe(3);
     expect(p.round).toBeNull();
     expect(p.match).toBeNull();
   });

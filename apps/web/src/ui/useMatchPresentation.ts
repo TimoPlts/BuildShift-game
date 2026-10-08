@@ -20,7 +20,7 @@
  * transitions (disconnect, rematch accepted), so no timer outlives the
  * presentation moment that started it.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { REMATCH_WINDOW_SECONDS } from "@buildshift/game-config";
 import { RoundState } from "@buildshift/protocol";
 import type { MatchLifecycleView } from "../game/matchLifecycleView";
@@ -42,6 +42,10 @@ export interface MatchPresentationState {
   moment: PresentationMoment;
   /** Remaining countdown seconds for the pre-round overlay (0 = hidden). */
   countdownSeconds: number;
+  /** The 1-based round number currently in the countdown. */
+  roundNumber: number;
+  /** Whether the "GO!" post-countdown transition is active. */
+  goTransition: boolean;
   /** The round win/loss banner data, or `null` once fully dismissed. */
   roundResult: RoundResultData | null;
   /** Whether the banner is in its active (enter/hold) presentation state. */
@@ -62,6 +66,29 @@ export function useMatchPresentation(
   view: MatchLifecycleView | null,
 ): MatchPresentationState {
   const derived = useMemo(() => deriveLifecyclePresentation(view), [view]);
+
+  // ── Post-countdown "GO!" transition ───────────────────────────────────────
+  // When the authoritative moment leaves "countdown" and the connected view
+  // transitions into PLAYING, a brief "GO!" flash is presented before the
+  // overlay fully unmounts.
+  const wasCountdown = useRef(false);
+  const [goVisible, setGoVisible] = useState(false);
+
+  useEffect(() => {
+    const isCountdown = derived.moment === "countdown";
+    if (isCountdown) {
+      wasCountdown.current = true;
+      setGoVisible(false);
+      return;
+    }
+    if (wasCountdown.current && derived.moment === "none") {
+      wasCountdown.current = false;
+      setGoVisible(true);
+      const timer = setTimeout(() => setGoVisible(false), 500);
+      return () => clearTimeout(timer);
+    }
+    wasCountdown.current = false;
+  }, [derived]);
 
   // ── Round win/loss banner (enter / hold / exit) ───────────────────────────
   const [banner, setBanner] = useState<RoundBannerState>(EMPTY_ROUND_BANNER);
@@ -127,6 +154,8 @@ export function useMatchPresentation(
   return {
     moment: derived.moment,
     countdownSeconds: derived.countdownSeconds,
+    roundNumber: derived.roundNumber,
+    goTransition: goVisible,
     roundResult: banner.data,
     roundResultVisible: banner.visible,
     matchResult: derived.match,

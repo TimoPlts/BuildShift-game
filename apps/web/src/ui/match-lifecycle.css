@@ -99,6 +99,19 @@
   background: rgb(0 0 0 / 30%);
 }
 
+.countdown-overlay__round {
+  position: absolute;
+  top: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 1.2rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  color: #aeb9ca;
+  animation: round-intro-fade-in 0.4s ease-out forwards;
+}
+
 .countdown-overlay__number {
   font-size: 8rem;
   font-weight: 800;
@@ -108,13 +121,107 @@
   user-select: none;
 }
 
-.countdown-overlay__label {
-  font-size: 1rem;
+.countdown-overlay__legend {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1.5rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.06em;
   color: #aeb9ca;
-  margin-top: 0.5rem;
+  animation: round-intro-fade-in 0.5s ease-out 0.2s both;
+}
+
+.countdown-overlay__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.countdown-overlay__legend-item--local {
+  color: #34d399;
+}
+
+.countdown-overlay__legend-item--remote {
+  color: #f0616d;
+}
+
+.countdown-overlay__legend-dot {
+  display: inline-block;
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+}
+
+.countdown-overlay__legend-dot--local {
+  background: #34d399;
+  box-shadow: 0 0 8px rgb(52 211 153 / 60%);
+}
+
+.countdown-overlay__legend-dot--remote {
+  background: #f0616d;
+  box-shadow: 0 0 8px rgb(240 97 109 / 60%);
+}
+
+.countdown-overlay__legend-sep {
+  font-size: 0.7rem;
+  color: #6b7280;
+  letter-spacing: 0.1em;
+}
+
+/* "GO!" transition to live play */
+.countdown-overlay--go {
+  background: rgb(0 0 0 / 20%);
+  animation: go-fade 0.5s ease-out forwards;
+}
+
+.countdown-overlay__go {
+  font-size: 6rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #34d399;
+  text-shadow: 0 2px 20px rgb(52 211 153 / 70%), 0 0 60px rgb(52 211 153 / 40%);
+  animation: go-pop 0.5s ease-out forwards;
+  user-select: none;
+}
+
+@keyframes go-pop {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  30% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  60% {
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.1);
+  }
+}
+
+@keyframes go-fade {
+  0% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes round-intro-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(-0.5rem);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes countdown-pop {

@@ -14,7 +14,7 @@
  */
 
 export { ScoreBar, type ScoreBarProps } from "./ScoreBar";
-export { CountdownOverlay, type CountdownOverlayProps } from "./CountdownOverlay";
+export { CountdownOverlay, type CountdownOverlayProps, type CountdownPhase } from "./CountdownOverlay";
 export { RoundEndBanner, type RoundEndBannerProps } from "./RoundEndBanner";
 export { MatchEndScreen, type MatchEndScreenProps } from "./MatchEndScreen";
 export {

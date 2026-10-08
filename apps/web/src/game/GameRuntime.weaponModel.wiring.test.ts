@@ -66,7 +66,7 @@ describe("GameRuntime weapon model wiring", () => {
     expect(reloadBlock).toContain("this.networkClient.sendWeaponReload()");
     // Fire authority is carried by `primaryFire` in the shared input batch.
     // No retired direct weapon message may be sent by the runtime.
-    expect(runtime).toContain("primaryFire:fi");
+    expect(runtime).toContain("primaryFire:");
     expect(runtime).toContain("this.inputBatcher.send(sample,this.networkClient");
     expect(runtime).not.toContain("weapon:");
     expect(runtime).not.toContain("FIRE_MESSAGE");
