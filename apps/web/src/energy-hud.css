@@ -33,6 +33,7 @@
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #67e8f9;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
 .energy-hud__value {
@@ -41,9 +42,20 @@
   font-variant-numeric: tabular-nums;
   color: #e6e8ee;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  /* Mirrors the bar fill state; settle the tint change smoothly. */
+  transition: color 200ms ease-out;
 }
 
-/* Bar track */
+/* Value read-out tints — same thresholds as the bar fill states. */
+.energy-hud__value--low {
+  color: #f5b642;
+}
+
+.energy-hud__value--critical {
+  color: #f0616d;
+}
+
+/* Bar track (inset shadow separates the fill from the panel behind it). */
 .energy-hud__bar-track {
   width: 100%;
   height: 14px;
@@ -51,6 +63,7 @@
   border: 1px solid rgb(255 255 255 / 15%);
   border-radius: 7px;
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 40%);
 }
 
 /* Bar fill */

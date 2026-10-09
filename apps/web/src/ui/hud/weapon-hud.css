@@ -109,11 +109,14 @@
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
-/* Magazine count — primary, bold */
+/* Magazine count — primary, bold. Slightly oversized: the magazine count
+ * is the single most-glanced-at number in a fight, so it leads the panel. */
 .weapon-hud__ammo-magazine {
-  font-size: 0.95rem;
+  font-size: 1.05rem;
   font-weight: 700;
   color: #e6e8ee;
+  /* Settle colour-state changes (low / empty) smoothly instead of snapping. */
+  transition: color 150ms ease-out;
 }
 
 /* Separator between magazine and reserve */
@@ -132,8 +135,9 @@
 }
 
 /*
- * Empty magazine (reserve may still have rounds):
- * magazine turns amber/warning, reserve stays secondary.
+ * Low magazine (at or below a fifth of capacity, rounds remain):
+ * magazine turns amber/warning before it goes fully empty, so a reload
+ * decision can be made without reading the number.
  */
 .weapon-hud__ammo--low .weapon-hud__ammo-magazine {
   color: #fbbf24;

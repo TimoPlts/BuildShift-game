@@ -259,6 +259,59 @@ describe("WeaponHUD", () => {
     expect(html).toContain("weapon-hud__ammo--empty");
   });
 
+  it("flags a low magazine (at or below a fifth of capacity) without conflating it with empty", () => {
+    // 6 / 30 is exactly a fifth → low, not empty.
+    const low = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 6,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(low).toContain("weapon-hud__ammo--low");
+    expect(low).not.toContain("weapon-hud__ammo--empty");
+
+    // 7 / 30 is above a fifth → neutral.
+    const neutral = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 7,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(neutral).not.toContain("weapon-hud__ammo--low");
+    expect(neutral).not.toContain("weapon-hud__ammo--empty");
+
+    // A full magazine never reports low.
+    const full = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 30,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(full).not.toContain("weapon-hud__ammo--low");
+
+    // Empty is the stronger state: it must not also claim low.
+    const empty = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 0,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(empty).toContain("weapon-hud__ammo--empty");
+    expect(empty).not.toContain("weapon-hud__ammo--low");
+  });
+
   it("shows each weapon slot's switch keybind (1 / 2) on its chip", () => {
     const html = renderToStaticMarkup(
       createElement(WeaponHUD, {

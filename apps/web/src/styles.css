@@ -241,6 +241,7 @@ html, body {
   align-items: center;
   gap: 0.5rem;
 }
+
 .match-hud__timer-track {
   width: 11rem;
   height: 6px;
@@ -248,6 +249,7 @@ html, body {
   border: 1px solid rgb(255 255 255 / 15%);
   border-radius: 3px;
   overflow: hidden;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 45%);
 }
 .match-hud__timer-fill {
   height: 100%;
@@ -269,11 +271,24 @@ html, body {
 }
 .match-hud__timer--low .match-hud__timer-value {
   color: #f0616d;
+  /* Subtle low-time cue: a gentle breath so remaining time is felt, not
+     just read. Stops under prefers-reduced-motion (see animations.css). */
+  animation: match-timer-low-pulse 1s ease-in-out infinite;
+}
+
+@keyframes match-timer-low-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 /* Round-end outcome presentation lives in the RoundEndBanner overlay; the
    header no longer carries a per-round reason tag. */
 .match-hud__score-value {
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #e6e8ee;
@@ -317,6 +332,7 @@ html, body {
   font-size: 0.75rem;
   color: #aeb9ca;
   letter-spacing: 0.03em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase {
   font-size: 0.7rem;
@@ -324,6 +340,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: #8b93a7;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase--active {
   color: #f5b642;
@@ -409,6 +426,10 @@ html, body {
   border-radius: 0.35rem;
   background: rgb(255 255 255 / 4%);
   min-width: 3.5rem;
+  /* Settle selection changes smoothly instead of snapping. */
+  transition:
+    border-color 150ms ease-out,
+    background 150ms ease-out;
 }
 .build-hud__type--selected {
   border-color: rgb(245 182 66 / 60%);
@@ -543,6 +564,10 @@ html, body {
   border-radius: 0.35rem;
   background: rgb(255 255 255 / 4%);
   min-width: 3.6rem;
+  /* Settle selection changes smoothly instead of snapping. */
+  transition:
+    border-color 150ms ease-out,
+    background 150ms ease-out;
 }
 .build-edit-hud__edit--empty {
   border-style: dashed;
