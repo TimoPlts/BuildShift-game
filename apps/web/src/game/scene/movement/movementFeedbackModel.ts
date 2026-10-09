@@ -105,15 +105,16 @@ export interface MovementCameraMotionConfig {
 }
 
 /**
- * Default (restrained) tuning. A normal jump lands at ~8 m/s (jump velocity
- * 8, gravity -20), which reads as a ~9 cm dip; terminal falls (40 m/s) are
- * capped at ~14 cm. The offset settles to ~1/e in ~80 ms and is effectively
- * gone in ~250 ms.
+ * Default (restrained) tuning, scaled to the third-person camera's tracking
+ * distance (~7 m, see `cameraConfig.ts`): a normal jump landing at ~8 m/s
+ * (jump velocity 8, gravity -20) reads as a ~12 cm dip; terminal falls
+ * (40 m/s) are capped at ~18 cm. The offset settles to ~1/e in ~80 ms and is
+ * effectively gone in ~250 ms.
  */
 export const DEFAULT_MOVEMENT_CAMERA_MOTION: MovementCameraMotionConfig = {
-  jumpOffsetMeters: 0.06,
-  landingOffsetMetersPerMeterPerSec: 0.012,
-  maxLandingOffsetMeters: 0.14,
+  jumpOffsetMeters: 0.08,
+  landingOffsetMetersPerMeterPerSec: 0.015,
+  maxLandingOffsetMeters: 0.18,
   decayRatePerSec: 12,
 };
 

@@ -56,6 +56,20 @@ describe("GameRuntime movement presentation wiring", () => {
     expect(runtime).toContain("this.cameraController.setPitchOffset(this.cameraRecoil.update(dt))");
   });
 
+  it("toggles the build-mode FOV each frame from the existing build-mode state", () => {
+    const buildIdx = runtime.indexOf(
+      "this.cameraController.setBuildMode(this.buildingSystem.controller.isBuildModeActive())",
+    );
+    const updateIdx = runtime.indexOf(
+      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+    );
+    // The FOV toggle is presentation wiring on the existing camera path, set
+    // before the camera update from the build-mode state the runtime already
+    // tracks — no new gameplay or authority source.
+    expect(buildIdx).toBeGreaterThan(-1);
+    expect(updateIdx).toBeGreaterThan(buildIdx);
+  });
+
   it("resets the presentation on (re)connect and on match reset", () => {
     const resets = runtime.match(/this\.movementFeedback\.reset\(\)/g) ?? [];
     expect(resets.length).toBeGreaterThanOrEqual(2);
