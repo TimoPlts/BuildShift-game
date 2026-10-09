@@ -3,12 +3,14 @@
  * system.
  *
  * Displays:
- *  - Build mode active indicator
- *  - Currently selected build type (wall / floor / ramp / cone)
+ *  - Build mode active indicator (with the `B` toggle keybind when off)
+ *  - Currently selected build type (wall / floor / ramp / cone), each with
+ *    its number-key hint (1-4)
  *  - Resource cost of the selected structure
  *  - Build type selection guidance (row of selectable items)
  *  - Placement validity indicator (green dot = valid, red dot = invalid)
  *  - Current grid coordinates
+ *  - A contextual control hint row (rotate / place-or-aim / exit)
  *
  * This component is purely presentational. All data is supplied via
  * explicit props; the component performs no networking, no runtime
@@ -63,6 +65,29 @@ const BUILD_TYPE_ICONS: Record<BuildType, string> = {
 };
 
 /**
+ * The number-key hint for each build type. Mirrors `BUILD_TYPE_KEYS` in the
+ * building input controller (1=wall, 2=floor, 3=ramp, 4=cone) so the HUD
+ * never advertises a key the controller does not bind.
+ */
+const BUILD_TYPE_KEY_HINTS: Record<BuildType, string> = {
+  wall: "1",
+  floor: "2",
+  ramp: "3",
+  cone: "4",
+};
+
+/**
+ * Contextual placement hint for the bottom control row: what the player
+ * should do next with the left-click intent, depending on the live
+ * placement-preview state.
+ */
+function placementHint(placementValid: boolean | null): string {
+  if (placementValid === true) return "Left click place";
+  if (placementValid === false) return "Aim at a valid surface";
+  return "Aim to preview";
+}
+
+/**
  * A presentation-only building HUD overlay.
  *
  * Renders a fixed-position overlay at the bottom-center of the viewport
@@ -89,8 +114,11 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
 
   if (!inBuildMode) {
     return (
-      <div className="build-hud build-hud--inactive" aria-hidden="true">
+      <div className="build-hud build-hud--inactive">
         <span className="build-hud__mode-label">BUILD MODE OFF</span>
+        <span className="build-hud__toggle-hint">
+          Press <kbd>B</kbd> to build
+        </span>
       </div>
     );
   }
@@ -123,6 +151,7 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
             key={type}
             role="option"
             aria-selected={type === selectedBuildType}
+            aria-label={`${BUILD_TYPE_LABELS[type]} (key ${BUILD_TYPE_KEY_HINTS[type]})`}
             className={`build-hud__type ${
               type === selectedBuildType
                 ? "build-hud__type--selected"
@@ -134,6 +163,9 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
             </span>
             <span className="build-hud__type-label">
               {BUILD_TYPE_LABELS[type]}
+            </span>
+            <span className="build-hud__type-key" aria-hidden="true">
+              {BUILD_TYPE_KEY_HINTS[type]}
             </span>
           </div>
         ))}
@@ -157,6 +189,19 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
             ({gridPosition.x}, {gridPosition.y}, {gridPosition.z})
           </span>
         )}
+      </div>
+
+      {/* ── Contextual control hint (rotate / place-or-aim / exit) ── */}
+      <div className="build-hud__hint">
+        <span>
+          <kbd>Q</kbd>/<kbd>E</kbd> rotate
+        </span>
+        <span aria-hidden="true">·</span>
+        <span>{placementHint(placementValid)}</span>
+        <span aria-hidden="true">·</span>
+        <span>
+          <kbd>B</kbd> exit
+        </span>
       </div>
     </div>
   );

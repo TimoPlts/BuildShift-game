@@ -174,18 +174,71 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
+          {/*
+            Accurate, context-grouped keybind list — the bindings mirror the
+            live input controllers exactly: movement/fire (InputManager),
+            build mode (BuildingInputController), and build-edit
+            (BuildEditInputController). Shown only while the pointer is
+            unlocked (paused), never during gameplay, so it is help chrome
+            rather than in-match clutter.
+          */}
           <ul className="control-hints" aria-label="Controls">
-            <li>
-              <kbd>W A S D</kbd> move
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Move</span>
+              <span>
+                <kbd>W A S D</kbd> move
+              </span>
+              <span>
+                <kbd>Space</kbd> jump
+              </span>
+              <span>
+                <kbd>Mouse</kbd> look
+              </span>
             </li>
-            <li>
-              <kbd>Mouse</kbd> look
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Combat</span>
+              <span>
+                <kbd>Left click</kbd> fire
+              </span>
+              <span>
+                <kbd>R</kbd> reload
+              </span>
+              <span>
+                <kbd>1</kbd>/ <kbd>2</kbd> weapons
+              </span>
             </li>
-            <li>
-              <kbd>Space</kbd> jump
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Build</span>
+              <span>
+                <kbd>B</kbd> build mode
+              </span>
+              <span>
+                <kbd>1</kbd>-<kbd>4</kbd> select piece
+              </span>
+              <span>
+                <kbd>Q</kbd>/ <kbd>E</kbd> rotate
+              </span>
+              <span>
+                <kbd>Left click</kbd> place
+              </span>
             </li>
-            <li>
-              <kbd>Esc</kbd> unlock cursor
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Edit</span>
+              <span>
+                <kbd>F</kbd> edit mode
+              </span>
+              <span>
+                <kbd>5</kbd>-<kbd>9</kbd> choose edit
+              </span>
+              <span>
+                <kbd>Enter</kbd> apply
+              </span>
+            </li>
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">System</span>
+              <span>
+                <kbd>Esc</kbd> release cursor
+              </span>
             </li>
           </ul>
           <p>1v1 Energy Box Fight — first to 3 round wins takes the match</p>

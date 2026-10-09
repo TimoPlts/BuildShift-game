@@ -188,7 +188,8 @@ export function BuildEditHud(props: BuildEditHudProps): JSX.Element | null {
           </>
         ) : applyReady ? (
           <>
-            <span>Enter</span> apply &middot; <span>F</span> exit
+            <span>5-9</span> choose · <span>Enter</span> apply · <span>F</span>
+            exit
           </>
         ) : (
           "Not connected"

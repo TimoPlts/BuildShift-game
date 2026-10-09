@@ -7,9 +7,11 @@
  *  - the active weapon's magazine rounds over its magazine capacity
  *    (`30 / 30`), driven by the authoritative replicated ammo value
  *  - a thin horizontal reload progress bar while the active weapon is
- *    reloading (fills based on `reloadProgress`)
- *  - an unobtrusive weapon-slot indicator for the two-weapon loadout,
- *    with the equipped weapon highlighted
+ *    reloading (fills based on `reloadProgress`), plus a "Press R to reload"
+ *    prompt while the magazine is empty and no reload is running
+ *  - an unobtrusive weapon-slot indicator for the two-weapon loadout, with
+ *    the equipped weapon highlighted and each slot's switch keybind (1 / 2)
+ *    shown
  *
  * Data sources (all existing runtime values, no mirrored state):
  *  - `activeWeapon` / `magazineSize` / `isReloading` / `reloadProgress` —
@@ -54,6 +56,16 @@ const WEAPON_NAMES: Record<WeaponType, string> = {
 const WEAPON_GLYPHS: Record<WeaponType, string> = {
   assault_rifle: "\u25ac",
   shotgun: "\u2733",
+};
+
+/**
+ * The weapon-switch keybind shown on each slot chip. Mirrors the weapon
+ * switch keys bound in the InputManager (Digit1 → assault rifle,
+ * Digit2 → shotgun) so the HUD never advertises a key that is not bound.
+ */
+const WEAPON_SLOT_KEYS: Record<WeaponType, string> = {
+  assault_rifle: "1",
+  shotgun: "2",
 };
 
 /**
@@ -109,6 +121,9 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
   const ammo = floorNonNegative(magazineAmmo);
   const capacity = floorNonNegative(magazineSize);
   const ammoEmpty = ammo <= 0;
+  // Contextual reload prompt: only when the magazine is empty AND no reload
+  // is already running (a running reload shows its own progress bar).
+  const needsReload = ammoEmpty && !isReloading;
 
   const reloadFraction = clamp(reloadProgress, 0, 1);
   const reloadPercent = (reloadFraction * 100).toFixed(1);
@@ -127,10 +142,14 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
               key={weapon}
               role="listitem"
               aria-current={isActive || undefined}
+              aria-label={`${slotName} (key ${WEAPON_SLOT_KEYS[weapon]})`}
               className={`weapon-hud__slot ${
                 isActive ? "weapon-hud__slot--active" : ""
               }`}
             >
+              <span className="weapon-hud__slot-key" aria-hidden="true">
+                {WEAPON_SLOT_KEYS[weapon]}
+              </span>
               <span className="weapon-hud__slot-glyph" aria-hidden="true">
                 {WEAPON_GLYPHS[weapon] ?? ""}
               </span>
@@ -147,15 +166,22 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
           className={`weapon-hud__ammo ${
             ammoEmpty ? "weapon-hud__ammo--empty" : ""
           }`}
-          aria-label={`${ammo} rounds loaded, magazine holds ${capacity}`}
+          aria-label={`${ammo} of ${capacity} rounds in the magazine`}
         >
           <span className="weapon-hud__ammo-magazine">{ammo}</span>
           <span className="weapon-hud__ammo-separator" aria-hidden="true">
             /
           </span>
-          <span className="weapon-hud__ammo-reserve">{capacity}</span>
+          <span className="weapon-hud__ammo-capacity">{capacity}</span>
         </span>
       </div>
+
+      {/* ── Contextual reload prompt (empty magazine, no reload running) ── */}
+      {needsReload && (
+        <div className="weapon-hud__reload-hint" role="status">
+          Press <kbd>R</kbd> to reload
+        </div>
+      )}
 
       {/* ── Reload progress bar (only while the active weapon reloads) ── */}
       {isReloading && (

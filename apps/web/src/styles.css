@@ -80,7 +80,7 @@ html, body {
   place-content: center;
   text-align: center;
   gap: 0.35rem;
-  background: rgb(5 8 12 / 35%);
+  background: rgb(5 8 12 / 55%);
   pointer-events: none;
 }
 .pointer-lock-overlay strong {
@@ -93,15 +93,27 @@ html, body {
 }
 .control-hints {
   display: grid;
-  gap: 0.3rem;
+  grid-template-columns: repeat(2, minmax(11rem, max-content));
+  gap: 0.5rem 1.6rem;
   margin: 0.5rem 0;
-  padding: 0.5rem 0.9rem;
+  padding: 0.6rem 1rem;
   list-style: none;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #aeb9ca;
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 0.5rem;
-  background: rgb(8 12 18 / 55%);
+  background: rgb(8 12 18 / 72%);
+}
+.control-hints__group {
+  display: grid;
+  gap: 0.15rem;
+}
+.control-hints__group-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #f5b642;
 }
 .control-hints kbd {
   display: inline-block;
@@ -311,7 +323,7 @@ html, body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .match-hud__phase--active {
   color: #f5b642;
@@ -336,7 +348,26 @@ html, body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 .build-hud--inactive {
-  opacity: 0.55;
+  opacity: 0.7;
+}
+/* Inactive-state keybind prompt ("Press B to build"). */
+.build-hud__toggle-hint {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  color: #8b93a7;
+}
+.build-hud__toggle-hint kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  margin: 0 0.15rem;
+  padding: 0.05rem 0.3rem;
+  font-family: inherit;
+  font-size: 0.7rem;
+  text-align: center;
+  color: #e6e8ee;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.25rem;
+  background: rgb(255 255 255 / 8%);
 }
 .build-hud__top-row {
   display: flex;
@@ -348,7 +379,7 @@ html, body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-hud__mode-label--active {
   color: #f5b642;
@@ -395,10 +426,42 @@ html, body {
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-hud__type--selected .build-hud__type-label {
   color: #f5b642;
+}
+/* Number-key hint under each build-type chip (mirrors BUILD_TYPE_KEYS). */
+.build-hud__type-key {
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #8b93a7;
+}
+.build-hud__type--selected .build-hud__type-key {
+  color: #f5b642;
+}
+/* Contextual control-hint row (rotate / place-or-aim / exit). */
+.build-hud__hint {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: #8b93a7;
+}
+.build-hud__hint kbd {
+  display: inline-block;
+  min-width: 1.2rem;
+  margin: 0 0.1rem;
+  padding: 0.02rem 0.28rem;
+  font-family: inherit;
+  font-size: 0.64rem;
+  text-align: center;
+  color: #e6e8ee;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.25rem;
+  background: rgb(255 255 255 / 8%);
 }
 .build-hud__bottom-row {
   display: flex;
@@ -418,7 +481,7 @@ html, body {
 }
 .build-hud__grid {
   font-size: 0.7rem;
-  color: #6b7280;
+  color: #8b93a7;
   font-variant-numeric: tabular-nums;
 }
 
@@ -455,7 +518,7 @@ html, body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-edit-hud__mode-label--active {
   color: #60a5fa;
@@ -501,7 +564,7 @@ html, body {
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-edit-hud__edit--selected .build-edit-hud__edit-label {
   color: #93c5fd;
@@ -527,7 +590,7 @@ html, body {
 }
 .build-edit-hud__hint {
   font-size: 0.62rem;
-  color: #6b7280;
+  color: #8b93a7;
   letter-spacing: 0.04em;
 }
 .build-edit-hud__hint--warn {
