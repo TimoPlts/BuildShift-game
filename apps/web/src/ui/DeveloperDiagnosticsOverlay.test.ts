@@ -8,6 +8,18 @@ import {
   DeveloperDiagnosticsOverlay,
 } from "./DeveloperDiagnosticsOverlay";
 import type { DiagnosticsSnapshot } from "../game/diagnostics";
+import type { MovementMetricsReading } from "../game/diagnostics/movementMetrics";
+
+const movementReading: MovementMetricsReading = {
+  frameMsAvg: 16.7,
+  frameMsMax: 33.2,
+  simTicksPerSec: 30,
+  snapshotsPerSec: 20,
+  snapshotGapMaxMs: 52,
+  pendingInputs: 2,
+  correctionsPerSec: 19.9,
+  correctionMaxMeters: 0.0035,
+};
 
 function urlWith(query: string): URL {
   return new URL(`https://localhost/session${query}`);
@@ -131,5 +143,37 @@ describe("DeveloperDiagnosticsOverlay.update", () => {
     expect(overlay.state.matchPhase).toBe("COUNTDOWN");
     expect(overlay.state.weaponType).toBe("assault_rifle");
     expect(overlay.state.buildMode).toBe(false);
+  });
+
+  it("maps movement smoothness metrics into state when present", () => {
+    const overlay = makeOverlay();
+    overlay.update(makeSnapshot({ movement: movementReading }));
+
+    expect(overlay.state.mFrameAvg).toBeCloseTo(16.7);
+    expect(overlay.state.mFrameMax).toBeCloseTo(33.2);
+    expect(overlay.state.mSimHz).toBeCloseTo(30);
+    expect(overlay.state.mSnapHz).toBeCloseTo(20);
+    expect(overlay.state.mSnapGapMax).toBeCloseTo(52);
+    expect(overlay.state.mPending).toBe(2);
+    expect(overlay.state.mCorrHz).toBeCloseTo(19.9);
+    expect(overlay.state.mCorrMax).toBeCloseTo(0.0035);
+  });
+
+  it("leaves movement metrics null when the snapshot has none", () => {
+    const overlay = makeOverlay();
+    overlay.update(makeSnapshot());
+
+    expect(overlay.state.mFrameAvg).toBeNull();
+    expect(overlay.state.mFrameMax).toBeNull();
+    expect(overlay.state.mSimHz).toBeNull();
+    expect(overlay.state.mSnapHz).toBeNull();
+    expect(overlay.state.mSnapGapMax).toBeNull();
+    expect(overlay.state.mPending).toBeNull();
+    expect(overlay.state.mCorrHz).toBeNull();
+    expect(overlay.state.mCorrMax).toBeNull();
+
+    // An explicit null movement is treated the same as absent.
+    overlay.update(makeSnapshot({ movement: null }));
+    expect(overlay.state.mFrameAvg).toBeNull();
   });
 });

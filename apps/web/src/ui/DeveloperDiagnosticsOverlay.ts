@@ -14,6 +14,9 @@
  *  - Build mode active
  *  - Input sequence
  *  - FPS (measured from the overlay's own RAF loop)
+ *  - Movement smoothness metrics (dev-only instrumentation: render
+ *    frame time vs simulation tick cadence vs snapshot cadence / pending
+ *    inputs vs correction rate — see movementMetrics.ts)
  *
  * The overlay is purely presentational: it reads a snapshot from a
  * provider callback each frame and renders text. It never drives game
@@ -56,6 +59,15 @@ export interface DeveloperDiagnosticsState {
   buildMode: boolean;
   inputSequence: number;
   fps: number;
+  /** Movement smoothness metrics (null when the snapshot has none). */
+  mFrameAvg: number | null;
+  mFrameMax: number | null;
+  mSimHz: number | null;
+  mSnapHz: number | null;
+  mSnapGapMax: number | null;
+  mPending: number | null;
+  mCorrHz: number | null;
+  mCorrMax: number | null;
 }
 
 /**
@@ -92,6 +104,14 @@ export class DeveloperDiagnosticsOverlay {
     buildMode: false,
     inputSequence: 0,
     fps: 0,
+    mFrameAvg: null,
+    mFrameMax: null,
+    mSimHz: null,
+    mSnapHz: null,
+    mSnapGapMax: null,
+    mPending: null,
+    mCorrHz: null,
+    mCorrMax: null,
   };
 
   private rafId = 0;
@@ -165,6 +185,15 @@ export class DeveloperDiagnosticsOverlay {
     this.state.weaponType = snapshot.weaponType;
     this.state.buildMode = snapshot.buildMode;
     this.state.inputSequence = snapshot.inputSequence;
+    const m = snapshot.movement ?? null;
+    this.state.mFrameAvg = m ? m.frameMsAvg : null;
+    this.state.mFrameMax = m ? m.frameMsMax : null;
+    this.state.mSimHz = m ? m.simTicksPerSec : null;
+    this.state.mSnapHz = m ? m.snapshotsPerSec : null;
+    this.state.mSnapGapMax = m ? m.snapshotGapMaxMs : null;
+    this.state.mPending = m ? m.pendingInputs : null;
+    this.state.mCorrHz = m ? m.correctionsPerSec : null;
+    this.state.mCorrMax = m ? m.correctionMaxMeters : null;
   }
 
   public dispose(): void {
@@ -237,6 +266,14 @@ export class DeveloperDiagnosticsOverlay {
     // Performance
     lines.push("");
     lines.push(`FPS:   ${s.fps > 0 ? s.fps : "…"}`);
+
+    // Movement smoothness (dev-only instrumentation)
+    if (s.mFrameAvg !== null && s.mSimHz !== null && s.mSnapHz !== null && s.mSnapGapMax !== null && s.mPending !== null && s.mCorrHz !== null && s.mCorrMax !== null) {
+      lines.push("");
+      lines.push(`Mov:   frame ${s.mFrameAvg.toFixed(1)}ms (max ${s.mFrameMax!.toFixed(1)})  sim ${s.mSimHz.toFixed(1)}Hz`);
+      lines.push(`Net:   snap ${s.mSnapHz.toFixed(1)}Hz (gap ${s.mSnapGapMax.toFixed(0)}ms)  pend ${s.mPending}`);
+      lines.push(`CorrHz:${s.mCorrHz.toFixed(1)}Hz (max ${s.mCorrMax.toFixed(4)}m)`);
+    }
 
     overlay.textContent = lines.join("\n");
   }
