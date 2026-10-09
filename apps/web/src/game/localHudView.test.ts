@@ -35,7 +35,7 @@ function baselineInput(): LocalHudViewInput {
     selectedBuildType: "wall",
     placementValid: null,
     gridPosition: null,
-    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null },
+    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null, applyReady: false },
     roundTimer: null,
     countdownSeconds: 0,
   };

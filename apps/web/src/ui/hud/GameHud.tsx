@@ -117,6 +117,7 @@ export function GameHud(props: GameHudProps): JSX.Element | null {
             selectedEdit={local.buildEdit.selectedEdit}
             allowedEdits={local.buildEdit.allowedEdits}
             feedback={local.buildEdit.feedback}
+            applyReady={local.buildEdit.applyReady}
           />
         </>
       )}
