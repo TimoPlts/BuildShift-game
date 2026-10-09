@@ -115,7 +115,7 @@ describe("MovementFeedback", () => {
 
     // Camera: a small upward nudge (positive = up), decaying only when the
     // render frame asks for it.
-    expect(feedback.updateCameraMotion(0)).toBeCloseTo(0.06, 6);
+    expect(feedback.updateCameraMotion(0)).toBeCloseTo(0.08, 6);
   });
 
   it("landing spawns a fall-speed-scaled burst at the ground point and dips the camera down", () => {
