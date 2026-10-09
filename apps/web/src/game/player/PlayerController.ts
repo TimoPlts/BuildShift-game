@@ -48,7 +48,7 @@ import { PlayerPresentation } from "../scene/PlayerPresentation";
  */
 export class PlayerController {
   /** Owns every visual mesh/material of the local player body. */
-  private readonly presentation: PlayerPresentation;
+  private readonly _presentation: PlayerPresentation;
   /**
    * Presentation root (transform only, no geometry). Its position is the
    * mirrored capsule-centre position. Its Y rotation is the NEGATED facing
@@ -83,8 +83,8 @@ export class PlayerController {
     // Presentation only: the modular low-poly body (green "local" variant).
     // Its root starts exactly where the physics world says the character is
     // (capsule centre = PLAYER_SPAWN).
-    this.presentation = PlayerPresentation.create(scene, "local", "local-player");
-    this.mesh = this.presentation.root;
+    this._presentation = PlayerPresentation.create(scene, "local", "local-player");
+    this.mesh = this._presentation.root;
     const center = this.physics.getPosition();
     this.mesh.position.set(center.x, center.y, center.z);
   }
@@ -169,7 +169,7 @@ export class PlayerController {
     position: Readonly<{ x: number; y: number; z: number }>,
     yaw: number,
   ): void {
-    this.presentation.setTransform(position, yaw);
+    this._presentation.setTransform(position, yaw);
   }
 
   /**
@@ -214,7 +214,7 @@ export class PlayerController {
     this.jumpController.restoreState(state.jump);
     // Presentation mirror: mesh position + facing yaw (negated for the
     // Babylon root rotation — see the mesh field docs).
-    this.presentation.setTransform(state.position, state.facingYaw);
+    this._presentation.setTransform(state.position, state.facingYaw);
   }
 
   /**
@@ -232,7 +232,7 @@ export class PlayerController {
     yaw: number,
   ): void {
     this.physics.setPosition(position);
-    this.presentation.setTransform(position, yaw);
+    this._presentation.setTransform(position, yaw);
   }
 
   /**
@@ -250,7 +250,17 @@ export class PlayerController {
    * move and rotate with the player body automatically.
    */
   public get presentationRoot(): TransformNode {
-    return this.presentation.visualRoot;
+    return this._presentation.visualRoot;
+  }
+
+  /**
+   * The local player's presentation component (hit-flash / eliminated
+   * tinting, procedural pose). Read-only access for the runtime, which
+   * drives its display state from the canonical authoritative events —
+   * ownership and disposal stay with this controller.
+   */
+  public get presentation(): PlayerPresentation {
+    return this._presentation;
   }
 
   /** Capsule *centre* position (the physics body translation), as a Vector3. */
@@ -304,7 +314,7 @@ export class PlayerController {
       return;
     }
 
-    this.presentation.dispose();
+    this._presentation.dispose();
     this.physics.dispose();
     this.disposed = true;
   }

@@ -57,6 +57,35 @@ describe("GameRuntime player presentation wiring", () => {
     expect(block).toContain("this.remotePresentation?.setEnabled(false)");
   });
 
+  it("drives the local body state from the same canonical events as the remote body", () => {
+    // An authoritative hit whose target is the local session sets the local
+    // hit-flash counter (the mirror of the remote player's branch).
+    const hitIdx = runtime.indexOf("onEvent(COMBAT_HIT_EVENT");
+    expect(hitIdx).toBeGreaterThan(-1);
+    const hitHandler = runtime.slice(hitIdx, hitIdx + 400);
+    expect(hitHandler).toContain(
+      "if(sid&&e.targetId===sid&&e.shooterId!==sid)this.localHitFlashFrames=6",
+    );
+    // The render frame applies eliminated + hit-flash state to the local
+    // presentation via the same applyState contract the remote body uses.
+    expect(runtime).toContain(
+      "this.localHitFlashFrames=this.playerController.presentation.applyState(this.localEliminated,this.localHitFlashFrames)",
+    );
+    // The local presentation is reached through the controller's read-only
+    // accessor (ownership/disposal stay with the controller).
+    expect(playerController).toContain(
+      "public get presentation(): PlayerPresentation",
+    );
+  });
+
+  it("resets the local hit-flash on reconnect and on match reset", () => {
+    // Both canonical reset sites (connection change, match reset) clear the
+    // local counter alongside the remote one; the field declaration itself
+    // does not use the `this.` prefix, so exactly two reset sites remain.
+    const resetSites = runtime.split("this.localHitFlashFrames=0").length - 1;
+    expect(resetSites).toBe(2);
+  });
+
   it("no longer uses the capsule-based remote visuals", () => {
     for (const legacy of [
       "ensureRemoteMesh",
@@ -80,7 +109,7 @@ describe("GameRuntime player presentation wiring", () => {
     const disposeIdx = playerController.indexOf("public dispose(): void");
     expect(disposeIdx).toBeGreaterThan(-1);
     expect(playerController.slice(disposeIdx, disposeIdx + 300)).toContain(
-      "this.presentation.dispose()",
+      "this._presentation.dispose()",
     );
   });
 });

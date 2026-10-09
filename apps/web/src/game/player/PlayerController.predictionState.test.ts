@@ -88,7 +88,7 @@ describe("PlayerController — restorePredictionState", () => {
     expect(body).toContain("this.verticalVelocity = state.verticalVelocity");
     expect(body).toContain("this.lastGrounded = state.lastGrounded");
     expect(body).toContain("this.jumpController.restoreState(state.jump)");
-    expect(body).toContain("this.presentation.setTransform(state.position, state.facingYaw)");
+    expect(body).toContain("this._presentation.setTransform(state.position, state.facingYaw)");
   });
 });
 
@@ -96,7 +96,7 @@ describe("PlayerController — setAuthoritativePosition (narrow override)", () =
   it("updates ONLY physics position and presentation transform", () => {
     const body = methodBody("setAuthoritativePosition");
     expect(body).toContain("this.physics.setPosition(position)");
-    expect(body).toContain("this.presentation.setTransform(position, yaw)");
+    expect(body).toContain("this._presentation.setTransform(position, yaw)");
   });
 
   it("does NOT touch verticalVelocity, lastGrounded, or JumpController timing", () => {
