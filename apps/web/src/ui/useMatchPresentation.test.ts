@@ -263,6 +263,80 @@ describe("useMatchPresentation", () => {
     expect(latest?.moment).toBe("countdown");
   });
 
+  it("does not accumulate timers across repeated rematches", () => {
+    // Start from a clean PLAYING state (no timers active).
+    setView(view({ roundState: RoundState.PLAYING }));
+    const baselineTimers = vi.getTimerCount();
+
+    // ── Match 1 ends: heartbeat interval starts ──
+    setView(
+      view({
+        roundState: RoundState.MATCH_OVER,
+        currentRound: 3,
+        localScore: 3,
+        remoteScore: 0,
+        localWonMatch: true,
+      }),
+    );
+    expect(latest?.matchResult).not.toBeNull();
+    expect(latest?.rematchAvailable).toBe(true);
+    const afterFirstMatchEnd = vi.getTimerCount();
+    expect(afterFirstMatchEnd).toBeGreaterThan(baselineTimers);
+
+    // ── Rematch 1 accepted: phase leaves MATCH_OVER → heartbeat cleared ──
+    setView(
+      view({
+        roundState: RoundState.COUNTDOWN,
+        currentRound: 1,
+        localScore: 0,
+        remoteScore: 0,
+        countdownRemainingSeconds: 3,
+      }),
+    );
+    expect(latest?.matchResult).toBeNull();
+    expect(latest?.rematchAvailable).toBe(false);
+    const afterFirstRematch = vi.getTimerCount();
+    expect(afterFirstRematch).toBeLessThanOrEqual(baselineTimers);
+
+    // ── Match 2 ends: a fresh heartbeat starts (not a second one) ──
+    setView(
+      view({
+        roundState: RoundState.MATCH_OVER,
+        currentRound: 2,
+        localScore: 3,
+        remoteScore: 1,
+        localWonMatch: false,
+      }),
+    );
+    expect(latest?.matchResult).not.toBeNull();
+    expect(latest?.matchResult?.localWon).toBe(false);
+    expect(latest?.rematchAvailable).toBe(true);
+    const afterSecondMatchEnd = vi.getTimerCount();
+    // The timer count should not have grown beyond what a single match-end
+    // requires; it must equal the count after the first match-end (one
+    // heartbeat), not double it.
+    expect(afterSecondMatchEnd).toBe(afterFirstMatchEnd);
+
+    // ── Rematch 2 accepted: heartbeat cleared again ──
+    setView(
+      view({
+        roundState: RoundState.COUNTDOWN,
+        currentRound: 1,
+        localScore: 0,
+        remoteScore: 0,
+        countdownRemainingSeconds: 3,
+      }),
+    );
+    expect(latest?.matchResult).toBeNull();
+    expect(latest?.rematchAvailable).toBe(false);
+    const afterSecondRematch = vi.getTimerCount();
+    expect(afterSecondRematch).toBeLessThanOrEqual(baselineTimers);
+
+    // Unmounting leaves no timers behind.
+    act(() => root.unmount());
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it("presents nothing while disconnected and clears the rematch anchor on reconnect", () => {
     setView(
       view({
