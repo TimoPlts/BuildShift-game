@@ -57,9 +57,12 @@ describe("BuildEditHud", () => {
     expect(html).toContain("Clear");
     // The selected edit (door) is highlighted.
     expect(html).toContain("build-edit-hud__edit--selected");
-    // With a target and a live connection, the hint offers to apply.
+    // With a target and a live connection, the hint offers to apply and
+    // names the selection keys (5-9) bound by the edit input controller.
     expect(html).toContain("Enter");
     expect(html).toContain("apply");
+    expect(html).toContain("5-9");
+    expect(html).toContain("choose");
   });
 
   it("shows an accurate aim prompt and a no-target chip when in edit mode but aiming off", () => {

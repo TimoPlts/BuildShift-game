@@ -107,4 +107,44 @@ describe("GameCanvas startup", () => {
     expect(runtimeMocks.create).not.toHaveBeenCalled();
   });
 
+  it("shows the accurate, context-grouped keybinds while the pointer is unlocked", async () => {
+    const runtime = createRuntime();
+    runtimeMocks.create.mockResolvedValue(runtime);
+
+    await act(async () => {
+      root.render(<GameCanvas />);
+    });
+
+    // The pointer is not locked in the test environment, so the pre-play
+    // overlay (with the control hints) is visible.
+    const hints = host.querySelector(".control-hints");
+    expect(hints).not.toBeNull();
+    const text = hints?.textContent ?? "";
+
+    // Move group — mirrors the InputManager movement bindings.
+    expect(text).toContain("Move");
+    expect(text).toContain("W A S D");
+    expect(text).toContain("Space");
+    expect(text).toContain("jump");
+    expect(text).toContain("look");
+    // Combat group — fire, reload and the 1/2 weapon-switch keys.
+    expect(text).toContain("Combat");
+    expect(text).toContain("fire");
+    expect(text).toContain("reload");
+    expect(text).toContain("weapons");
+    // Build group — mirrors BuildingInputController (B, 1-4, Q/E, place).
+    expect(text).toContain("Build");
+    expect(text).toContain("build mode");
+    expect(text).toContain("select piece");
+    expect(text).toContain("rotate");
+    expect(text).toContain("place");
+    // Edit group — mirrors BuildEditInputController (F, 5-9, Enter).
+    expect(text).toContain("Edit");
+    expect(text).toContain("edit mode");
+    expect(text).toContain("choose edit");
+    expect(text).toContain("apply");
+    // System group — pointer-lock release.
+    expect(text).toContain("Esc");
+  });
+
 });

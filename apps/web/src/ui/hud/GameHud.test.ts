@@ -259,6 +259,63 @@ describe("WeaponHUD", () => {
     expect(html).toContain("weapon-hud__ammo--empty");
   });
 
+  it("shows each weapon slot's switch keybind (1 / 2) on its chip", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 12,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    // The slot chips carry the same keys the InputManager binds for
+    // weapon switching (Digit1 → assault rifle, Digit2 → shotgun).
+    expect(html).toContain("weapon-hud__slot-key");
+    expect(html).toContain("Assault Rifle (key 1)");
+    expect(html).toContain("Shotgun (key 2)");
+    // The secondary ammo count is labelled as capacity, not reserve.
+    expect(html).toContain("weapon-hud__ammo-capacity");
+  });
+
+  it("prompts to reload with the R keybind only when the magazine is empty and idle", () => {
+    const empty = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "shotgun",
+        magazineAmmo: 0,
+        magazineSize: 8,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(empty).toContain("weapon-hud__reload-hint");
+    expect(empty).toContain("to reload");
+
+    // While a reload is running the progress bar owns the read-out.
+    const reloading = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "shotgun",
+        magazineAmmo: 0,
+        magazineSize: 8,
+        isReloading: true,
+        reloadProgress: 0.5,
+      }),
+    );
+    expect(reloading).not.toContain("weapon-hud__reload-hint");
+
+    // With rounds in the magazine there is nothing to prompt.
+    const loaded = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "shotgun",
+        magazineAmmo: 3,
+        magazineSize: 8,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(loaded).not.toContain("weapon-hud__reload-hint");
+  });
+
   it("shows the reload progress bar only while reloading", () => {
     const reloading = renderToStaticMarkup(
       createElement(WeaponHUD, {
