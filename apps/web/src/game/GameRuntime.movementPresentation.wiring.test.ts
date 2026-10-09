@@ -46,7 +46,7 @@ describe("GameRuntime movement presentation wiring", () => {
       "this.cameraController.setTransientVerticalOffset(this.movementFeedback.updateCameraMotion(dt))",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPosition())",
+      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
     );
     expect(setIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(setIdx);

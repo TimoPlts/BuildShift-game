@@ -55,19 +55,20 @@ describe("GameRuntime build-edit wiring", () => {
     // The update is called right after the building frame update in the render
     // loop. Build presentation synchronizes the same authoritative mirror
     // before edit targeting and HUD emission.
+    // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPosition(),this.isConnected);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
+      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame():void");
     expect(fnIdx).toBeGreaterThan(-1);
-    const block = runtime.slice(fnIdx, fnIdx + 400);
+    const block = runtime.slice(fnIdx, fnIdx + 500);
     // Reads only existing runtime sources: camera position, the shared aim
     // direction, the player's feet, the authoritative building mirror, the
     // session id, and the live connection flag.
     expect(block).toContain("camera.position");
     expect(block).toContain("this.currentAimDirection");
-    expect(block).toContain("this.playerController.getFeetPosition()");
+    expect(block).toContain("this.playerController.getFeetPositionInto(this._feetPos)");
     expect(block).toContain("this.buildingSystem.store.getBuildingState()");
     expect(block).toContain("sessionId:this.networkClient.sessionId");
     expect(block).toContain("connected:this.isConnected");

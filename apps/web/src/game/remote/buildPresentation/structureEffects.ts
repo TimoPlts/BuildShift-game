@@ -117,6 +117,9 @@ export function triggerHitFlash(effects: StructureEffects, now: number): void {
 
 /**
  * The composed visual state to apply to a structure mesh this frame.
+ *
+ * Instances can be reused across frames ({@link createComposedVisual} +
+ * {@link composeVisualInto}) so per-frame composition does not allocate.
  */
 export interface ComposedVisual {
   /** Uniform scale multiplier (construction pop, destruction shrink). */
@@ -131,6 +134,21 @@ export interface ComposedVisual {
   emissiveBoost: [number, number, number];
   /** Additional diffuse color to add (hit flash white-shift). */
   diffuseBoost: [number, number, number];
+}
+
+/**
+ * Create a reusable {@link ComposedVisual} buffer for per-frame composition
+ * ({@link composeVisualInto}).
+ */
+export function createComposedVisual(): ComposedVisual {
+  return {
+    uniformScale: 1,
+    scaleY: 1,
+    yOffset: 0,
+    alpha: 1,
+    emissiveBoost: [0, 0, 0],
+    diffuseBoost: [0, 0, 0],
+  };
 }
 
 /**
@@ -150,12 +168,38 @@ export function composeVisual(
   baseYOffset: number,
   now: number,
 ): { visual: ComposedVisual; allDone: boolean; shouldRemove: boolean } {
+  const visual = createComposedVisual();
+  const flags = composeVisualInto(effects, baseScaleY, baseYOffset, now, visual);
+  return { visual, ...flags };
+}
+
+/**
+ * Compute the composed visual state in place into a caller-owned
+ * {@link ComposedVisual} buffer — no allocation per call. The caller must
+ * consume (or overwrite) `out` before passing it to the next call.
+ *
+ * Returns the completion flags only; the visual itself is written into
+ * `out`.
+ */
+export function composeVisualInto(
+  effects: StructureEffects,
+  baseScaleY: number,
+  baseYOffset: number,
+  now: number,
+  out: ComposedVisual,
+): { allDone: boolean; shouldRemove: boolean } {
   let uniformScale = 1;
   let scaleY = baseScaleY;
   let yOffset = baseYOffset;
   let alpha = 1;
-  const emissiveBoost: [number, number, number] = [0, 0, 0];
-  const diffuseBoost: [number, number, number] = [0, 0, 0];
+  const emissiveBoost = out.emissiveBoost;
+  const diffuseBoost = out.diffuseBoost;
+  emissiveBoost[0] = 0;
+  emissiveBoost[1] = 0;
+  emissiveBoost[2] = 0;
+  diffuseBoost[0] = 0;
+  diffuseBoost[1] = 0;
+  diffuseBoost[2] = 0;
   let allDone = true;
 
   // Edit transition: lerp between old and new edit pose
@@ -208,9 +252,10 @@ export function composeVisual(
     if (!effects.hitFlash.done) allDone = false;
   }
 
-  return {
-    visual: { uniformScale, scaleY, yOffset, alpha, emissiveBoost, diffuseBoost },
-    allDone,
-    shouldRemove,
-  };
+  out.uniformScale = uniformScale;
+  out.scaleY = scaleY;
+  out.yOffset = yOffset;
+  out.alpha = alpha;
+
+  return { allDone, shouldRemove };
 }

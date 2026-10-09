@@ -712,4 +712,180 @@ describe("BuildStructureRenderer", () => {
       expect(scene.materials.some((m) => m.name === matName && !(m as any).disposables?.length)).toBe(false);
     });
   });
+
+  // ─── No-change fast path (performance pass) ─────────────────────────────────
+
+  describe("no-change fast path", () => {
+    it("still transitions the edit pose after repeated identical syncs", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300); // construction complete
+      renderer.syncStructures({ structures: { wall } }); // fast path x2
+      renderer.syncStructures({ structures: { wall } });
+
+      const half = structure("wall", "wall", "half_top");
+      renderer.syncStructures({ structures: { wall: half } });
+      advance(50); // mid transition
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      // Mid-transition the Y scale is between full (1) and half (0.5).
+      expect(mesh.scaling.y).toBeLessThan(1);
+      expect(mesh.scaling.y).toBeGreaterThan(0.5);
+    });
+
+    it("still moves the mesh after repeated identical syncs", () => {
+      const wall = structure("wall", "wall", "", { x: 0, y: 0, z: 0 });
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+      renderer.syncStructures({ structures: { wall } });
+      renderer.syncStructures({ structures: { wall } });
+
+      const moved = structure("wall", "wall", "", { x: 1, y: 0, z: 0 });
+      renderer.syncStructures({ structures: { wall: moved } });
+      advance(16);
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      expect(mesh.position.x).toBeCloseTo(1, 4);
+    });
+
+    it("still plays destruction after repeated identical syncs", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+      renderer.syncStructures({ structures: { wall } });
+
+      renderer.syncStructures({ structures: {} });
+      advance(300); // destruction animation completes
+
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("clears the edit target highlight when the structure is removed after identical syncs", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+      renderer.syncStructures({ structures: { wall } });
+      renderer.showEditTarget("wall");
+      advance(16); // the tick applies the edit-target emissive boost
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = mesh.material as StandardMaterial;
+      const boosted = mat.emissiveColor.r;
+      expect(boosted).toBeGreaterThan(0.08);
+
+      renderer.syncStructures({ structures: {} });
+      advance(300);
+
+      // Mesh gone; re-creating the structure must not carry the stale target.
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+      const freshMat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(freshMat.emissiveColor.r).toBeLessThan(boosted);
+    });
+
+    it("repeated identical durability updates leave the material stable", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      renderer.updateStructureDurability("wall", durability(150, 200));
+      advance(16);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      const r0 = mat.diffuseColor.r;
+      const g0 = mat.diffuseColor.g;
+      const e0 = mat.emissiveColor.r;
+
+      // The per-frame driver re-applies the same mirrored state many times.
+      for (let i = 0; i < 10; i++) {
+        renderer.updateStructureDurability("wall", durability(150, 200));
+        advance(16);
+      }
+
+      expect(mat.diffuseColor.r).toBe(r0);
+      expect(mat.diffuseColor.g).toBe(g0);
+      expect(mat.emissiveColor.r).toBe(e0);
+    });
+
+    it("still flashes when durability decreases after identical repeats", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      renderer.updateStructureDurability("wall", durability(150, 200));
+      advance(16);
+      const before = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      const baseEmissiveR = before.emissiveColor.r;
+
+      // Identical re-apply, then a real hit.
+      renderer.updateStructureDurability("wall", durability(150, 200));
+      renderer.updateStructureDurability("wall", durability(100, 200));
+      advance(16); // mid-flash
+
+      const after = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(after.emissiveColor.r).toBeGreaterThan(baseEmissiveR);
+    });
+  });
+
+  // ─── Shared color constant stability ─────────────────────────────────────────
+
+  describe("shared color constant stability", () => {
+    it("per-frame in-place material updates never corrupt the shared SOLID constants", () => {
+      renderer.syncStructures({
+        structures: {
+          wall: structure("wall", "wall"),
+          cone: structure("cone", "cone"),
+        },
+      });
+      advance(300);
+
+      const wallMat = () =>
+        (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const coneMat = (scene.getMeshByName("structure-cone") as Mesh)
+        .material as StandardMaterial;
+
+      // Baseline = the shared-constant values as seen on fresh materials.
+      const originalWallDiffuse = wallMat().diffuseColor.clone();
+      const originalWallEmissive = wallMat().emissiveColor.clone();
+      const originalConeDiffuse = coneMat.diffuseColor.clone();
+
+      // Damage the wall: the tick now mutates this material's colors in place
+      // every frame.
+      renderer.updateStructureDurability("wall", durability(100, 200));
+      advance(50);
+      advance(50);
+
+      // The wall's material must actually differ from its solid base — the
+      // test is only meaningful if the in-place mutation path really ran.
+      expect(wallMat().diffuseColor.r).toBeGreaterThan(originalWallDiffuse.r);
+
+      // A structure created AFTER the mutations must still start from the
+      // pristine shared constants: in-place updates must not have corrupted
+      // SOLID_COLORS / SOLID_EMISSIVE.
+      renderer.syncStructures({
+        structures: {
+          wall: structure("wall", "wall"),
+          cone: structure("cone", "cone"),
+          fresh: structure("fresh", "wall"),
+        },
+      });
+      advance(300);
+      const freshMat = (scene.getMeshByName("structure-fresh") as Mesh)
+        .material as StandardMaterial;
+
+      expect(freshMat.diffuseColor.r).toBe(originalWallDiffuse.r);
+      expect(freshMat.diffuseColor.g).toBe(originalWallDiffuse.g);
+      expect(freshMat.diffuseColor.b).toBe(originalWallDiffuse.b);
+      expect(freshMat.emissiveColor.r).toBe(originalWallEmissive.r);
+      expect(freshMat.emissiveColor.g).toBe(originalWallEmissive.g);
+      expect(freshMat.emissiveColor.b).toBe(originalWallEmissive.b);
+
+      // Cross-structure isolation: the untouched cone keeps its baseline.
+      expect(coneMat.diffuseColor.r).toBe(originalConeDiffuse.r);
+      expect(coneMat.diffuseColor.g).toBe(originalConeDiffuse.g);
+      expect(coneMat.diffuseColor.b).toBe(originalConeDiffuse.b);
+    });
+  });
 });

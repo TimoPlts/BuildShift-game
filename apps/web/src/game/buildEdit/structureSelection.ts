@@ -68,9 +68,19 @@ export interface StructureSelectionInput {
 const EPS = 1e-8;
 
 /**
+ * Reusable AABB scratch vectors. `structureAabb` is called per structure per
+ * frame (edit mode); the results are consumed synchronously by
+ * `rayAabbDistance` and never retained, so two module-level objects replace
+ * two allocations per structure per frame.
+ */
+const _aabbCtr: Vec3Like = { x: 0, y: 0, z: 0 };
+const _aabbHe: Vec3Like = { x: 0, y: 0, z: 0 };
+
+/**
  * World AABB centre + half-extents for a structure, mirroring the server's
  * `wc` (grid anchor + footprint, rotation swaps X/Z extents, then scaled by
- * the shared cell size / layer height).
+ * the shared cell size / layer height). Writes into the module-level scratch
+ * vectors and returns them.
  */
 function structureAabb(
   buildType: StructureState["buildType"],
@@ -81,17 +91,18 @@ function structureAabb(
   const w = footprint[0];
   const h = footprint[1];
   const d = footprint[2];
-  const { xs, zs } =
-    rotation === 1 || rotation === 3 ? { xs: d, zs: w } : { xs: w, zs: d };
+  const rotated = rotation === 1 || rotation === 3;
+  const xs = rotated ? d : w;
+  const zs = rotated ? w : d;
   const cs = BUILD_GRID.cellSize;
   const lh = BUILD_GRID.layerHeight;
-  const ctr: Vec3Like = {
-    x: ((grid.x * 2 + xs - 1) / 2) * cs,
-    y: grid.y * lh + (h * lh) / 2,
-    z: ((grid.z * 2 + zs - 1) / 2) * cs,
-  };
-  const he: Vec3Like = { x: (xs * cs) / 2, y: (h * lh) / 2, z: (zs * cs) / 2 };
-  return { ctr, he };
+  _aabbCtr.x = ((grid.x * 2 + xs - 1) / 2) * cs;
+  _aabbCtr.y = grid.y * lh + (h * lh) / 2;
+  _aabbCtr.z = ((grid.z * 2 + zs - 1) / 2) * cs;
+  _aabbHe.x = (xs * cs) / 2;
+  _aabbHe.y = (h * lh) / 2;
+  _aabbHe.z = (zs * cs) / 2;
+  return { ctr: _aabbCtr, he: _aabbHe };
 }
 
 /**
@@ -148,7 +159,10 @@ export function selectTargetStructure(
   let best: TargetedStructure | null = null;
   let bestDistance = Infinity;
 
-  for (const structure of Object.values(building.structures)) {
+  // `for..in` over the plain record avoids the per-frame `Object.values`
+  // array allocation (the state record is always a plain object literal).
+  for (const key in building.structures) {
+    const structure = building.structures[key];
     if (structure.ownerId !== ownerId) continue;
     if (!isEligible(structure)) continue;
 

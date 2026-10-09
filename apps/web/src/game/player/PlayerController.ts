@@ -277,6 +277,20 @@ export class PlayerController {
   }
 
   /**
+   * Write the feet position into a caller-provided vector (no allocation).
+   * For per-frame presentation callers that already own a reusable vector.
+   * Returns `out` for convenience.
+   */
+  public getFeetPositionInto(out: Vector3): Vector3 {
+    out.set(
+      this.mesh.position.x,
+      this.mesh.position.y - PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+      this.mesh.position.z,
+    );
+    return out;
+  }
+
+  /**
    * Backwards-compatible alias. Returns the *centre* position — the same
    * value the physics body reports — so callers wanting the body position are
    * unambiguous. Use {@link getFeetPosition} for the on-ground point.
