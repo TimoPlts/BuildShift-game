@@ -134,8 +134,8 @@ describe("PlayerPresentation", () => {
 
     const meshes = ownedMeshes(rig.scene, "local-player");
     const materials = ownedMaterials(rig.scene, "local-player");
-    // 11 primitive meshes, 3 shared materials — a bounded, lightweight body.
-    expect(meshes).toHaveLength(11);
+    // 12 primitive meshes, 3 shared materials — a bounded, lightweight body.
+    expect(meshes).toHaveLength(12);
     expect(materials).toHaveLength(3);
     // Low-poly: every material is plain (no textures) and every mesh is safe
     // (not pickable, no collisions), parented to visualRoot or an owned pivot.
