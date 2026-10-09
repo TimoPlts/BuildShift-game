@@ -829,6 +829,116 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
+  // ─── Many-structures performance ─────────────────────────────────────────
+
+  describe("many-structures performance", () => {
+    const N = 50;
+
+    function makeState(): BuildingState {
+      const structures: Record<string, StructureState> = {};
+      for (let i = 0; i < N; i++) {
+        structures[`s-${i}`] = structure(`s-${i}`, "wall", "", {
+          x: i % 10,
+          y: 0,
+          z: Math.floor(i / 10),
+        });
+      }
+      return { structures };
+    }
+
+    it("creates exactly N meshes and does not duplicate on repeated sync", () => {
+      const state = makeState();
+      renderer.syncStructures(state);
+      advance(300); // construction complete
+
+      const count = () =>
+        scene.meshes.filter((m) => m.name.startsWith("structure-s-")).length;
+      expect(count()).toBe(N);
+
+      renderer.syncStructures(state);
+      renderer.syncStructures(state);
+      expect(count()).toBe(N);
+    });
+
+    it("static structures have stable materials across many frames", () => {
+      renderer.syncStructures(makeState());
+      advance(300); // construction complete
+
+      // Capture baseline for a spread of structures
+      const samples: Array<{ name: string; r: number; g: number; e: number }> = [];
+      for (const i of [0, 10, 25, 49]) {
+        const mat = (scene.getMeshByName(`structure-s-${i}`) as Mesh)
+          .material as StandardMaterial;
+        samples.push({
+          name: `structure-s-${i}`,
+          r: mat.diffuseColor.r,
+          g: mat.diffuseColor.g,
+          e: mat.emissiveColor.r,
+        });
+      }
+
+      // Advance 30 frames (~half second at 60 fps)
+      for (let f = 0; f < 30; f++) advance(16);
+
+      // Materials must be bit-stable (no drift from skipped ticks)
+      for (const s of samples) {
+        const mat = (scene.getMeshByName(s.name) as Mesh)
+          .material as StandardMaterial;
+        expect(mat.diffuseColor.r).toBe(s.r);
+        expect(mat.diffuseColor.g).toBe(s.g);
+        expect(mat.emissiveColor.r).toBe(s.e);
+      }
+    });
+
+    it("edit-target switch updates emissive for both old and new targets", () => {
+      const a = structure("a", "wall", "", { x: 0, y: 0, z: 0 });
+      const b = structure("b", "wall", "", { x: 1, y: 0, z: 0 });
+      renderer.syncStructures({ structures: { a, b } });
+      advance(300);
+
+      const matA = () =>
+        (scene.getMeshByName("structure-a") as Mesh).material as StandardMaterial;
+      const matB = () =>
+        (scene.getMeshByName("structure-b") as Mesh).material as StandardMaterial;
+
+      advance(16); // let tick settle with no edit target
+      const baseE = matA().emissiveColor.r;
+
+      // Target A → A's emissive rises, B unchanged
+      renderer.showEditTarget("a");
+      advance(16);
+      expect(matA().emissiveColor.r).toBeGreaterThan(baseE);
+      expect(matB().emissiveColor.r).toBe(baseE);
+
+      // Switch to B → B rises, A returns to baseline
+      renderer.showEditTarget("b");
+      advance(16);
+      expect(matB().emissiveColor.r).toBeGreaterThan(baseE);
+      expect(matA().emissiveColor.r).toBeCloseTo(baseE, 5);
+
+      // Clear → B returns to baseline
+      renderer.hideEditTarget();
+      advance(16);
+      expect(matB().emissiveColor.r).toBeCloseTo(baseE, 5);
+    });
+
+    it("durability change on a static structure updates the material on next tick", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300); // construction complete → static
+
+      const mat = () =>
+        (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const healthyR = mat().diffuseColor.r;
+
+      // Decrease durability (triggers hit flash + tint)
+      renderer.updateStructureDurability("wall", durability(100, 200));
+      advance(200); // past hit-flash duration (180 ms)
+
+      // Diffuse must have shifted toward damaged color
+      expect(mat().diffuseColor.r).toBeGreaterThan(healthyR);
+    });
+  });
+
   // ─── Shared color constant stability ─────────────────────────────────────────
 
   describe("shared color constant stability", () => {
