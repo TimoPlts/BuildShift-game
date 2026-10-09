@@ -6,6 +6,7 @@
  * It is a display-only view: no gameplay, networking, or authority logic
  * reads from this object.
  */
+import type { MovementMetricsReading } from "./movementMetrics";
 
 /**
  * A single axis-aligned position in world space.
@@ -50,4 +51,11 @@ export interface DiagnosticsSnapshot {
   buildMode: boolean;
   /** The last sent input sequence number. */
   inputSequence: number;
+  /**
+   * Development-only movement smoothness metrics (render cadence vs
+   * network snapshot cadence vs correction churn). Present on the
+   * canonical production path; may be absent from test fixtures that
+   * predate the field.
+   */
+  movement?: MovementMetricsReading | null;
 }
