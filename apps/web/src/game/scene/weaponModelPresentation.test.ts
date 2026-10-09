@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { WeaponModelPresentation } from "./WeaponModelPresentation";
 
@@ -70,6 +71,24 @@ function rifleMeshesOf(scene: Scene): Mesh[] {
 
 function shotgunMeshesOf(scene: Scene): Mesh[] {
   return scene.meshes.filter((m): m is Mesh => m.name.includes("shotgun-"));
+}
+
+/** The owned per-weapon group transform (drives the held-weapon dip). */
+function rifleGroupOf(scene: Scene): TransformNode {
+  const node = scene.transformNodes.find(
+    (t) => t.name === `${PREFIX}-rifle-group`,
+  );
+  expect(node, "rifle group").toBeDefined();
+  return node as TransformNode;
+}
+
+/** The owned per-weapon group transform (drives the held-weapon dip). */
+function shotgunGroupOf(scene: Scene): TransformNode {
+  const node = scene.transformNodes.find(
+    (t) => t.name === `${PREFIX}-shotgun-group`,
+  );
+  expect(node, "shotgun group").toBeDefined();
+  return node as TransformNode;
 }
 
 describe("WeaponModelPresentation", () => {
@@ -225,8 +244,86 @@ describe("WeaponModelPresentation", () => {
 
     expect(() => wm!.setEquippedWeapon("shotgun")).not.toThrow();
     expect(() => wm!.setEnabled(false)).not.toThrow();
+    expect(() => wm!.setReload(true, 0.5)).not.toThrow();
+    expect(() => wm!.update(1 / 60)).not.toThrow();
     expect(wm.equippedWeapon).toBe("assault_rifle"); // unchanged
     expect(weaponMeshes(scene, PREFIX)).toHaveLength(0);
     expect(weaponMaterials(scene, PREFIX)).toHaveLength(0);
+  });
+
+  it(
+    "registers exactly one before-render observer and removes it on dispose",
+    async () => {
+      ({ engine, scene } = makeScene());
+      wm = WeaponModelPresentation.create(scene, PREFIX);
+      expect(scene.onBeforeRenderObservable.observers).toHaveLength(1);
+      wm.dispose();
+      // Babylon defers observer removal to the next tick.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(scene.onBeforeRenderObservable.observers).toHaveLength(0);
+    },
+  );
+
+  it("reloading dips the held weapon at mid-reload and returns it to rest", () => {
+    ({ engine, scene } = makeScene());
+    wm = WeaponModelPresentation.create(scene, PREFIX);
+
+    const rifle = rifleGroupOf(scene);
+    expect(rifle.position.y).toBeCloseTo(0, 6);
+
+    // Mid-reload the weapon is lowered (negative Y).
+    wm.setReload(true, 0.5);
+    expect(rifle.position.y).toBeLessThan(0);
+
+    // The dip peaks at the middle, not near the start.
+    const midDip = -rifle.position.y;
+    wm.setReload(true, 0.15);
+    expect(-rifle.position.y).toBeLessThan(midDip);
+
+    // Back to rest at the end of the reload and when idle.
+    wm.setReload(true, 1);
+    expect(rifle.position.y).toBeCloseTo(0, 6);
+    wm.setReload(false, 0.5);
+    expect(rifle.position.y).toBeCloseTo(0, 6);
+  });
+
+  it("switching weapons dips the newly-equipped weapon, then eases it to rest", () => {
+    ({ engine, scene } = makeScene());
+    wm = WeaponModelPresentation.create(scene, PREFIX);
+
+    const shotgun = shotgunGroupOf(scene);
+    // Switch to the shotgun: it starts dipped (low) ...
+    wm.setEquippedWeapon("shotgun");
+    expect(shotgun.position.y).toBeLessThan(0);
+
+    // ... and eases back to rest over a short, deliberate settle.
+    for (let i = 0; i < 120; i += 1) wm.update(1 / 60);
+    expect(shotgun.position.y).toBeCloseTo(0, 6);
+  });
+
+  it("applies the held-weapon dip only to the equipped weapon group", () => {
+    ({ engine, scene } = makeScene());
+    wm = WeaponModelPresentation.create(scene, PREFIX);
+
+    const rifle = rifleGroupOf(scene);
+    const shotgun = shotgunGroupOf(scene);
+
+    wm.setReload(true, 0.5);
+    expect(rifle.position.y).toBeLessThan(0); // equipped rifle is dipped
+    expect(shotgun.position.y).toBeCloseTo(0, 6); // hidden shotgun stays at rest
+  });
+
+  it("does not advance the switch-dip settle on a zero or negative delta", () => {
+    ({ engine, scene } = makeScene());
+    wm = WeaponModelPresentation.create(scene, PREFIX);
+
+    wm.setEquippedWeapon("shotgun");
+    const shotgun = shotgunGroupOf(scene);
+    const dipped = shotgun.position.y;
+    expect(dipped).toBeLessThan(0);
+
+    wm.update(0);
+    wm.update(-1);
+    expect(shotgun.position.y).toBeCloseTo(dipped, 6);
   });
 });
