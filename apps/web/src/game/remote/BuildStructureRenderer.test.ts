@@ -148,8 +148,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(3, 4);
-      expect(mesh.position.z).toBeCloseTo(2, 4);
+      expect(mesh.position.x).toBeCloseTo(6, 4);
+      expect(mesh.position.z).toBeCloseTo(4, 4);
     });
   });
 
@@ -311,8 +311,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // Wall is 2 layers tall (4m): the top-half ghost centres at y = 3.
-      expect(ghost.position.y).toBeCloseTo(3, 5);
+      // Wall is 2 layers tall (3m): the top-half ghost centres at y = 1.5 + 0.75 = 2.25.
+      expect(ghost.position.y).toBeCloseTo(2.25, 5);
       expect((ghost.material as StandardMaterial).alpha).toBeCloseTo(0.45, 5);
     });
 
@@ -325,8 +325,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // The bottom-half ghost centres at y = 1.
-      expect(ghost.position.y).toBeCloseTo(1, 5);
+      // The bottom-half ghost centres at y = 1.5 - 0.75 = 0.75.
+      expect(ghost.position.y).toBeCloseTo(0.75, 5);
     });
 
     it("hides the preview when hidden, for non-wall targets, and on structure removal", () => {
@@ -593,8 +593,8 @@ describe("BuildStructureRenderer", () => {
 
       const preview = scene.getMeshByName("build-preview");
       expect(preview).not.toBeNull();
-      expect(preview!.position.x).toBeCloseTo(2, 4);
-      expect(preview!.position.z).toBeCloseTo(1, 4);
+      expect(preview!.position.x).toBeCloseTo(4, 4);
+      expect(preview!.position.z).toBeCloseTo(2, 4);
     });
 
     it("preview material is green when valid, red when invalid", () => {
@@ -745,7 +745,7 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(1, 4);
+      expect(mesh.position.x).toBeCloseTo(2, 4);
     });
 
     it("still plays destruction after repeated identical syncs", () => {
