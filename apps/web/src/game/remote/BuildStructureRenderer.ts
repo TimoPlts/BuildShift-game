@@ -235,6 +235,8 @@ interface StructureRuntime {
   prevDurability: number;
   /** Base diffuse color (durability-tinted, before hit-flash boost). */
   baseDiffuse: Color3;
+  /** True when the material/mesh needs one more tick after a state change. */
+  dirty: boolean;
 }
 
 /**
@@ -288,6 +290,8 @@ export class BuildStructureRenderer {
   private readonly _composed = createComposedVisual();
   /** Reusable emissive scratch color for the per-frame tick. */
   private readonly _tempEmissive = new Color3(0, 0, 0);
+  /** Previous frame's edit-target id (for detecting edit-target changes). */
+  private _prevEditTargetId: string | null = null;
 
   private readonly _observer: Observer<Scene>;
 
@@ -561,6 +565,7 @@ export class BuildStructureRenderer {
 
     runtime.prevDurability = durability.currentDurability;
     runtime.durability = durability;
+    runtime.dirty = true;
     this.applyDurabilityTint(runtime);
   }
 
@@ -641,6 +646,7 @@ export class BuildStructureRenderer {
       durability: null,
       prevDurability: 0,
       baseDiffuse: baseColor.clone(),
+      dirty: true,
     };
 
     this.structures.set(structure.structureId, runtime);
@@ -651,9 +657,13 @@ export class BuildStructureRenderer {
     // owns its grid object; the protocol state is re-read fresh each sync).
     const grid = runtime.grid;
     const incoming = structure.grid;
+    const gridChanged = grid.x !== incoming.x || grid.y !== incoming.y || grid.z !== incoming.z;
     grid.x = incoming.x;
     grid.y = incoming.y;
     grid.z = incoming.z;
+    if (gridChanged) {
+      runtime.dirty = true;
+    }
 
     // Compute the target edit pose
     let targetScaleY = 1;
@@ -729,11 +739,27 @@ export class BuildStructureRenderer {
   private _tick(): void {
     if (this.disposed) return;
     const now = Date.now();
+    const prevEditTarget = this._prevEditTargetId;
+    const curEditTarget = this.editTargetId;
 
-    // Update active structure meshes
+    // Update structure meshes — skip static structures (no active effects,
+    // no warning pulse, no pending state change) to avoid redundant writes.
     for (const [id, runtime] of this.structures) {
-      this._applyRuntimeVisual(runtime, now, id === this.editTargetId);
+      const isEditTargeted = id === curEditTarget;
+      const editTargetChanged = isEditTargeted !== (id === prevEditTarget);
+      const static_ = this._isStatic(runtime);
+
+      if (!editTargetChanged && !runtime.dirty && static_) {
+        continue;
+      }
+
+      this._applyRuntimeVisual(runtime, now, isEditTargeted);
+
+      if (static_) {
+        runtime.dirty = false;
+      }
     }
+    this._prevEditTargetId = curEditTarget;
 
     // Update pending destruction meshes
     const toRemove: string[] = [];
@@ -829,6 +855,24 @@ export class BuildStructureRenderer {
     emissive.r += e[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0);
     emissive.g += e[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0);
     emissive.b += e[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0);
+  }
+
+  /**
+   * Returns true when the structure needs no per-frame work: all transient
+   * effects are complete and the durability is above the warning-pulse
+   * threshold (or absent).
+   */
+  private _isStatic(runtime: StructureRuntime): boolean {
+    const e = runtime.effects;
+    if (e.construction && !e.construction.done) return false;
+    if (e.hitFlash && !e.hitFlash.done) return false;
+    if (e.editTransition && !e.editTransition.done) return false;
+    if (runtime.durability) {
+      const maxDur = Math.max(1, runtime.durability.maxDurability);
+      const fraction = runtime.durability.currentDurability / maxDur;
+      if (fraction <= NEARLY_BROKEN_THRESHOLD) return false;
+    }
+    return true;
   }
 
   private _computeBaseEmissive(
