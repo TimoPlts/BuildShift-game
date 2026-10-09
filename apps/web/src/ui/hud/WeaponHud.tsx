@@ -121,6 +121,10 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
   const ammo = floorNonNegative(magazineAmmo);
   const capacity = floorNonNegative(magazineSize);
   const ammoEmpty = ammo <= 0;
+  // "Low" magazine: rounds remain but the magazine is at or below a fifth
+  // of capacity, so a reload should be coming soon. The fully-empty case is
+  // handled by the stronger `--empty` state below.
+  const ammoLow = !ammoEmpty && capacity > 0 && ammo / capacity <= 0.2;
   // Contextual reload prompt: only when the magazine is empty AND no reload
   // is already running (a running reload shows its own progress bar).
   const needsReload = ammoEmpty && !isReloading;
@@ -164,7 +168,11 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
         <span className="weapon-hud__name">{weaponName}</span>
         <span
           className={`weapon-hud__ammo ${
-            ammoEmpty ? "weapon-hud__ammo--empty" : ""
+            ammoEmpty
+              ? "weapon-hud__ammo--empty"
+              : ammoLow
+                ? "weapon-hud__ammo--low"
+                : ""
           }`}
           aria-label={`${ammo} of ${capacity} rounds in the magazine`}
         >
