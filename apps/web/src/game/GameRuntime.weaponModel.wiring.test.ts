@@ -96,4 +96,14 @@ describe("GameRuntime weapon model wiring", () => {
     expect(runtime).toContain("this.weaponModel.dispose();");
     expect(runtime).toContain("this.unsubscribeWeaponStateEvent?.();");
   });
+
+  it("mirrors the local reload state into the weapon model each frame (presentation only)", () => {
+    // The per-frame reload dip is driven from the existing local weapon state —
+    // real reload timing stays authoritative; this only animates the model.
+    expect(runtime).toContain(
+      "this.weaponModel.setReload(this.weaponController.isReloading,this.weaponController.reloadProgress)",
+    );
+    // The switch presentation reuses the accepted setEquippedWeapon call.
+    expect(runtime).toContain("this.weaponModel.setEquippedWeapon(r.targetWeapon)");
+  });
 });

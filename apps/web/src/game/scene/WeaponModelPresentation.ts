@@ -23,7 +23,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import type { Scene } from "@babylonjs/core/scene";
+import type { Observer, Scene } from "@babylonjs/core";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 
 /** Dark gunmetal — shared by both weapon variants. */
@@ -32,6 +32,25 @@ const BODY_EMISSIVE = new Color3(0.02, 0.02, 0.03);
 /** Slightly lighter accent — stock and grip. */
 const ACCENT_DIFFUSE = new Color3(0.30, 0.28, 0.26);
 const ACCENT_EMISSIVE = new Color3(0.03, 0.02, 0.02);
+
+/**
+ * Held-weapon handling presentation (visual-only). A "dip" is a downward Y
+ * offset (metres) applied to the equipped weapon's group, with a small
+ * muzzle-down tilt. It never touches gameplay: reload timing is authoritative
+ * on the server, and these transforms only mirror that state for the eye.
+ */
+const DIP = {
+  /** Peak downward drop while a reload is in progress (metres). */
+  reloadDipMeters: 0.12,
+  /** Downward drop when a new weapon is swapped in (metres). */
+  switchDipMeters: 0.1,
+  /** Muzzle-down tilt per metre of dip (radians per metre). */
+  tiltPerMeter: 0.9,
+  /** How fast the switch dip settles back to rest (per second). */
+  switchSettleRatePerSec: 18,
+  /** Largest frame delta fed to the settle easing (seconds). */
+  maxFrameDeltaSeconds: 0.1,
+} as const;
 
 export class WeaponModelPresentation {
   /**
@@ -56,6 +75,13 @@ export class WeaponModelPresentation {
   private _equipped: WeaponType = "assault_rifle";
   private _componentEnabled = true;
   private _disposed = false;
+
+  /** Reload dip in metres (driven synchronously by {@link setReload}). */
+  private _reloadDip = 0;
+  /** Switch dip in metres (eased by {@link update} toward the target). */
+  private _switchDip = 0;
+  private _switchDipTarget = 0;
+  private readonly _observer: Observer<Scene>;
 
   private constructor(scene: Scene, namePrefix: string) {
     this._scene = scene;
@@ -83,6 +109,13 @@ export class WeaponModelPresentation {
 
     // Initial visibility: assault rifle visible, shotgun hidden.
     this._applyVisibility();
+
+    // One render-frame observer eases the switch dip back to rest. The reload
+    // dip is driven synchronously by setReload, so it stays in sync even when
+    // the render cadence is decoupled from the reload clock.
+    this._observer = this._scene.onBeforeRenderObservable.add(() =>
+      this._tickFrame(),
+    );
   }
 
   /**
@@ -115,6 +148,45 @@ export class WeaponModelPresentation {
     if (weaponType === this._equipped) return;
     this._equipped = weaponType;
     this._applyVisibility();
+    // Deliberate-but-fast swap: the newly-equipped weapon starts dipped (low)
+    // and eases back to rest over the next few frames. The swap itself is a
+    // pure visibility toggle — only the presentation lags for the feel.
+    this._switchDip = DIP.switchDipMeters;
+    this._switchDipTarget = 0;
+    this._applyDip();
+  }
+
+  /**
+   * Mirrors the local reload state as a visual-only dip: the held weapon
+   * lowers at the middle of the reload and returns to rest at both ends.
+   * `progress` is the authoritative reload progress in [0, 1]; `active`
+   * gates it (call with `active=false` — or `progress=0` — when idle). This
+   * only animates the model; it never changes the real reload timing.
+   */
+  public setReload(active: boolean, progress: number): void {
+    if (this._disposed) return;
+    const p = active ? Math.min(1, Math.max(0, progress)) : 0;
+    // A smooth bump: 0 at the start, peak at the middle, 0 at the end.
+    this._reloadDip = Math.sin(Math.PI * p) * DIP.reloadDipMeters;
+    this._applyDip();
+  }
+
+  /**
+   * Advances the switch-dip settle by `dtSeconds` and re-applies the held
+   * weapon's dip. Zero (or negative) deltas are no-ops. Called each frame by
+   * the render observer; tests may call it directly for determinism.
+   */
+  public update(dtSeconds: number): void {
+    if (this._disposed) return;
+    if (dtSeconds <= 0) return;
+    if (this._switchDip !== this._switchDipTarget) {
+      const step = 1 - Math.exp(-DIP.switchSettleRatePerSec * dtSeconds);
+      this._switchDip += (this._switchDipTarget - this._switchDip) * step;
+      if (Math.abs(this._switchDip - this._switchDipTarget) < 1e-4) {
+        this._switchDip = this._switchDipTarget;
+      }
+    }
+    this._applyDip();
   }
 
   /**
@@ -142,6 +214,7 @@ export class WeaponModelPresentation {
   public dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this._scene.onBeforeRenderObservable.remove(this._observer);
     for (const mesh of this._meshes) {
       mesh.dispose();
     }
@@ -160,6 +233,31 @@ export class WeaponModelPresentation {
     const rifleVisible = this._equipped === "assault_rifle";
     for (const mesh of this._rifleMeshes) mesh.setEnabled(rifleVisible);
     for (const mesh of this._shotgunMeshes) mesh.setEnabled(!rifleVisible);
+  }
+
+  /**
+   * Applies the current held-weapon dip to the equipped weapon's group (a
+   * presentation-only transform below the caller-owned `root`). The dip is
+   * the larger of the reload dip and the switch dip; at rest both are zero
+   * and the group returns to its identity transform.
+   */
+  private _applyDip(): void {
+    if (this._disposed) return;
+    const group =
+      this._equipped === "assault_rifle" ? this._rifleRoot : this._shotgunRoot;
+    const dip = Math.max(this._reloadDip, this._switchDip);
+    group.position.y = -dip;
+    group.rotation.x = dip * DIP.tiltPerMeter;
+  }
+
+  /** One render frame: advance the switch-dip settle and re-apply the dip. */
+  private _tickFrame(): void {
+    if (this._disposed) return;
+    const dt = Math.min(
+      DIP.maxFrameDeltaSeconds,
+      Math.max(0, this._scene.getEngine().getDeltaTime() / 1000),
+    );
+    this.update(dt);
   }
 
   private _box(name: string, w: number, h: number, d: number): Mesh {
