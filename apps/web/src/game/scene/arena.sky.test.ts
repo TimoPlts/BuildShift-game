@@ -2,13 +2,16 @@
  * Behavioral tests for `setupArenaSky` — the independent sky presentation
  * helper. Uses Babylon's NullEngine (headless, no WebGL) to verify:
  *   - scene clearColor matches ARENA_PALETTE.skyColor
- *   - an inverted skybox mesh exists with a tinted emissive unlit material
- *   - the skybox is non-pickable and non-collidable
+ *   - an EXP2 atmospheric fog is enabled with ARENA_PALETTE.horizonColor
+ *   - an inverted skybox mesh exists with a tinted emissive-unlit material
+ *   - the skybox is fog-exempt, non-pickable, and non-collidable
  *   - cleanup via scene.dispose() works without errors
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { Scene } from "@babylonjs/core/scene";
 import { createFoundationScene } from "./createFoundationScene";
 import { setupArenaSky } from "./arenaSky";
 import { ARENA_PALETTE } from "./arena";
@@ -47,6 +50,21 @@ describe("setupArenaSky", () => {
     engine.dispose();
   });
 
+  it("enables EXP2 fog colored by ARENA_PALETTE.horizonColor", () => {
+    const { engine, scene } = buildScene();
+
+    expect(scene.fogMode).toBe(Scene.FOGMODE_EXP2);
+    expect(scene.fogDensity).toBeGreaterThan(0);
+    expect(scene.fogDensity).toBeLessThanOrEqual(0.05);
+    const fog = scene.fogColor;
+    expect(colorClose({ r: fog.r, g: fog.g, b: fog.b }, ARENA_PALETTE.horizonColor)).toBe(
+      true,
+    );
+
+    scene.dispose();
+    engine.dispose();
+  });
+
   it("creates a tinted emissive-unlit skybox mesh named 'arena-skybox'", () => {
     const { engine, scene } = buildScene();
 
@@ -60,6 +78,9 @@ describe("setupArenaSky", () => {
 
     // Must be unlit (disableLighting) with only emissive contributing
     expect(mat.disableLighting).toBe(true);
+
+    // Must render interior faces
+    expect(mat.sideOrientation).toBe(Mesh.BACKSIDE);
 
     // Emissive should be subtly darker than the palette sky color
     const emissive = mat.emissiveColor;
@@ -80,6 +101,17 @@ describe("setupArenaSky", () => {
     expect(Math.abs(emissive.r - expectedR)).toBeLessThan(EPSILON);
     expect(Math.abs(emissive.g - expectedG)).toBeLessThan(EPSILON);
     expect(Math.abs(emissive.b - expectedB)).toBeLessThan(EPSILON);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("skybox material is fog-exempt so the dome keeps its sky tint", () => {
+    const { engine, scene } = buildScene();
+
+    const skybox = scene.getMeshByName("arena-skybox")!;
+    const mat = skybox.material as StandardMaterial;
+    expect(mat.fogEnabled).toBe(false);
 
     scene.dispose();
     engine.dispose();

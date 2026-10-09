@@ -34,11 +34,18 @@ const CANONICAL_SPAWN = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.
 const PRESENTATION_MESH_NAMES = [
   // Sky
   "arena-skybox",
+  // Play-field plate
+  "arena-playfield-plate",
   // Perimeter walls
   "arena-wall-n",
   "arena-wall-s",
   "arena-wall-e",
   "arena-wall-w",
+  // Accent wall caps
+  "arena-wall-cap-n",
+  "arena-wall-cap-s",
+  "arena-wall-cap-e",
+  "arena-wall-cap-w",
   // Corner posts
   "arena-post-ne",
   "arena-post-nw",
@@ -51,6 +58,9 @@ const PRESENTATION_MESH_NAMES = [
   "arena-border-w",
   // Center ring
   "arena-center-ring",
+  // Spawn side markers
+  "arena-spawn-pad",
+  "arena-spawn-bar",
 ];
 
 describe("arena presentation — canonical config invariants", () => {
