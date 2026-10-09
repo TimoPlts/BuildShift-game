@@ -3,6 +3,7 @@ import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
 import type { MatchHudProps } from "../ui/MatchHud";
 import { GameHud } from "../ui/hud/GameHud";
+import { EliminatedSpectatorOverlay } from "../ui/EliminatedSpectatorOverlay";
 import type { LocalHudView } from "./localHudView";
 import { mapMatchStateToHudProps } from "./matchHudMapper";
 import { buildMatchLifecycleView, type MatchLifecycleView } from "./matchLifecycleView";
@@ -167,6 +168,9 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
       />
       {pointerLocked && <div className="crosshair" aria-hidden="true" />}
       {matchHudProps !== null && <GameHud match={matchHudProps} local={localHud} />}
+      {localHud?.eliminated && matchHudProps?.phase === MatchPhase.IN_PROGRESS && (
+        <EliminatedSpectatorOverlay visible={true} />
+      )}
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
