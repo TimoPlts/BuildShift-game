@@ -59,7 +59,8 @@ import {
   createDestructionEffects,
   startEditTransition,
   triggerHitFlash,
-  composeVisual,
+  composeVisualInto,
+  createComposedVisual,
   NEARLY_BROKEN_THRESHOLD,
   WARNING_PULSE_FREQ,
   WARNING_PULSE_STRENGTH,
@@ -236,6 +237,19 @@ interface StructureRuntime {
   baseDiffuse: Color3;
 }
 
+/**
+ * Fingerprint of one synced structure — enough to detect an unchanged
+ * authoritative state without copying any per-frame objects.
+ */
+interface StructureFingerprint {
+  buildType: BuildType;
+  x: number;
+  y: number;
+  z: number;
+  rotation: GridRotation;
+  editType: string | undefined;
+}
+
 // ─── BuildStructureRenderer ────────────────────────────────────────────────
 
 /**
@@ -263,6 +277,17 @@ export class BuildStructureRenderer {
 
   /** Structures awaiting destruction animation completion before mesh disposal. */
   private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3 }>();
+
+  /**
+   * Fingerprint of the last synced state (keyed by structureId). Lets the
+   * per-frame `syncStructures` call take an allocation-free fast path when
+   * the authoritative state has not changed.
+   */
+  private readonly _fingerprints = new Map<string, StructureFingerprint>();
+  /** Reusable composition buffer for the per-frame tick (no per-frame allocation). */
+  private readonly _composed = createComposedVisual();
+  /** Reusable emissive scratch color for the per-frame tick. */
+  private readonly _tempEmissive = new Color3(0, 0, 0);
 
   private readonly _observer: Observer<Scene>;
 
@@ -306,7 +331,7 @@ export class BuildStructureRenderer {
     } else {
       const worldPos = gridToWorld(grid);
       const effectiveHeight = getEffectiveHeight(buildType);
-      this.previewMesh.position = new Vector3(
+      this.previewMesh.position.set(
         worldPos.x,
         worldPos.y + effectiveHeight / 2,
         worldPos.z,
@@ -383,7 +408,7 @@ export class BuildStructureRenderer {
     }
     const worldPos = gridToWorld(runtime.grid);
     const offset = pose === "half_top" ? h / 4 : -h / 4;
-    this.editPreviewMesh.position = new Vector3(
+    this.editPreviewMesh.position.set(
       worldPos.x,
       worldPos.y + h / 2 + offset,
       worldPos.z,
@@ -431,6 +456,33 @@ export class BuildStructureRenderer {
   public syncStructures(state: BuildingState): void {
     if (this.disposed) return;
 
+    // Fast path: the per-frame sync call is usually unchanged state. Compare
+    // the incoming structures against the last fingerprint (no allocation) —
+    // identical id set + identical poses means no mesh work at all.
+    let identical = true;
+    let count = 0;
+    for (const key in state.structures) {
+      const s = state.structures[key];
+      count += 1;
+      if (identical) {
+        const fp = this._fingerprints.get(s.structureId);
+        if (
+          fp === undefined ||
+          fp.buildType !== s.buildType ||
+          fp.x !== s.grid.x ||
+          fp.y !== s.grid.y ||
+          fp.z !== s.grid.z ||
+          fp.rotation !== s.rotation ||
+          fp.editType !== s.editType
+        ) {
+          identical = false;
+        }
+      }
+    }
+    if (identical && count === this._fingerprints.size) {
+      return;
+    }
+
     const now = Date.now();
     const currentIds = new Set<string>();
 
@@ -462,6 +514,19 @@ export class BuildStructureRenderer {
     ) {
       this.disposeEditPreview();
     }
+
+    // Refresh the no-change fast path cache (mirrors `this.structures`).
+    this._fingerprints.clear();
+    for (const structure of Object.values(state.structures)) {
+      this._fingerprints.set(structure.structureId, {
+        buildType: structure.buildType,
+        x: structure.grid.x,
+        y: structure.grid.y,
+        z: structure.grid.z,
+        rotation: structure.rotation,
+        editType: structure.editType,
+      });
+    }
   }
 
   /**
@@ -477,6 +542,17 @@ export class BuildStructureRenderer {
 
     const runtime = this.structures.get(structureId);
     if (!runtime) return;
+
+    // The per-frame caller re-applies the mirrored durability every frame;
+    // when nothing changed there is no tint or flash work to do.
+    const last = runtime.durability;
+    if (
+      last !== null &&
+      last.currentDurability === durability.currentDurability &&
+      last.maxDurability === durability.maxDurability
+    ) {
+      return;
+    }
 
     // Detect hit: durability decreased from a positive value
     if (runtime.prevDurability > 0 && durability.currentDurability < runtime.prevDurability) {
@@ -505,6 +581,7 @@ export class BuildStructureRenderer {
       runtime.material.dispose();
     }
     this.structures.clear();
+    this._fingerprints.clear();
 
     for (const pending of this.pendingDestruction.values()) {
       pending.mesh.dispose();
@@ -527,8 +604,13 @@ export class BuildStructureRenderer {
       `structure-material-${structure.structureId}`,
       this.scene,
     );
-    mat.diffuseColor = SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
-    mat.emissiveColor = SOLID_EMISSIVE;
+    // Clone the shared constants: the per-frame tick mutates the material's
+    // diffuse/emissive colors in place, so every structure needs its own
+    // Color3 instances (aliasing SOLID_COLORS/SOLID_EMISSIVE would corrupt
+    // the module constants and every other structure's material).
+    const solidColor = SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
+    mat.diffuseColor = solidColor.clone();
+    mat.emissiveColor = SOLID_EMISSIVE.clone();
     mat.specularColor = new Color3(0.15, 0.15, 0.15);
     mesh.material = mat;
 
@@ -565,8 +647,13 @@ export class BuildStructureRenderer {
   }
 
   private updateStructure(runtime: StructureRuntime, structure: StructureState, now: number): void {
-    // Update grid position (may have moved)
-    runtime.grid = { ...structure.grid };
+    // Update grid position (may have moved) — written in place (the runtime
+    // owns its grid object; the protocol state is re-read fresh each sync).
+    const grid = runtime.grid;
+    const incoming = structure.grid;
+    grid.x = incoming.x;
+    grid.y = incoming.y;
+    grid.z = incoming.z;
 
     // Compute the target edit pose
     let targetScaleY = 1;
@@ -599,7 +686,9 @@ export class BuildStructureRenderer {
 
   private startDestruction(id: string, runtime: StructureRuntime, now: number): void {
     const effects = createDestructionEffects(now);
-    const baseEmissive = this._computeBaseEmissive(runtime, now);
+    // Persist the base emissive for the pending-destruction tick (one
+    // allocation per destruction event, not per frame).
+    const baseEmissive = this._computeBaseEmissive(runtime, now, this._tempEmissive).clone();
     this.pendingDestruction.set(id, {
       mesh: runtime.mesh,
       material: runtime.material,
@@ -649,18 +738,26 @@ export class BuildStructureRenderer {
     // Update pending destruction meshes
     const toRemove: string[] = [];
     for (const [id, pending] of this.pendingDestruction) {
-      const { visual, shouldRemove } = composeVisual(pending.effects, 1, 0, now);
+      const { shouldRemove } = composeVisualInto(
+        pending.effects,
+        1,
+        0,
+        now,
+        this._composed,
+      );
+      const visual = this._composed;
       pending.mesh.scaling.set(
         visual.uniformScale,
         visual.uniformScale * pending.scaleY,
         visual.uniformScale,
       );
       pending.material.alpha = visual.alpha;
-      pending.material.emissiveColor = new Color3(
-        pending.baseEmissive.r + visual.emissiveBoost[0],
-        pending.baseEmissive.g + visual.emissiveBoost[1],
-        pending.baseEmissive.b + visual.emissiveBoost[2],
-      );
+      // Write the boost into the existing material color (no allocation).
+      const emissive = pending.material.emissiveColor;
+      emissive.copyFrom(pending.baseEmissive);
+      emissive.r += visual.emissiveBoost[0];
+      emissive.g += visual.emissiveBoost[1];
+      emissive.b += visual.emissiveBoost[2];
       if (shouldRemove) {
         toRemove.push(id);
       }
@@ -684,12 +781,14 @@ export class BuildStructureRenderer {
     now: number,
     isEditTargeted: boolean,
   ): void {
-    const { visual } = composeVisual(
+    composeVisualInto(
       runtime.effects,
       runtime.targetScaleY,
       runtime.targetYOffset,
       now,
+      this._composed,
     );
+    const visual = this._composed;
 
     // Compose scaling: uniform * (1, scaleY, 1)
     runtime.mesh.scaling.set(
@@ -698,56 +797,69 @@ export class BuildStructureRenderer {
       visual.uniformScale,
     );
 
-    // Position: base world position + yOffset (half-wall shift)
-    const worldPos = gridToWorld(runtime.grid);
-    const effectiveHeight = getEffectiveHeight(runtime.buildType);
+    // Position: base world position + yOffset (half-wall shift), written
+    // in place (the cached grid is the single source; no per-frame vector).
+    const grid = runtime.grid;
     runtime.mesh.position.set(
-      worldPos.x,
-      worldPos.y + effectiveHeight / 2 + visual.yOffset,
-      worldPos.z,
+      grid.x * BUILD_GRID.cellSize,
+      grid.y * BUILD_GRID.layerHeight +
+        getEffectiveHeight(runtime.buildType) / 2 +
+        visual.yOffset,
+      grid.z * BUILD_GRID.cellSize,
     );
 
     // Alpha (for destruction fade — though destruction is in pendingDestruction)
     runtime.material.alpha = visual.alpha;
 
-    // Diffuse: base (durability-tinted) + hit-flash white-shift
+    // Diffuse: base (durability-tinted) + hit-flash white-shift, written in
+    // place so no per-frame Color3 is allocated.
     const d = visual.diffuseBoost;
-    runtime.material.diffuseColor = new Color3(
-      runtime.baseDiffuse.r + d[0],
-      runtime.baseDiffuse.g + d[1],
-      runtime.baseDiffuse.b + d[2],
-    );
+    const diffuse = runtime.material.diffuseColor;
+    diffuse.copyFrom(runtime.baseDiffuse);
+    diffuse.r += d[0];
+    diffuse.g += d[1];
+    diffuse.b += d[2];
 
-    // Emissive: base (incl. warning pulse) + transient boost + build-edit target boost
-    const baseEmissive = this._computeBaseEmissive(runtime, now);
-    runtime.material.emissiveColor = new Color3(
-      baseEmissive.r + visual.emissiveBoost[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0),
-      baseEmissive.g + visual.emissiveBoost[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0),
-      baseEmissive.b + visual.emissiveBoost[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0),
-    );
+    // Emissive: base (incl. warning pulse) + transient boost + build-edit
+    // target boost, written in place.
+    const baseEmissive = this._computeBaseEmissive(runtime, now, this._tempEmissive);
+    const e = visual.emissiveBoost;
+    const emissive = runtime.material.emissiveColor;
+    emissive.copyFrom(baseEmissive);
+    emissive.r += e[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0);
+    emissive.g += e[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0);
+    emissive.b += e[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0);
   }
 
-  private _computeBaseEmissive(runtime: StructureRuntime, now: number): Color3 {
+  private _computeBaseEmissive(
+    runtime: StructureRuntime,
+    now: number,
+    out: Color3,
+  ): Color3 {
     const durability = runtime.durability;
-    if (!durability) return SOLID_EMISSIVE;
+    if (!durability) {
+      out.copyFrom(SOLID_EMISSIVE);
+      return out;
+    }
     const maxDur = Math.max(1, durability.maxDurability);
     const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
     const damage = 1 - fraction;
     const tintAmount = Math.pow(damage, 1.5);
-    let emissive = lerpColor(SOLID_EMISSIVE, DAMAGED_EMISSIVE, tintAmount);
+    // Lerp into `out` in place (no allocation).
+    out.copyFrom(SOLID_EMISSIVE);
+    out.r += (DAMAGED_EMISSIVE.r - SOLID_EMISSIVE.r) * tintAmount;
+    out.g += (DAMAGED_EMISSIVE.g - SOLID_EMISSIVE.g) * tintAmount;
+    out.b += (DAMAGED_EMISSIVE.b - SOLID_EMISSIVE.b) * tintAmount;
 
     // Warning pulse for nearly-broken structures (deterministic, time-based)
     if (fraction <= NEARLY_BROKEN_THRESHOLD) {
       const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
       const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
       const w = severity * pulse * WARNING_PULSE_STRENGTH;
-      emissive = new Color3(
-        emissive.r + w,
-        emissive.g + w * 0.4,
-        emissive.b,
-      );
+      out.r += w;
+      out.g += w * 0.4;
     }
 
-    return emissive;
+    return out;
   }
 }

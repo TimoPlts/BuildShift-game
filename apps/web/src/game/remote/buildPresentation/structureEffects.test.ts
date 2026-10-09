@@ -4,6 +4,8 @@
 import { describe, expect, it } from "vitest";
 import {
   composeVisual,
+  composeVisualInto,
+  createComposedVisual,
   createConstructionEffects,
   createDestructionEffects,
   startEditTransition,
@@ -189,5 +191,56 @@ describe("composeVisual with no effects", () => {
     expect(visual.diffuseBoost).toEqual([0, 0, 0]);
     expect(allDone).toBe(true);
     expect(shouldRemove).toBe(false);
+  });
+});
+
+describe("composeVisualInto (in-place composition)", () => {
+  it("writes into the caller-provided buffer and returns flags only", () => {
+    const effects = createConstructionEffects(NOW);
+    const out = createComposedVisual();
+
+    const atStart = composeVisualInto(effects, 1, 0, NOW, out);
+    expect(out.uniformScale).toBeCloseTo(0, 2);
+    expect(out.alpha).toBe(1);
+    expect(atStart.allDone).toBe(false);
+    expect(atStart.shouldRemove).toBe(false);
+
+    // Reuse the same buffer on the next frame: values are fully rewritten.
+    const mid = composeVisualInto(effects, 1, 0, NOW + CONSTRUCTION_DURATION / 2, out);
+    expect(out.uniformScale).toBeGreaterThan(0.01);
+    expect(out.uniformScale).toBeLessThan(1.2);
+    expect(mid.allDone).toBe(false);
+
+    const done = composeVisualInto(effects, 1, 0, NOW + CONSTRUCTION_DURATION, out);
+    expect(out.uniformScale).toBeCloseTo(1, 2);
+    expect(done.allDone).toBe(true);
+  });
+
+  it("agrees with composeVisual for the same inputs", () => {
+    const effects = createDestructionEffects(NOW);
+    const viaAlloc = composeVisual(effects, 1, 0, NOW + 50);
+
+    const sameEffects = createDestructionEffects(NOW);
+    const out = createComposedVisual();
+    const viaInPlace = composeVisualInto(sameEffects, 1, 0, NOW + 50, out);
+
+    expect(out.uniformScale).toBeCloseTo(viaAlloc.visual.uniformScale, 5);
+    expect(out.alpha).toBeCloseTo(viaAlloc.visual.alpha, 5);
+    expect(out.emissiveBoost).toEqual(viaAlloc.visual.emissiveBoost);
+    expect(out.diffuseBoost).toEqual(viaAlloc.visual.diffuseBoost);
+    expect(viaInPlace.allDone).toBe(viaAlloc.allDone);
+    expect(viaInPlace.shouldRemove).toBe(viaAlloc.shouldRemove);
+  });
+
+  it("resets boosts when a later frame has no active boosts", () => {
+    const effects = createDestructionEffects(NOW);
+    const out = createComposedVisual();
+    // Frame during the impact flash carries an emissive boost.
+    composeVisualInto(effects, 1, 0, NOW, out);
+    expect(out.emissiveBoost[2]).toBeGreaterThan(0);
+    // A later frame (flash over) must not keep the stale boost.
+    composeVisualInto(effects, 1, 0, NOW + DESTRUCTION_DURATION, out);
+    expect(out.emissiveBoost).toEqual([0, 0, 0]);
+    expect(out.diffuseBoost).toEqual([0, 0, 0]);
   });
 });
