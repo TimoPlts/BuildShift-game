@@ -1,5 +1,5 @@
 import { schema, t } from "@colyseus/schema";
-import { BUILD_GRID, type StructureConfig } from "@buildshift/game-config";
+import { BUILD_GRID, BUILD_BOUNDS, type StructureConfig } from "@buildshift/game-config";
 
 /**
  * Server-side authoritative building state (Colyseus wire schema).
@@ -111,12 +111,11 @@ export function es(c: StructureConfig, rot: number) {
 
 /**
  * Whether a structure anchored at grid cell `g` fits within the fixed arena
- * build bounds. The build volume is a symmetric -14..14 cell span on X/Z and
- * the ground layer up to layer 10 on Y.
+ * build bounds. Reads the canonical bounds from {@link BUILD_BOUNDS}.
  */
 export function ib(g: { x: number; y: number; z: number }, c: StructureConfig, rot: number): boolean {
   const h = c.footprint[1], { xs, zs } = es(c, rot);
-  return g.x >= -14 && g.x + xs - 1 <= 14 && g.z >= -14 && g.z + zs - 1 <= 14 && g.y >= BUILD_GRID.groundLayer && g.y + h - 1 <= 10;
+  return g.x >= BUILD_BOUNDS.minX && g.x + xs - 1 <= BUILD_BOUNDS.maxX && g.z >= BUILD_BOUNDS.minZ && g.z + zs - 1 <= BUILD_BOUNDS.maxZ && g.y >= BUILD_BOUNDS.minLayer && g.y + h - 1 <= BUILD_BOUNDS.maxLayer;
 }
 
 /**

@@ -15,18 +15,18 @@ import type { StructureState } from "@buildshift/protocol";
 
 describe("gridSnap", () => {
   it("snaps to correct cell", () => {
-    expect(worldToGridPosition(2.5, 2.5, -2.5)).toEqual({ x: 2, y: 1, z: -3 });
+    expect(worldToGridPosition(2.5, 2.5, -2.5)).toEqual({ x: 1, y: 1, z: -2 });
   });
   it("handles negative coords", () => {
     const g = worldToGridPosition(-1.5, 0, -0.5);
-    expect(g.x).toBe(-2); expect(g.z).toBe(-1); expect(g.y).toBe(0);
+    expect(g.x).toBe(-1); expect(g.z).toBe(-1); expect(g.y).toBe(0);
   });
   it("clamps below ground", () => {
     expect(worldToGridPosition(0, -5, 0).y).toBe(BUILD_GRID.groundLayer);
   });
   it("gridToWorldAnchor", () => {
     const a = gridToWorldAnchor({ x: 3, y: 2, z: -1 });
-    expect(a.x).toBe(3); expect(a.y).toBe(4); expect(a.z).toBe(-1);
+    expect(a.x).toBe(6); expect(a.y).toBe(3); expect(a.z).toBe(-2);
   });
   it("round-trip", () => {
     const g = { x: 2, y: 1, z: 3 };
@@ -82,7 +82,8 @@ describe("placementPreview", () => {
     expect(computePlacementPreview(mi({ aimDirection: { x: 1, y: 0, z: 0 } })).reason).toBe("no_candidate");
   });
   it("out_of_range", () => {
-    expect(computePlacementPreview(mi({ aimOrigin: { x: 20, y: 5, z: 0 } })).reason).toBe("out_of_range");
+    // aimOrigin x=30 → grid x=15 → anchor x=30 → distance 30 > 12
+    expect(computePlacementPreview(mi({ aimOrigin: { x: 30, y: 5, z: 0 } })).reason).toBe("out_of_range");
   });
   it("overlap", () => {
     expect(computePlacementPreview(mi({ occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");

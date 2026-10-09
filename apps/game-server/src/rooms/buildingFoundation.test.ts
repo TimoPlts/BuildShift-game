@@ -105,7 +105,8 @@ describe("Building foundation — server-authoritative contract", () => {
   }, 15000);
 
   it("rejects out-of-range placement with out_of_range", async () => {
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 104, buildType: "wall", grid: { x: 13, y: 0, z: 0 }, rotation: 0 });
+    // Grid x=6 → world x=12, distance from player at (0, 0.9, 6) ≈ 13.4 > 12.
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 104, buildType: "wall", grid: { x: 6, y: 0, z: 0 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 104, 5000, "range");
     expect(ev.reason).toBe("out_of_range");
     await wait(200);
@@ -114,9 +115,9 @@ describe("Building foundation — server-authoritative contract", () => {
 
   it("rejects rapid successive placement with rate_limited", async () => {
     await wait(RATE_WAIT);
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 105, buildType: "wall", grid: { x: 2, y: 0, z: 1 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 105, buildType: "wall", grid: { x: 0, y: 0, z: 2 }, rotation: 0 });
     await wfe(pA, (e) => e.structure.createdSequence === 105, 5000, "first");
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 106, buildType: "wall", grid: { x: 4, y: 0, z: 1 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 106, buildType: "wall", grid: { x: 0, y: 0, z: 3 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 106 && e.reason === "rate_limited", 5000, "rl");
     expect(ev.reason).toBe("rate_limited");
     await wait(200);

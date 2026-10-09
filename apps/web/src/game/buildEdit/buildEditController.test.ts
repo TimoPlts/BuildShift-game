@@ -154,7 +154,7 @@ function setup(_building: BuildingState, startClock = 0): Setup {
 /** A render frame aimed straight down -Z at the structures at z=-3. */
 function frame(building: BuildingState, overrides: Partial<Parameters<BuildEditController["updateFrame"]>[0]> = {}) {
   return {
-    aimOrigin: { x: 0, y: 2, z: 0 },
+    aimOrigin: { x: 0, y: 1, z: 0 },
     aimDirection: { x: 0, y: 0, z: -1 },
     playerPosition: { x: 0, y: 0, z: 0 },
     building,

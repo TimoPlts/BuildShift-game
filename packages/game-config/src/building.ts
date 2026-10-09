@@ -33,11 +33,39 @@
  */
 export const BUILD_GRID = {
   /** Size of a single build cell in the X/Z plane, in metres. */
-  cellSize: 1,
+  cellSize: 2,
   /** Height of a single build layer, in metres (distance between layer bases). */
-  layerHeight: 2,
+  layerHeight: 1.5,
   /** The index of the ground layer (the lowest buildable layer). */
   groundLayer: 0,
+} as const;
+
+// ─────────────────────────── Build volume bounds ─────────────────────────────
+
+/**
+ * The fixed build volume in grid-cell coordinates.
+ *
+ * A placement is valid only when every cell its footprint occupies lies
+ * within `[minX..maxX] × [minLayer..maxLayer] × [minZ..maxZ]` (inclusive).
+ * The bounds are symmetric on X/Z and match the 30 m × 30 m arena ground:
+ * 15 cells × 2 m/cell = 30 m.
+ *
+ * Both the client preview snapper and the authoritative server validator
+ * reference these same bounds so they cannot drift.
+ */
+export const BUILD_BOUNDS = {
+  /** Minimum cell index along world X. */
+  minX: -7,
+  /** Maximum cell index along world X. */
+  maxX: 7,
+  /** Minimum cell index along world Z. */
+  minZ: -7,
+  /** Maximum cell index along world Z. */
+  maxZ: 7,
+  /** Minimum (lowest) buildable layer index. */
+  minLayer: 0,
+  /** Maximum (highest) buildable layer index. */
+  maxLayer: 6,
 } as const;
 
 // ─────────────────────────── Range configuration ─────────────────────────────
@@ -111,12 +139,12 @@ export interface StructureConfig {
 /**
  * The per-kind building tuning.
  *
- * - **wall** — a vertical barrier: 1 cell wide, 2 layers tall, 1 deep, and
+ *  - **wall** — a vertical barrier: 1 cell wide (2 m), 2 layers tall (3 m),
+ *   1 deep (2 m), and rotatable in 4 cardinal directions.
+ * - **floor** — a single-cell platform (2 m × 1.5 m × 2 m); rotation-invariant.
+ * - **ramp** — a two-cell-long (4 m) incline spanning one layer (1.5 m);
  *   rotatable in 4 cardinal directions.
- * - **floor** — a single-cell platform; rotation-invariant.
- * - **ramp** — a two-cell-long incline spanning one layer; rotatable in 4
- *   cardinal directions.
- * - **cone** — a single-cell point/fixture; rotation-invariant.
+ * - **cone** — a single-cell point/fixture (2 m × 1.5 m × 2 m); rotation-invariant.
  *
  * Consumers look a structure up by build type via {@link getStructureConfig};
  * additional structure kinds can be appended to {@link BUILD_STRUCTURE_KEYS}
