@@ -1238,13 +1238,26 @@ test.describe("Production browser smoke", () => {
     trackFatalErrors(pageB);
     await loadApp(pageB);
 
-    // The reconnected player should join the existing room.
-    // Wait for the "waiting for opponent" to clear (or the phase to be valid).
-    await sleep(2_000);
+    // The reconnected player should join the existing room: the "waiting for
+    // opponent" indicator clears once both players are present again.
+    await pageB!.waitForFunction(
+      () => document.querySelector(".match-hud__waiting") === null,
+      { timeout: 15_000 },
+    );
 
-    // Both pages should be connected.
-    const phaseA2 = await pageA!.locator(".match-hud__phase").textContent();
-    const phaseB2 = await pageB!.locator(".match-hud__phase").textContent();
+    // Both pages should agree on the match phase. The authoritative phase can
+    // flip at any moment (ROUND OVER lasts only 2 s) while state snapshots
+    // propagate between the two clients, so allow a short convergence window
+    // instead of a single racy comparison.
+    let phaseA2 = "";
+    let phaseB2 = "";
+    const t0 = Date.now();
+    while (Date.now() - t0 < 5_000) {
+      phaseA2 = (await pageA!.locator(".match-hud__phase").textContent()) ?? "";
+      phaseB2 = (await pageB!.locator(".match-hud__phase").textContent()) ?? "";
+      if (phaseA2 === phaseB2) break;
+      await sleep(250);
+    }
     expect(phaseA2).toBe(phaseB2);
   });
 });
