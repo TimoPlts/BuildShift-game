@@ -772,6 +772,24 @@ test.describe("Production browser smoke", () => {
     expect(phase).toBe("IN PROGRESS");
   });
 
+  test("diagnostics: movement smoothness instrumentation renders on the live two-client path", async () => {
+    expect(pageA).not.toBeNull();
+    // The dev-diagnostics overlay (enabled via ?devdiag=1, which this suite
+    // loads with) now also renders the movement smoothness section: render
+    // frame time vs sim tick cadence, snapshot cadence + gap + pending
+    // inputs, and correction rate. All three lines must be present while a
+    // live round is running (render frames, sim ticks and snapshots are all
+    // flowing). This is a coordinating check for the movement-smoothness
+    // instrumentation; it replaces nothing in this suite.
+    const t = await pageA!.evaluate(
+      () => document.querySelector(".devdiag-overlay")?.textContent ?? "",
+      { timeout: 5_000 },
+    );
+    expect(t).toContain("Mov:");
+    expect(t).toContain("Net:");
+    expect(t).toContain("CorrHz:");
+  });
+
   test("AR fire: magazine ammo decreases after firing", async () => {
     expect(pageA).not.toBeNull();
     // Verify we're in assault rifle (default).

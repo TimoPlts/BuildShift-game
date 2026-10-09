@@ -125,6 +125,21 @@ export class PredictionOrchestrator {
   private lastPreReconcileState: { x: number; y: number; z: number } | null =
     null;
 
+  /**
+   * The yaw used to rotate the world input for the NEXT simulation step.
+   *
+   * The authoritative server applies each consumed input frame's movement
+   * with the yaw it held BEFORE consuming that frame (the room tick steps
+   * the player with `p.yaw`, then updates `p.yaw = frame.lookYaw`). The
+   * client mirrors that exact ordering — in both live prediction and the
+   * reconciliation replay — so the predicted trajectory integrates to the
+   * same positions the server produces. Without this, turning while moving
+   * accumulates a small per-tick lateral divergence that the 20 Hz
+   * reconciliation then pulls back, visible as continuous micro-
+   * corrections on the local player.
+   */
+  private lastStepYaw = INITIAL_STATE.yaw;
+
   // ── Combat state ──────────────────────────────────────────────────
   private _localAmmo = ASSAULT_RIFLE.maxAmmo;
   private _localHealth = MAX_HEALTH;
@@ -169,7 +184,7 @@ export class PredictionOrchestrator {
   }): PredictedState {
     const worldInput = movementInputToWorld(
       { x: input.moveX, z: input.moveZ },
-      input.yaw,
+      this.lastStepYaw,
     );
     this.state = stepFullMovement(
       this.state,
@@ -185,6 +200,7 @@ export class PredictionOrchestrator {
         this.correctionFrom = null;
       }
     }
+    this.lastStepYaw = input.yaw;
     return this.getCurrentState();
   }
 
@@ -270,11 +286,16 @@ export class PredictionOrchestrator {
     };
 
     // Re-apply all remaining buffered inputs (sequence > ack).
+    // Mirror the server's ordering: the server steps each consumed frame
+    // with the yaw it held BEFORE consuming that frame, so the first
+    // replayed input steps at the server's current yaw and each later
+    // input at the previous input's yaw.
+    let stepYaw = serverState.yaw;
     for (const entry of bufferedInputs) {
       if (entry.input.sequence <= ack) continue;
       const worldInput = movementInputToWorld(
         { x: entry.input.moveX, z: entry.input.moveZ },
-        entry.input.lookYaw,
+        stepYaw,
       );
       this.state = stepFullMovement(
         this.state,
@@ -284,7 +305,9 @@ export class PredictionOrchestrator {
         HORIZONTAL_CONFIG,
         VERTICAL_CONFIG,
       );
+      stepYaw = entry.input.lookYaw;
     }
+    this.lastStepYaw = stepYaw;
 
     // ── Combat reconciliation ──────────────────────────────────────────
     // Snap ammo to the server value if the server says lower (the server is
@@ -396,6 +419,7 @@ export class PredictionOrchestrator {
     this.correctionRemaining = 0;
     this.lastPreReconcileState = null;
     this._lastCorrectionDistance = null;
+    this.lastStepYaw = INITIAL_STATE.yaw;
     // Reset combat to full defaults.
     this._localAmmo = ASSAULT_RIFLE.maxAmmo;
     this._localHealth = MAX_HEALTH;
