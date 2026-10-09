@@ -146,13 +146,42 @@ function floorNonNegative(value: number, fallback: number): number {
 }
 
 /**
- * Normalise the raw runtime values into a display-safe {@link LocalHudView}.
+ * The normalised, key-relevant HUD fields derived from the raw runtime
+ * input. This is the single source of truth shared by
+ * {@link buildLocalHudView} (display view) and
+ * {@link localHudViewChangeKeyFromInput} (render-loop change key), so the
+ * two can never drift apart.
+ */
+export interface NormalizedHudFields {
+  health: number;
+  shield: number;
+  energy: number;
+  weaponType: WeaponType;
+  magazineAmmo: number;
+  magazineSize: number;
+  isReloading: boolean;
+  reloadProgress: number;
+  eliminated: boolean;
+  buildMode: boolean;
+  selectedBuildType: BuildType;
+  placementValid: boolean | null;
+  gridPosition: GridPosition | null;
+  buildEdit: BuildEditHudState;
+  roundTimer: LocalRoundTimer | null;
+  countdownSeconds: number;
+}
+
+/**
+ * Normalise the raw runtime values into display-safe HUD fields.
  *
  * All clamping uses the shared game-config ceilings (`MAX_HEALTH`,
  * `MAX_SHIELD`, `ENERGY.maxEnergy`) so the HUD can never present a value the
- * gameplay rules would reject.
+ * gameplay rules would reject. `buildEdit`, `placementValid` and
+ * `gridPosition` are presentation pass-throughs owned by their producers.
  */
-export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
+export function normalizeHudFields(
+  input: LocalHudViewInput,
+): NormalizedHudFields {
   // ── Round timer (authoritative `match:round_timer` payload) ──
   let roundTimer: LocalRoundTimer | null = null;
   if (input.roundTimer !== null) {
@@ -171,11 +200,8 @@ export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
 
   return {
     health: clampFinite(input.health, 0, MAX_HEALTH, MAX_HEALTH),
-    maxHealth: MAX_HEALTH,
     shield: clampFinite(input.shield, 0, MAX_SHIELD, 0),
-    maxShield: MAX_SHIELD,
     energy: clampFinite(input.energy, 0, ENERGY.maxEnergy, 0),
-    maxEnergy: ENERGY.maxEnergy,
     weaponType: input.weaponType,
     magazineAmmo: floorNonNegative(input.magazineAmmo, 0),
     magazineSize: floorNonNegative(input.magazineSize, 0),
@@ -193,6 +219,35 @@ export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
 }
 
 /**
+ * Builds the flat, plain-data local HUD view from the runtime's existing
+ * authoritative / predicted values. Pure — no Babylon, no network, no clock.
+ */
+export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
+  const f = normalizeHudFields(input);
+  return {
+    health: f.health,
+    maxHealth: MAX_HEALTH,
+    shield: f.shield,
+    maxShield: MAX_SHIELD,
+    energy: f.energy,
+    maxEnergy: ENERGY.maxEnergy,
+    weaponType: f.weaponType,
+    magazineAmmo: f.magazineAmmo,
+    magazineSize: f.magazineSize,
+    isReloading: f.isReloading,
+    reloadProgress: f.reloadProgress,
+    eliminated: f.eliminated,
+    buildMode: f.buildMode,
+    selectedBuildType: f.selectedBuildType,
+    placementValid: f.placementValid,
+    gridPosition: f.gridPosition,
+    buildEdit: f.buildEdit,
+    roundTimer: f.roundTimer,
+    countdownSeconds: f.countdownSeconds,
+  };
+}
+
+/**
  * A stable change-key for a {@link LocalHudView}.
  *
  * The key quantises each field to the precision the player can actually see
@@ -201,34 +256,58 @@ export function buildLocalHudView(input: LocalHudViewInput): LocalHudView {
  * no player-visible value changed. Two views with different keys always
  * differ in at least one player-visible field.
  */
-export function localHudChangeKey(view: LocalHudView): string {
-  const timerRemainingSec = view.roundTimer
-    ? Math.round(view.roundTimer.remainingMs / 1000)
+/**
+ * Computes the change key from the normalised player-visible fields. A
+ * {@link LocalHudView} already carries exactly these fields, so the view-side
+ * and input-side keys are produced by this single function and stay
+ * identical by construction.
+ */
+function hudKeyFromFields(f: NormalizedHudFields): string {
+  const timerRemainingSec = f.roundTimer
+    ? Math.round(f.roundTimer.remainingMs / 1000)
     : -1;
-  const timerTotalMs = view.roundTimer ? view.roundTimer.totalMs : 0;
-  const reloadStep = view.isReloading ? Math.round(view.reloadProgress * 50) : 0;
-  const grid = view.gridPosition
-    ? `${view.gridPosition.x},${view.gridPosition.y},${view.gridPosition.z}`
+  const timerTotalMs = f.roundTimer ? f.roundTimer.totalMs : 0;
+  const reloadStep = f.isReloading ? Math.round(f.reloadProgress * 50) : 0;
+  const grid = f.gridPosition
+    ? `${f.gridPosition.x},${f.gridPosition.y},${f.gridPosition.z}`
     : "-";
   const validity =
-    view.placementValid === null ? "n" : view.placementValid ? "v" : "i";
+    f.placementValid === null ? "n" : f.placementValid ? "v" : "i";
 
   return [
-    Math.round(view.health),
-    Math.round(view.shield),
-    Math.round(view.energy),
-    view.weaponType,
-    view.magazineAmmo,
-    view.isReloading ? "r" : "-",
+    Math.round(f.health),
+    Math.round(f.shield),
+    Math.round(f.energy),
+    f.weaponType,
+    f.magazineAmmo,
+    f.isReloading ? "r" : "-",
     reloadStep,
-    view.eliminated ? "x" : "-",
-    view.buildMode ? "b" : "-",
-    view.selectedBuildType,
+    f.eliminated ? "x" : "-",
+    f.buildMode ? "b" : "-",
+    f.selectedBuildType,
     validity,
     grid,
-    buildEditHudChangeKey(view.buildEdit),
+    buildEditHudChangeKey(f.buildEdit),
     timerRemainingSec,
     timerTotalMs,
-    Math.round(view.countdownSeconds),
+    Math.round(f.countdownSeconds),
   ].join("|");
+}
+
+export function localHudChangeKey(view: LocalHudView): string {
+  return hudKeyFromFields(view);
+}
+
+/**
+ * Computes the change key directly from the raw runtime input WITHOUT
+ * building the full {@link LocalHudView}. The render loop uses this to skip
+ * the view-tree construction entirely on unchanged frames.
+ *
+ * Equal to `localHudChangeKey(buildLocalHudView(input))` — both derive from
+ * {@link normalizeHudFields} + {@link hudKeyFromFields}.
+ */
+export function localHudViewChangeKeyFromInput(
+  input: LocalHudViewInput,
+): string {
+  return hudKeyFromFields(normalizeHudFields(input));
 }

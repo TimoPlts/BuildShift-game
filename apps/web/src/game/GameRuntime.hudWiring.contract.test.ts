@@ -11,10 +11,10 @@
  * What this contract locks down:
  *  - the authoritative round-timer / countdown broadcasts are consumed on
  *    the network client and their subscriptions are removed on dispose;
- *  - the local HUD view is built (per frame) only from the runtime's
- *    EXISTING sources (prediction combat state, weapon controller, energy
- *    consumer, building system) through the pure `buildLocalHudView` mapper —
- *    no mirrored gameplay state is invented in the runtime;
+ *  - the local HUD view is built only from the runtime's existing sources
+ *    (prediction combat state, weapon controller, energy consumer, building
+ *    system) through the pure `buildLocalHudView` mapper — no mirrored
+ *    gameplay state is invented in the runtime;
  *  - the legacy DOM combat HUD (`HealthHud` / `updateCombatHudFn`) is no
  *    longer wired into the runtime;
  *  - the development debug HUD is hidden by default and only attached when
@@ -55,9 +55,10 @@ describe("GameRuntime HUD wiring", () => {
   });
 
   it("builds the local HUD view only from the runtime's existing sources", () => {
-    // The pure mapper is the only place the flat view is produced.
+    // The pure mapper + input-side change key are the only HUD-view
+    // surfaces the runtime imports.
     expect(runtime).toContain(
-      "import{buildLocalHudView,localHudChangeKey,type LocalHudView}from\"./localHudView\"",
+      "import{buildLocalHudView,localHudViewChangeKeyFromInput,type LocalHudView,type LocalHudViewInput}from\"./localHudView\"",
     );
     const idx = runtime.indexOf("getLocalHudView():LocalHudView");
     expect(idx).toBeGreaterThan(-1);
@@ -78,8 +79,11 @@ describe("GameRuntime HUD wiring", () => {
     const idx = runtime.indexOf("emitLocalHud():void");
     expect(idx).toBeGreaterThan(-1);
     const block = runtime.slice(idx, idx + 400);
-    expect(block).toContain("localHudChangeKey(v)");
+    // The change key is computed from the raw input — the full view tree is
+    // only built when the key actually changes (unchanged-state skip).
+    expect(block).toContain("localHudViewChangeKeyFromInput(input)");
     expect(block).toContain("k===this.lastLocalHudKey");
+    expect(block).toContain("const v=buildLocalHudView(input)");
     // Exposed to the React layer:
     expect(runtime).toContain(
       "public onLocalHudChange(listener:(view:LocalHudView)=>void):()=>void",

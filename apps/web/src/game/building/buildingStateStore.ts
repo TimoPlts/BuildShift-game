@@ -128,6 +128,15 @@ export function parseStructureRejectedEvent(
 /**
  * The client-side building state store: an authoritative structure mirror
  * fed by replicated room state, plus the local pending-intent set.
+ *
+ * Snapshot access is cached: `getBuildingState()` / `getOccupiedStructures()`
+ * return the same record/array across reads until the store mutates. The
+ * 60 Hz render loop reads them every frame (build presentation + placement
+ * preview), so rebuilding them per read would copy O(structures) objects
+ * per frame. Every consumer treats `StructureState` objects and the
+ * returned containers as read-only — network sync replaces entries
+ * wholesale rather than patching them in place — so sharing the cached
+ * snapshots is safe.
  */
 export class BuildingStateStore {
   /** Authoritative structures, keyed by `structureId` (server-assigned). */
@@ -137,6 +146,10 @@ export class BuildingStateStore {
    * yet answered, keyed by the intent `sequence`.
    */
   private readonly pending = new Map<number, StructurePlacementIntent>();
+  /** Cached `getBuildingState()` result (rebuilt on the next mutation). */
+  private cachedBuildingState: BuildingState | null = null;
+  /** Cached `getOccupiedStructures()` result (rebuilt on the next mutation). */
+  private cachedOccupied: OccupiedStructure[] | null = null;
 
   /**
    * Replaces the authoritative mirror with the replicated room state.
@@ -144,6 +157,7 @@ export class BuildingStateStore {
    * server truth, so nothing local can survive a state sync by accident.
    */
   public applyReplicatedState(structures: Record<string, StructureState>): void {
+    this.invalidateSnapshots();
     this.structures.clear();
     for (const [structureId, structure] of Object.entries(structures)) {
       this.structures.set(structureId, structure);
@@ -155,6 +169,7 @@ export class BuildingStateStore {
    * Called the moment the client submits `build:placement_request`.
    */
   public addPending(intent: StructurePlacementIntent): void {
+    this.invalidateSnapshots();
     this.pending.set(intent.sequence, intent);
   }
 
@@ -168,6 +183,7 @@ export class BuildingStateStore {
       return;
     }
     const structure = event.structure;
+    this.invalidateSnapshots();
     this.pending.delete(structure.createdSequence);
     this.structures.set(structure.structureId, structure);
   }
@@ -180,7 +196,9 @@ export class BuildingStateStore {
     if (!Number.isSafeInteger(event?.sequence)) {
       return;
     }
-    this.pending.delete(event.sequence);
+    if (this.pending.delete(event.sequence)) {
+      this.invalidateSnapshots();
+    }
   }
 
   /** The authoritative structure mirror (server truth only — no pending). */
@@ -188,13 +206,22 @@ export class BuildingStateStore {
     return this.structures;
   }
 
-  /** A plain `BuildingState` view of the authoritative mirror. */
+  /**
+   * A plain `BuildingState` view of the authoritative mirror.
+   *
+   * The record is built once and reused across reads until the next
+   * mutation; the returned record (and the `StructureState` references
+   * inside it) must be treated as read-only.
+   */
   public getBuildingState(): BuildingState {
-    const structures: Record<string, StructureState> = {};
-    for (const [structureId, structure] of this.structures) {
-      structures[structureId] = structure;
+    if (this.cachedBuildingState === null) {
+      const structures: Record<string, StructureState> = {};
+      for (const [structureId, structure] of this.structures) {
+        structures[structureId] = structure;
+      }
+      this.cachedBuildingState = { structures };
     }
-    return { structures };
+    return this.cachedBuildingState;
   }
 
   /** The pending placement intents (in submission order is not guaranteed). */
@@ -205,16 +232,24 @@ export class BuildingStateStore {
   /**
    * Every structure that occupies grid cells — authoritative structures
    * plus pending intents — for the placement preview's occupancy check.
+   *
+   * Cached like {@link getBuildingState}: the preview is recomputed every
+   * render frame while in build mode, so this must not allocate a fresh
+   * array + wrapper per structure per frame. The returned array (and its
+   * entries) must be treated as read-only.
    */
   public getOccupiedStructures(): OccupiedStructure[] {
-    const occupied: OccupiedStructure[] = [];
-    for (const structure of this.structures.values()) {
-      occupied.push({ buildType: structure.buildType, grid: structure.grid });
+    if (this.cachedOccupied === null) {
+      const occupied: OccupiedStructure[] = [];
+      for (const structure of this.structures.values()) {
+        occupied.push({ buildType: structure.buildType, grid: structure.grid });
+      }
+      for (const intent of this.pending.values()) {
+        occupied.push({ buildType: intent.buildType, grid: intent.grid });
+      }
+      this.cachedOccupied = occupied;
     }
-    for (const intent of this.pending.values()) {
-      occupied.push({ buildType: intent.buildType, grid: intent.grid });
-    }
-    return occupied;
+    return this.cachedOccupied;
   }
 
   /** Number of authoritative structures currently mirrored. */
@@ -233,7 +268,10 @@ export class BuildingStateStore {
    * misattributed to a later session.
    */
   public clearPending(): void {
-    this.pending.clear();
+    if (this.pending.size > 0) {
+      this.invalidateSnapshots();
+      this.pending.clear();
+    }
   }
 
   /**
@@ -242,7 +280,14 @@ export class BuildingStateStore {
    * mirror with the server truth.
    */
   public reset(): void {
+    this.invalidateSnapshots();
     this.structures.clear();
     this.pending.clear();
+  }
+
+  /** Drops the cached snapshots; the next read rebuilds them. */
+  private invalidateSnapshots(): void {
+    this.cachedBuildingState = null;
+    this.cachedOccupied = null;
   }
 }
