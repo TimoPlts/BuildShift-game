@@ -89,20 +89,20 @@ interface PresentationPalette {
 /** Distinct, saturated palettes so the two players read apart at distance. */
 const VARIANT_PALETTES: Record<PlayerVariant, PresentationPalette> = {
   local: {
-    bodyDiffuse: new Color3(0.2, 0.72, 0.4),
-    bodyEmissive: new Color3(0.02, 0.1, 0.05),
-    accentDiffuse: new Color3(0.1, 0.38, 0.26),
-    accentEmissive: new Color3(0.01, 0.05, 0.03),
-    visorDiffuse: new Color3(0.7, 1.0, 0.8),
-    visorEmissive: new Color3(0.55, 0.95, 0.7),
+    bodyDiffuse: new Color3(0.15, 0.78, 0.35),
+    bodyEmissive: new Color3(0.01, 0.12, 0.04),
+    accentDiffuse: new Color3(0.05, 0.32, 0.30),
+    accentEmissive: new Color3(0.01, 0.06, 0.06),
+    visorDiffuse: new Color3(0.6, 1.0, 0.85),
+    visorEmissive: new Color3(0.5, 1.0, 0.75),
   },
   remote: {
-    bodyDiffuse: new Color3(0.78, 0.28, 0.22),
-    bodyEmissive: new Color3(0.06, 0.02, 0.02),
-    accentDiffuse: new Color3(0.48, 0.14, 0.12),
-    accentEmissive: new Color3(0.04, 0.01, 0.01),
-    visorDiffuse: new Color3(1.0, 0.82, 0.7),
-    visorEmissive: new Color3(0.9, 0.65, 0.5),
+    bodyDiffuse: new Color3(0.82, 0.25, 0.15),
+    bodyEmissive: new Color3(0.08, 0.02, 0.01),
+    accentDiffuse: new Color3(0.42, 0.12, 0.08),
+    accentEmissive: new Color3(0.05, 0.01, 0.01),
+    visorDiffuse: new Color3(1.0, 0.75, 0.55),
+    visorEmissive: new Color3(0.95, 0.6, 0.4),
   },
 };
 
@@ -131,25 +131,25 @@ const FLASH_EMISSIVE = {
  */
 const POSE = {
   /** Forward knee tuck (rotation.x) while jumping: [left, right]. */
-  jumpTuckLeg: [0.55, 0.3] as const,
+  jumpTuckLeg: [0.60, 0.32] as const,
   /** Fore/aft leg split while falling: [left, right]. */
   fallLeg: [0.15, -0.15] as const,
   /** Lateral knee spread (rotation.z, knees OUT) while falling. */
-  fallLegSpread: [-0.18, 0.18] as const,
+  fallLegSpread: [-0.22, 0.22] as const,
   /** Weapon-aim arm lift (rotation.x, forward-up) for [left, right]. */
-  aimArmX: [-1.35, -1.15] as const,
+  aimArmX: [-1.38, -1.12] as const,
   /** How the aim pitch tilts the aiming arms (radians per radian). */
   aimArmPitchSensitivity: 0.6,
   aimArmXMin: -2.4,
   aimArmXMax: -0.5,
   /** Two-handed grip: hands drawn slightly toward the midline (rotation.z). */
-  aimArmGripZ: [0.25, -0.25] as const,
+  aimArmGripZ: [0.28, -0.28] as const,
   /** Arms flung upward while falling (non-aiming body only). */
-  fallArmX: -1.9,
+  fallArmX: -1.95,
   /** Idle arm sway (radians, driven by the breath oscillator). */
   idleArmSway: 0.03,
   /** Torso lean per radian of aim pitch while aiming (up = slight back). */
-  aimSpineLean: 0.2,
+  aimSpineLean: 0.22,
   /** Visor tilt per radian of aim pitch. */
   aimVisorPitch: 0.4,
   /** Largest render-frame delta fed to the pose clock (seconds). */
@@ -265,84 +265,89 @@ export class PlayerPresentation {
     );
 
     // --- Body layout (origin = capsule centre; feet at -0.9, top <= +0.9) --
-    // The ABSOLUTE positions of every mesh are exactly the legacy layout;
-    // only the parentage moved (legs/arms under joint pivots, upper body
-    // under the spine pivot) so the pose can animate them.
-    // Legs: simple boxes, the boot line comes from the pelvis overlap.
+    // Stylized BuildShift character: inverted-V silhouette with broad
+    // shoulders, narrow legs, and a distinctive head crest. All meshes are
+    // parented under joint pivots so the procedural pose can animate them.
+    // Legs: narrow boxes for an athletic proportion.
     this._addMesh(
-      this._box(`${namePrefix}-leg-left`, scene, 0.17, 0.56, 0.2),
+      this._box(`${namePrefix}-leg-left`, scene, 0.15, 0.56, 0.18),
       new Vector3(0, -0.28, 0),
       this._bodyMaterial,
       this._legLeftPivot,
     );
     this._addMesh(
-      this._box(`${namePrefix}-leg-right`, scene, 0.17, 0.56, 0.2),
+      this._box(`${namePrefix}-leg-right`, scene, 0.15, 0.56, 0.18),
       new Vector3(0, -0.28, 0),
       this._bodyMaterial,
       this._legRightPivot,
     );
-    // Pelvis: bridges the legs into the torso.
+    // Pelvis: bridges the legs into the broader torso.
     this._addMesh(
-      this._box(`${namePrefix}-pelvis`, scene, 0.32, 0.14, 0.22),
+      this._box(`${namePrefix}-pelvis`, scene, 0.30, 0.13, 0.20),
       new Vector3(0, -0.28, 0),
       this._bodyMaterial,
     );
-    // Torso: the widest body box, broad at the shoulders (under the spine).
+    // Torso: broad shoulders create the inverted-V heroic silhouette.
     this._addMesh(
-      this._box(`${namePrefix}-torso`, scene, 0.42, 0.56, 0.24),
+      this._box(`${namePrefix}-torso`, scene, 0.46, 0.54, 0.24),
       new Vector3(0, 0.24, 0),
       this._bodyMaterial,
       this._spinePivot,
     );
-    // Arms (hang from the shoulder pivots).
+    // Arms: slightly thinner than the torso for contrast.
     this._addMesh(
-      this._box(`${namePrefix}-arm-left`, scene, 0.11, 0.44, 0.14),
+      this._box(`${namePrefix}-arm-left`, scene, 0.10, 0.44, 0.13),
       new Vector3(0, -0.22, 0),
       this._bodyMaterial,
       this._armLeftPivot,
     );
     this._addMesh(
-      this._box(`${namePrefix}-arm-right`, scene, 0.11, 0.44, 0.14),
+      this._box(`${namePrefix}-arm-right`, scene, 0.10, 0.44, 0.13),
       new Vector3(0, -0.22, 0),
       this._bodyMaterial,
       this._armRightPivot,
     );
-    // Shoulder pads: accent contrast on the widest part of the silhouette.
+    // Shoulder pads: pronounced accent blocks define the shoulder line.
     this._addMesh(
-      this._box(`${namePrefix}-pad-left`, scene, 0.15, 0.09, 0.17),
-      new Vector3(-0.235, 0.54, 0),
+      this._box(`${namePrefix}-pad-left`, scene, 0.19, 0.11, 0.18),
+      new Vector3(-0.26, 0.53, 0),
       this._accentMaterial,
       this._spinePivot,
     );
     this._addMesh(
-      this._box(`${namePrefix}-pad-right`, scene, 0.15, 0.09, 0.17),
-      new Vector3(0.235, 0.54, 0),
+      this._box(`${namePrefix}-pad-right`, scene, 0.19, 0.11, 0.18),
+      new Vector3(0.26, 0.53, 0),
       this._accentMaterial,
       this._spinePivot,
     );
-    // Head: low-segment sphere converted to flat shading for a faceted
-    // low-poly look (Babylon 9: flat shading is a per-mesh transform).
+    // Head: low-segment sphere with flat shading for a faceted stylized look.
     const head = MeshBuilder.CreateSphere(
       `${namePrefix}-head`,
-      { diameter: 0.3, segments: 5 },
+      { diameter: 0.32, segments: 6 },
       scene,
     );
     head.convertToFlatShadedMesh();
-    this._addMesh(head, new Vector3(0, 0.65, 0), this._accentMaterial, this._spinePivot);
-    // Visor: emissive strip on the -Z (forward) face of the head. The
-    // primary orientation cue at match distance; it also tilts with the
-    // aim pitch so the "looking up/down" read is visible.
-    this._visorMesh = this._box(`${namePrefix}-visor`, scene, 0.17, 0.055, 0.05);
+    this._addMesh(head, new Vector3(0, 0.66, 0), this._accentMaterial, this._spinePivot);
+    // Visor: wide emissive strip on the -Z (forward) face of the head.
+    // Primary orientation cue at match distance; tilts with aim pitch.
+    this._visorMesh = this._box(`${namePrefix}-visor`, scene, 0.20, 0.055, 0.05);
     this._addMesh(
       this._visorMesh,
-      new Vector3(0, 0.67, -0.145),
+      new Vector3(0, 0.68, -0.15),
       this._visorMaterial,
       this._spinePivot,
     );
-    // Back pack: accent block on the +Z side so facing is readable from behind.
+    // Head crest: small accent ridge on top for a distinctive silhouette.
     this._addMesh(
-      this._box(`${namePrefix}-backpack`, scene, 0.17, 0.16, 0.09),
-      new Vector3(0, 0.3, 0.16),
+      this._box(`${namePrefix}-crest`, scene, 0.06, 0.04, 0.12),
+      new Vector3(0, 0.84, 0),
+      this._accentMaterial,
+      this._spinePivot,
+    );
+    // Back pack: accent block on the +Z side for rear-facing readability.
+    this._addMesh(
+      this._box(`${namePrefix}-backpack`, scene, 0.19, 0.18, 0.09),
+      new Vector3(0, 0.30, 0.17),
       this._accentMaterial,
       this._spinePivot,
     );
