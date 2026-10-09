@@ -39,6 +39,12 @@ describe("GameRuntime combat presentation wiring", () => {
 
   it("plays a muzzle flash + tracer and kicks recoil on an accepted local shot", () => {
     // The fire path uses the reviewed playShot (muzzle + tracer), ...
+    // The shot origin is the weapon model's own muzzle (barrel tip) in
+    // world space — the established presentation seam — not a fixed
+    // offset from the player.
+    expect(runtime).toContain(
+      "this.weaponModel.getMuzzlePosition(this._muzzlePos)",
+    );
     expect(runtime).toContain(
       "this.combatFeedback.playShot(r.request.weaponType,this._muzzlePos,d)",
     );
