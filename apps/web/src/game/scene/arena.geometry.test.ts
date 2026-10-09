@@ -2,8 +2,10 @@
  * Behavioral tests for `setupArenaDecorations` — the independent decorative
  * arena geometry helper. Uses Babylon's NullEngine (headless, no WebGL) to
  * verify:
- *   - All five decorative meshes exist with correct names
- *   - Wall and ring materials use ARENA_PALETTE.accentColor
+ *   - All decorative meshes exist with correct names
+ *   - Wall materials use ARENA_PALETTE.wallColor with accent cap strips
+ *   - Ring and border materials use ARENA_PALETTE.accentColor
+ *   - Play-field plate is a thin inset slab centred on the arena
  *   - Wall positions and dimensions are derived from ARENA_COLLIDERS ground
  *   - All decorative meshes are non-pickable and non-collidable
  *   - Gameplay configuration (ARENA_COLLIDERS) is unchanged
@@ -42,34 +44,67 @@ const [GX, , GZ] = GROUND.position;
 const [HX, , HZ] = GROUND.halfExtents;
 
 describe("setupArenaDecorations", () => {
-  it("creates all five decorative meshes with correct names", () => {
+  it("creates all decorative meshes with correct names", () => {
     const { engine, scene } = buildScene();
 
     const wallN = scene.getMeshByName("arena-wall-n");
     const wallS = scene.getMeshByName("arena-wall-s");
     const wallE = scene.getMeshByName("arena-wall-e");
     const wallW = scene.getMeshByName("arena-wall-w");
+    const capN = scene.getMeshByName("arena-wall-cap-n");
     const ring = scene.getMeshByName("arena-center-ring");
+    const plate = scene.getMeshByName("arena-playfield-plate");
 
     expect(wallN, "arena-wall-n not found").not.toBeNull();
     expect(wallS, "arena-wall-s not found").not.toBeNull();
     expect(wallE, "arena-wall-e not found").not.toBeNull();
     expect(wallW, "arena-wall-w not found").not.toBeNull();
+    expect(capN, "arena-wall-cap-n not found").not.toBeNull();
     expect(ring, "arena-center-ring not found").not.toBeNull();
+    expect(plate, "arena-playfield-plate not found").not.toBeNull();
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("wall materials use ARENA_PALETTE.accentColor", () => {
+  it("wall materials use ARENA_PALETTE.wallColor with accent cap strips", () => {
     const { engine, scene } = buildScene();
 
     const wallN = scene.getMeshByName("arena-wall-n")!;
-    const material = wallN.material;
-    expect(material).toBeInstanceOf(StandardMaterial);
+    const wallMaterial = wallN.material;
+    expect(wallMaterial).toBeInstanceOf(StandardMaterial);
 
-    const diffuse = (material as StandardMaterial).diffuseColor;
-    expect(colorClose(diffuse, ARENA_PALETTE.accentColor)).toBe(true);
+    const diffuse = (wallMaterial as StandardMaterial).diffuseColor;
+    expect(colorClose(diffuse, ARENA_PALETTE.wallColor)).toBe(true);
+
+    const capN = scene.getMeshByName("arena-wall-cap-n")!;
+    const capMaterial = capN.material as StandardMaterial;
+    const capDiffuse = capMaterial.diffuseColor;
+    expect(colorClose(capDiffuse, ARENA_PALETTE.accentColor)).toBe(true);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("play-field plate is a thin inset slab centred on the arena", () => {
+    const { engine, scene } = buildScene();
+
+    const plate = scene.getMeshByName("arena-playfield-plate")!;
+    const bb = plate.getBoundingInfo().boundingBox;
+    const size = bb.maximum.subtract(bb.minimum);
+
+    // Centred on the arena, inset from the 30 m boundary.
+    expect(plate.position.x).toBeCloseTo(GX, 3);
+    expect(plate.position.z).toBeCloseTo(GZ, 3);
+    expect(size.x).toBeGreaterThan(25);
+    expect(size.x).toBeLessThan(HX * 2);
+    expect(size.z).toBeGreaterThan(25);
+    expect(size.z).toBeLessThan(HZ * 2);
+    // Thin — a raised floor plate, not a block.
+    expect(size.y).toBeLessThan(0.1);
+    // Sits at ground level.
+    expect(plate.position.y).toBeGreaterThanOrEqual(0);
+    expect(plate.position.y).toBeLessThan(0.1);
 
     scene.dispose();
     engine.dispose();
