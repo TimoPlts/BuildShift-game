@@ -10,8 +10,10 @@
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
  *  - Play a short construction pop-in animation when a structure first appears.
  *  - Tint structure meshes to reflect their authoritative durability
- *    (damage) state, with a brief white flash on each hit.
- *  - Play a destruction fade-out when a structure is authoritatively removed.
+ *    (damage) state using a non-linear curve, with a brief white+emissive
+ *    flash on each hit and a deterministic warning pulse when nearly broken.
+ *  - Play a destruction impact flash and fade-out when a structure is
+ *    authoritatively removed.
  *  - Smoothly transition half-wall edit shapes.
  *  - Highlight the structure currently aimed for a build edit, and show a
  *    semi-transparent half-wall result preview before the edit is confirmed.
@@ -58,6 +60,9 @@ import {
   startEditTransition,
   triggerHitFlash,
   composeVisual,
+  NEARLY_BROKEN_THRESHOLD,
+  WARNING_PULSE_FREQ,
+  WARNING_PULSE_STRENGTH,
   type StructureEffects,
 } from "./buildPresentation/structureEffects";
 
@@ -227,6 +232,8 @@ interface StructureRuntime {
   durability: StructureDurabilityState | null;
   /** Previous durability value to detect hits. */
   prevDurability: number;
+  /** Base diffuse color (durability-tinted, before hit-flash boost). */
+  baseDiffuse: Color3;
 }
 
 // ─── BuildStructureRenderer ────────────────────────────────────────────────
@@ -255,7 +262,7 @@ export class BuildStructureRenderer {
   private structures = new Map<string, StructureRuntime>();
 
   /** Structures awaiting destruction animation completion before mesh disposal. */
-  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number }>();
+  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3 }>();
 
   private readonly _observer: Observer<Scene>;
 
@@ -540,6 +547,7 @@ export class BuildStructureRenderer {
       }
     }
 
+    const baseColor = SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
     const runtime: StructureRuntime = {
       mesh,
       material: mat,
@@ -550,6 +558,7 @@ export class BuildStructureRenderer {
       grid: { ...structure.grid },
       durability: null,
       prevDurability: 0,
+      baseDiffuse: baseColor.clone(),
     };
 
     this.structures.set(structure.structureId, runtime);
@@ -590,12 +599,16 @@ export class BuildStructureRenderer {
 
   private startDestruction(id: string, runtime: StructureRuntime, now: number): void {
     const effects = createDestructionEffects(now);
+    const baseEmissive = this._computeBaseEmissive(runtime, now);
     this.pendingDestruction.set(id, {
       mesh: runtime.mesh,
       material: runtime.material,
       effects,
       scaleY: runtime.targetScaleY,
+      baseEmissive,
     });
+    // Reset diffuse to base (clear any active hit-flash boost)
+    runtime.material.diffuseColor = runtime.baseDiffuse.clone();
     this.structures.delete(id);
   }
 
@@ -613,8 +626,9 @@ export class BuildStructureRenderer {
     const maxDur = Math.max(1, durability.maxDurability);
     const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
     const damage = 1 - fraction;
-
-    runtime.material.diffuseColor = lerpColor(baseColor, DAMAGED_COLOR, damage);
+    // Non-linear tint: subtle at high durability, aggressive at low durability
+    const tintAmount = Math.pow(damage, 1.5);
+    runtime.baseDiffuse = lerpColor(baseColor, DAMAGED_COLOR, tintAmount);
   }
 
   // ─── Private: per-frame tick ─────────────────────────────────────────────
@@ -642,6 +656,11 @@ export class BuildStructureRenderer {
         visual.uniformScale,
       );
       pending.material.alpha = visual.alpha;
+      pending.material.emissiveColor = new Color3(
+        pending.baseEmissive.r + visual.emissiveBoost[0],
+        pending.baseEmissive.g + visual.emissiveBoost[1],
+        pending.baseEmissive.b + visual.emissiveBoost[2],
+      );
       if (shouldRemove) {
         toRemove.push(id);
       }
@@ -691,8 +710,16 @@ export class BuildStructureRenderer {
     // Alpha (for destruction fade — though destruction is in pendingDestruction)
     runtime.material.alpha = visual.alpha;
 
-    // Emissive: base damaged emissive + hit flash boost + build-edit target boost
-    const baseEmissive = this._computeBaseEmissive(runtime);
+    // Diffuse: base (durability-tinted) + hit-flash white-shift
+    const d = visual.diffuseBoost;
+    runtime.material.diffuseColor = new Color3(
+      runtime.baseDiffuse.r + d[0],
+      runtime.baseDiffuse.g + d[1],
+      runtime.baseDiffuse.b + d[2],
+    );
+
+    // Emissive: base (incl. warning pulse) + transient boost + build-edit target boost
+    const baseEmissive = this._computeBaseEmissive(runtime, now);
     runtime.material.emissiveColor = new Color3(
       baseEmissive.r + visual.emissiveBoost[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0),
       baseEmissive.g + visual.emissiveBoost[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0),
@@ -700,12 +727,27 @@ export class BuildStructureRenderer {
     );
   }
 
-  private _computeBaseEmissive(runtime: StructureRuntime): Color3 {
+  private _computeBaseEmissive(runtime: StructureRuntime, now: number): Color3 {
     const durability = runtime.durability;
     if (!durability) return SOLID_EMISSIVE;
     const maxDur = Math.max(1, durability.maxDurability);
     const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
     const damage = 1 - fraction;
-    return lerpColor(SOLID_EMISSIVE, DAMAGED_EMISSIVE, damage);
+    const tintAmount = Math.pow(damage, 1.5);
+    let emissive = lerpColor(SOLID_EMISSIVE, DAMAGED_EMISSIVE, tintAmount);
+
+    // Warning pulse for nearly-broken structures (deterministic, time-based)
+    if (fraction <= NEARLY_BROKEN_THRESHOLD) {
+      const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
+      const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
+      const w = severity * pulse * WARNING_PULSE_STRENGTH;
+      emissive = new Color3(
+        emissive.r + w,
+        emissive.g + w * 0.4,
+        emissive.b,
+      );
+    }
+
+    return emissive;
   }
 }

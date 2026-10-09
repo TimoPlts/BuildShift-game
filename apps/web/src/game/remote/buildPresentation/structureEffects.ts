@@ -28,11 +28,19 @@ import {
 /** Construction pop-in duration. */
 export const CONSTRUCTION_DURATION = 200;
 /** Hit flash duration. */
-export const HIT_FLASH_DURATION = 150;
+export const HIT_FLASH_DURATION = 180;
 /** Destruction fade-out duration. */
 export const DESTRUCTION_DURATION = 250;
 /** Edit transition duration. */
 export const EDIT_TRANSITION_DURATION = 200;
+/** Durability fraction below which a structure is considered "nearly broken". */
+export const NEARLY_BROKEN_THRESHOLD = 0.25;
+/** Warning pulse frequency for nearly-broken structures (cycles per second). */
+export const WARNING_PULSE_FREQ = 3.0;
+/** Peak warning pulse emissive strength. */
+export const WARNING_PULSE_STRENGTH = 0.35;
+/** Fraction of the destruction duration used for the impact flash. */
+export const DESTRUCTION_IMPACT_RATIO = 0.3;
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -119,8 +127,10 @@ export interface ComposedVisual {
   yOffset: number;
   /** Material alpha (1 = opaque, fades during destruction). */
   alpha: number;
-  /** Additional emissive color to add (hit flash). */
+  /** Additional emissive color to add (hit flash, destruction impact). */
   emissiveBoost: [number, number, number];
+  /** Additional diffuse color to add (hit flash white-shift). */
+  diffuseBoost: [number, number, number];
 }
 
 /**
@@ -145,6 +155,7 @@ export function composeVisual(
   let yOffset = baseYOffset;
   let alpha = 1;
   const emissiveBoost: [number, number, number] = [0, 0, 0];
+  const diffuseBoost: [number, number, number] = [0, 0, 0];
   let allDone = true;
 
   // Edit transition: lerp between old and new edit pose
@@ -163,7 +174,7 @@ export function composeVisual(
     if (!effects.construction.done) allDone = false;
   }
 
-  // Destruction scale-out + fade
+  // Destruction scale-out + fade, with an impact flash at the start
   let shouldRemove = false;
   if (effects.destruction && !effects.destruction.done) {
     const t = animationProgress(effects.destruction, now);
@@ -174,20 +185,31 @@ export function composeVisual(
     if (effects.destruction.done) {
       shouldRemove = true;
     }
+    // Impact flash: brief orange-white spike during the first portion of destruction
+    if (t < DESTRUCTION_IMPACT_RATIO) {
+      const flashT = t / DESTRUCTION_IMPACT_RATIO;
+      const flashStrength = 1 - flashT;
+      emissiveBoost[0] += flashStrength * 1.2;
+      emissiveBoost[1] += flashStrength * 0.7;
+      emissiveBoost[2] += flashStrength * 0.3;
+    }
   }
 
-  // Hit flash (additive emissive)
+  // Hit flash (additive emissive + diffuse white-shift)
   if (effects.hitFlash && !effects.hitFlash.done) {
     const t = animationProgress(effects.hitFlash, now);
     const flash = 1 - t;
-    emissiveBoost[0] = flash * 0.8;
-    emissiveBoost[1] = flash * 0.8;
-    emissiveBoost[2] = flash * 0.9;
+    emissiveBoost[0] += flash * 1.0;
+    emissiveBoost[1] += flash * 1.0;
+    emissiveBoost[2] += flash * 1.2;
+    diffuseBoost[0] = flash * 0.4;
+    diffuseBoost[1] = flash * 0.4;
+    diffuseBoost[2] = flash * 0.4;
     if (!effects.hitFlash.done) allDone = false;
   }
 
   return {
-    visual: { uniformScale, scaleY, yOffset, alpha, emissiveBoost },
+    visual: { uniformScale, scaleY, yOffset, alpha, emissiveBoost, diffuseBoost },
     allDone,
     shouldRemove,
   };
