@@ -10,6 +10,7 @@ import {
   triggerHitFlash,
   CONSTRUCTION_DURATION,
   DESTRUCTION_DURATION,
+  DESTRUCTION_IMPACT_RATIO,
   EDIT_TRANSITION_DURATION,
   HIT_FLASH_DURATION,
   type StructureEffects,
@@ -79,6 +80,22 @@ describe("createDestructionEffects", () => {
     expect(visual.alpha).toBeCloseTo(0, 2);
     expect(shouldRemove).toBe(true);
   });
+
+  it("composeVisual shows an impact flash emissive at the start of destruction", () => {
+    const effects = createDestructionEffects(NOW);
+    // At t=0: full impact flash
+    const { visual } = composeVisual(effects, 1, 0, NOW);
+    expect(visual.emissiveBoost[0]).toBeGreaterThan(1);
+    expect(visual.emissiveBoost[1]).toBeGreaterThan(0.5);
+    expect(visual.emissiveBoost[2]).toBeGreaterThan(0);
+
+    // After the impact phase (past DESTRUCTION_IMPACT_RATIO of duration): flash is gone
+    const afterImpact = NOW + DESTRUCTION_DURATION * (DESTRUCTION_IMPACT_RATIO + 0.1);
+    const { visual: v2 } = composeVisual(effects, 1, 0, afterImpact);
+    expect(v2.emissiveBoost[0]).toBe(0);
+    expect(v2.emissiveBoost[1]).toBe(0);
+    expect(v2.emissiveBoost[2]).toBe(0);
+  });
 });
 
 describe("triggerHitFlash", () => {
@@ -90,21 +107,25 @@ describe("triggerHitFlash", () => {
     expect(effects.hitFlash!.duration).toBe(HIT_FLASH_DURATION);
   });
 
-  it("composeVisual shows emissive boost during flash", () => {
+  it("composeVisual shows emissive and diffuse boost during flash", () => {
     const effects = createConstructionEffects(NOW);
     triggerHitFlash(effects, NOW + CONSTRUCTION_DURATION);
     const { visual } = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION + 50);
     expect(visual.emissiveBoost[0]).toBeGreaterThan(0);
     expect(visual.emissiveBoost[1]).toBeGreaterThan(0);
     expect(visual.emissiveBoost[2]).toBeGreaterThan(0);
+    expect(visual.diffuseBoost[0]).toBeGreaterThan(0);
+    expect(visual.diffuseBoost[1]).toBeGreaterThan(0);
+    expect(visual.diffuseBoost[2]).toBeGreaterThan(0);
   });
 
-  it("composeVisual has no emissive boost after flash completes", () => {
+  it("composeVisual has no emissive or diffuse boost after flash completes", () => {
     const effects = createConstructionEffects(NOW);
     triggerHitFlash(effects, NOW + CONSTRUCTION_DURATION);
     const after = NOW + CONSTRUCTION_DURATION + HIT_FLASH_DURATION;
     const { visual, allDone } = composeVisual(effects, 1, 0, after);
     expect(visual.emissiveBoost[0]).toBe(0);
+    expect(visual.diffuseBoost[0]).toBe(0);
     expect(allDone).toBe(true);
   });
 });
@@ -165,6 +186,7 @@ describe("composeVisual with no effects", () => {
     expect(visual.yOffset).toBe(0);
     expect(visual.alpha).toBe(1);
     expect(visual.emissiveBoost).toEqual([0, 0, 0]);
+    expect(visual.diffuseBoost).toEqual([0, 0, 0]);
     expect(allDone).toBe(true);
     expect(shouldRemove).toBe(false);
   });

@@ -421,6 +421,102 @@ describe("BuildStructureRenderer", () => {
       // No flash: emissive should be at base level
       expect(mat2.emissiveColor.r).toBeLessThan(0.15);
     });
+
+    it("applies a diffuse white-shift during hit flash", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = mesh.material as StandardMaterial;
+      const baseDiffuseR = mat.diffuseColor.r;
+
+      // Set initial durability (no flash on first update)
+      renderer.updateStructureDurability("wall", durability(200, 200));
+      advance(16);
+
+      // Trigger a hit (decrease from 200 to 150)
+      renderer.updateStructureDurability("wall", durability(150, 200));
+      advance(50); // mid-flash
+
+      const flashR = (mesh.material as StandardMaterial).diffuseColor.r;
+      // Diffuse should be brighter than the durability-tinted base
+      expect(flashR).toBeGreaterThan(baseDiffuseR);
+
+      // After flash expires: diffuse returns to base
+      advance(200);
+      const settledR = (mesh.material as StandardMaterial).diffuseColor.r;
+      expect(settledR).toBeLessThan(flashR);
+    });
+
+    it("uses a non-linear tint curve (steeper at low durability)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = mesh.material as StandardMaterial;
+      const healthyR = mat.diffuseColor.r;
+
+      // 50% durability
+      renderer.updateStructureDurability("wall", durability(100, 200));
+      advance(16);
+      const midR = (mesh.material as StandardMaterial).diffuseColor.r;
+
+      // 10% durability
+      renderer.updateStructureDurability("wall", durability(20, 200));
+      advance(16);
+      const lowR = (mesh.material as StandardMaterial).diffuseColor.r;
+
+      // The step from 50%→10% should be larger than 100%→50% (non-linear curve)
+      const stepHigh = midR - healthyR;
+      const stepLow = lowR - midR;
+      expect(stepLow).toBeGreaterThan(stepHigh);
+    });
+
+    it("applies a warning pulse to nearly-broken structures (durability <= 25%)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+
+      // Set durability to 10% (below 25% threshold)
+      renderer.updateStructureDurability("wall", durability(20, 200));
+      advance(16);
+
+      const mat1 = mesh.material as StandardMaterial;
+      const emissiveR1 = mat1.emissiveColor.r;
+
+      // Advance by ~half a pulse cycle (3 Hz → period ≈ 333ms → half ≈ 167ms)
+      advance(167);
+      const mat2 = mesh.material as StandardMaterial;
+      const emissiveR2 = mat2.emissiveColor.r;
+
+      // The emissive should have changed (pulsing)
+      const delta = Math.abs(emissiveR1 - emissiveR2);
+      expect(delta).toBeGreaterThan(0.01);
+    });
+
+    it("does not apply a warning pulse at moderate durability (> 25%)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+
+      // Set durability to 50% (above 25% threshold)
+      renderer.updateStructureDurability("wall", durability(100, 200));
+      advance(16);
+
+      const mat1 = mesh.material as StandardMaterial;
+      const emissiveR1 = mat1.emissiveColor.r;
+
+      // Advance by half a pulse cycle
+      advance(167);
+      const mat2 = mesh.material as StandardMaterial;
+      const emissiveR2 = mat2.emissiveColor.r;
+
+      // No warning pulse: emissive should be stable (no oscillation)
+      const delta = Math.abs(emissiveR1 - emissiveR2);
+      expect(delta).toBeLessThan(0.001);
+    });
   });
 
   // ─── Destruction feedback ────────────────────────────────────────────────
@@ -459,6 +555,32 @@ describe("BuildStructureRenderer", () => {
       // After completion: gone
       advance(200);
       expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("shows an impact flash emissive spike at the start of destruction", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300); // construction complete
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = mesh.material as StandardMaterial;
+      const baseEmissiveR = mat.emissiveColor.r;
+
+      // Trigger destruction
+      renderer.syncStructures({ structures: {} });
+      advance(16); // first frame of destruction
+
+      const flashEmissiveR = (mesh.material as StandardMaterial).emissiveColor.r;
+      // Emissive should spike above the base level (impact flash)
+      expect(flashEmissiveR).toBeGreaterThan(baseEmissiveR);
+
+      // After the impact phase passes: emissive returns closer to base
+      advance(200);
+      // The mesh may be gone by now (250ms total), so check if it exists
+      const lateMesh = scene.getMeshByName("structure-wall");
+      if (lateMesh) {
+        const lateMat = lateMesh.material as StandardMaterial;
+        expect(lateMat.emissiveColor.r).toBeLessThan(flashEmissiveR);
+      }
     });
   });
 
