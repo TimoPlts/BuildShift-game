@@ -88,6 +88,34 @@ describe("placementPreview", () => {
   it("overlap", () => {
     expect(computePlacementPreview(mi({ occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");
   });
+  it("overlap against a later occupied structure is detected", () => {
+    // The disjoint structure comes first; the colliding wall is last.
+    const p = computePlacementPreview(mi({
+      occupied: [
+        { buildType: "cone", grid: { x: 7, y: 0, z: 7 } },
+        { buildType: "floor", grid: { x: 9, y: 0, z: -4 } },
+        { buildType: "wall", grid: { x: 0, y: 0, z: 0 } },
+      ],
+    }));
+    expect(p.reason).toBe("overlap");
+  });
+  it("floor stacked on a wall reports overlap via the stacked cell", () => {
+    // Candidate aims straight down at grid (0,0,0); the wall below it
+    // occupies (0,0,0) + (0,1,0). A candidate FLOOR at (0,0,0) shares (0,0,0).
+    const p = computePlacementPreview(mi({
+      buildType: "floor",
+      occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }],
+    }));
+    expect(p.reason).toBe("overlap");
+  });
+  it("valid with many disjoint occupied structures", () => {
+    // 40 floors in a row away from the candidate at (0,0,0).
+    const occupied = Array.from({ length: 40 }, (_, i) => ({
+      buildType: "floor" as const,
+      grid: { x: 5 + i, y: 0, z: 0 },
+    }));
+    expect(computePlacementPreview(mi({ occupied })).valid).toBe(true);
+  });
   it("invalid_rotation for wall with non-default rotation", () => {
     // wall has rotationCount=4; the preview checks `rotation % rotationCount !== 0`.
     // rotation=1 → 1 % 4 = 1 ≠ 0 → invalid_rotation.
@@ -134,6 +162,55 @@ describe("BuildingStateStore", () => {
     s.addPending({ sequence: 0, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0 });
     s.reset();
     expect(s.structureCount).toBe(0); expect(s.pendingCount).toBe(0);
+  });
+});
+
+describe("BuildingStateStore snapshot caching", () => {
+  let s: BuildingStateStore;
+  beforeEach(() => { s = new BuildingStateStore(); });
+  function msAt(id: string, x: number): StructureState {
+    return { structureId: id, buildType: "wall", grid: { x, y: 0, z: 0 }, rotation: 0, ownerId: "p1", createdSequence: 0 };
+  }
+  it("getBuildingState returns a stable reference across unmutated reads", () => {
+    s.applyReplicatedState({ a: msAt("a", 0), b: msAt("b", 1) });
+    expect(s.getBuildingState()).toBe(s.getBuildingState());
+  });
+  it("getBuildingState reflects each mutation", () => {
+    s.applyReplicatedState({ a: msAt("a", 0) });
+    const first = s.getBuildingState();
+    expect(Object.keys(first.structures)).toEqual(["a"]);
+
+    s.applyReplicatedState({ b: msAt("b", 2) });
+    const second = s.getBuildingState();
+    expect(second).not.toBe(first);
+    expect(Object.keys(second.structures)).toEqual(["b"]);
+    expect(second.structures.b.grid.x).toBe(2);
+
+    s.confirmPlacement({ structure: { ...msAt("c", 3), createdSequence: 4 } });
+    const third = s.getBuildingState();
+    expect(Object.keys(third.structures).sort()).toEqual(["b", "c"]);
+    expect(third.structures.c.grid.x).toBe(3);
+
+    s.reset();
+    expect(Object.keys(s.getBuildingState().structures)).toEqual([]);
+  });
+  it("getOccupiedStructures mixes authoritative + pending and stays stable until mutation", () => {
+    s.applyReplicatedState({ a: msAt("a", 0) });
+    s.addPending({ sequence: 1, buildType: "floor", grid: { x: 5, y: 0, z: 0 }, rotation: 0 });
+    const occ = s.getOccupiedStructures();
+    expect(occ).toHaveLength(2);
+    expect(occ.some((o) => o.buildType === "floor" && o.grid.x === 5)).toBe(true);
+    // Unmutated reads share the cached array (no per-frame reallocation).
+    expect(s.getOccupiedStructures()).toBe(occ);
+
+    s.rejectPlacement({ sequence: 1, reason: "overlap" });
+    expect(s.getOccupiedStructures()).toHaveLength(1);
+
+    s.addPending({ sequence: 2, buildType: "cone", grid: { x: 6, y: 0, z: 0 }, rotation: 0 });
+    expect(s.getOccupiedStructures()).toHaveLength(2);
+
+    s.clearPending();
+    expect(s.getOccupiedStructures()).toHaveLength(1);
   });
 });
 

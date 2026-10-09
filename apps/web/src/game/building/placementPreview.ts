@@ -23,7 +23,7 @@ import type {
   GridPosition,
   GridRotation,
 } from "@buildshift/protocol";
-import { footprintsOverlap, worldToGridPosition, gridToWorldAnchor } from "./gridSnap";
+import { footprintCells, worldToGridPosition, gridToWorldAnchor } from "./gridSnap";
 
 /**
  * Why a placement preview is (locally) invalid. `null` means the preview is
@@ -110,6 +110,39 @@ export const ABSENT_PREVIEW: Readonly<PlacementPreview> = Object.freeze({
 });
 
 /**
+ * Per-frame occupancy test: `true` when `candidate`'s footprint shares at
+ * least one grid cell with any occupied structure.
+ *
+ * Semantically identical to
+ * `occupied.some((other) => footprintsOverlap(candidate, other))` — cells
+ * are compared by exact (x, y, z) equality, which `gridKey` encodes
+ * injectively — but without the per-structure `Set` / key-string churn:
+ * the candidate's cells are enumerated once, then every occupied
+ * structure's cells are compared numerically.
+ */
+function candidateOverlapsOccupied(
+  candidate: OccupiedStructure,
+  occupied: readonly OccupiedStructure[],
+): boolean {
+  const candidateCells = footprintCells(candidate.buildType, candidate.grid);
+  for (const other of occupied) {
+    const otherCells = footprintCells(other.buildType, other.grid);
+    for (const cell of otherCells) {
+      for (const candidateCell of candidateCells) {
+        if (
+          candidateCell.x === cell.x &&
+          candidateCell.y === cell.y &&
+          candidateCell.z === cell.z
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Computes the grid-snapped placement preview for one frame.
  *
  * Pure function: reads the shared `BUILD_GRID` / `BUILD_RANGE` values and the
@@ -194,17 +227,15 @@ export function computePlacementPreview(
 
   // ── Occupancy: the candidate footprint must be free ──
   const candidate = { buildType, grid };
-  for (const other of occupied) {
-    if (footprintsOverlap(candidate, other)) {
-      return {
+  if (candidateOverlapsOccupied(candidate, occupied)) {
+    return {
         present: true,
-        valid: false,
-        reason: "overlap",
-        grid,
-        rotation,
-        anchorWorld,
-      };
-    }
+      valid: false,
+      reason: "overlap",
+      grid,
+      rotation,
+      anchorWorld,
+    };
   }
 
   return {

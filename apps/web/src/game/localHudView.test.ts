@@ -10,9 +10,11 @@ import { describe, expect, it } from "vitest";
 import {
   buildLocalHudView,
   localHudChangeKey,
+  localHudViewChangeKeyFromInput,
   type LocalHudView,
   type LocalHudViewInput,
 } from "./localHudView";
+import { type BuildEditHudState } from "./buildEdit/buildEditHudView";
 import {
   ENERGY,
   MAX_HEALTH,
@@ -273,6 +275,132 @@ describe("localHudChangeKey", () => {
     // Not reloading always yields the "no reload" step regardless of progress.
     expect(key(0.1)).not.toBe(
       localHudChangeKey(buildLocalHudView(baselineInput())),
+    );
+  });
+});
+
+describe("localHudViewChangeKeyFromInput", () => {
+  function buildEditState(o: Partial<BuildEditHudState> = {}): BuildEditHudState {
+    return {
+      mode: false,
+      target: null,
+      selectedEdit: "door",
+      allowedEdits: [],
+      feedback: null,
+      applyReady: false,
+      ...o,
+    };
+  }
+
+  /** Deterministic PRNG so the sweep is reproducible across runs. */
+  function mulberry32(seed: number): () => number {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  it("equals localHudChangeKey(buildLocalHudView(input)) across a randomized sweep", () => {
+    const rand = mulberry32(0xcafe_bab1);
+    const pick = <T,>(values: readonly T[]): T =>
+      values[Math.floor(rand() * values.length)];
+    const numbers = [0, 1, 12.9, 99, MAX_HEALTH, MAX_HEALTH + 40, -7, NaN, Infinity, -Infinity];
+    const buildTypes = ["wall", "floor", "ramp", "cone"] as const;
+    const weapons = ["assault_rifle", "shotgun"] as const;
+    const feedbacks = [
+      null,
+      { kind: "accepted" as const, message: "Edit applied" },
+      { kind: "rejected" as const, message: "Not yours" },
+      { kind: "info" as const, message: "Aim at your wall" },
+    ];
+
+    for (let i = 0; i < 300; i += 1) {
+      const targeted = rand() < 0.5;
+      const input: LocalHudViewInput = {
+        health: pick(numbers),
+        shield: pick(numbers),
+        energy: pick(numbers),
+        weaponType: pick(weapons),
+        magazineAmmo: pick(numbers),
+        magazineSize: pick(numbers),
+        isReloading: rand() < 0.5,
+        reloadProgress: pick([0, 0.095, 0.105, 0.5, 1, 1.5, -0.2, NaN]),
+        eliminated: rand() < 0.25,
+        buildMode: rand() < 0.4,
+        selectedBuildType: pick(buildTypes),
+        placementValid: pick([null, true, false]),
+        gridPosition: rand() < 0.5 ? null : { x: Math.floor(rand() * 20) - 10, y: Math.floor(rand() * 5), z: Math.floor(rand() * 20) - 10 },
+        buildEdit: buildEditState({
+          mode: rand() < 0.5,
+          target: targeted
+            ? {
+                structureId: `wall${Math.floor(rand() * 9)}`,
+                buildType: "wall",
+                grid: { x: Math.floor(rand() * 9), y: 0, z: Math.floor(rand() * 9) },
+              }
+            : null,
+          selectedEdit: pick(["door", "window", "half_top", "half_bottom", "clear"] as const),
+          allowedEdits: rand() < 0.5 ? ["door", "window"] : [],
+          feedback: pick(feedbacks),
+          applyReady: rand() < 0.3,
+        }),
+        roundTimer: rand() < 0.6
+          ? {
+              remainingMs: rand() < 0.1 ? Number.NaN : Math.floor(rand() * 120_000),
+              totalMs: rand() < 0.1 ? 0 : Math.floor(rand() * 90_000) + 1,
+            }
+          : null,
+        countdownSeconds: pick([0, 2, 2.9, -1, NaN]),
+      };
+
+      expect(
+        localHudViewChangeKeyFromInput(input),
+        `mismatch on iteration ${i}`,
+      ).toBe(localHudChangeKey(buildLocalHudView(input)));
+    }
+  });
+
+  it("tracks the same player-visible changes as the view-side key", () => {
+    const base = baselineInput();
+    const baseKey = localHudViewChangeKeyFromInput(base);
+    expect(baseKey).toBe(localHudChangeKey(buildLocalHudView(base)));
+
+    const variants: LocalHudViewInput[] = [
+      { ...base, health: base.health - 1 },
+      { ...base, energy: base.energy + 1 },
+      { ...base, magazineAmmo: base.magazineAmmo - 1 },
+      { ...base, weaponType: "shotgun" },
+      { ...base, eliminated: true },
+      { ...base, buildMode: true, placementValid: false, gridPosition: { x: 1, y: 0, z: 1 } },
+      { ...base, buildEdit: { ...base.buildEdit, mode: true } },
+      {
+        ...base,
+        buildEdit: {
+          ...base.buildEdit,
+          target: { structureId: "wall1", buildType: "wall", grid: { x: 1, y: 0, z: 1 } },
+        },
+      },
+      { ...base, roundTimer: { remainingMs: 45_000, totalMs: 90_000 } },
+      { ...base, countdownSeconds: 3 },
+    ];
+    for (const variant of variants) {
+      expect(localHudViewChangeKeyFromInput(variant)).not.toBe(baseKey);
+    }
+  });
+
+  it("treats sub-second round-timer jitter as unchanged (matching the view-side key)", () => {
+    const withTimer = (remainingMs: number): LocalHudViewInput => ({
+      ...baselineInput(),
+      roundTimer: { remainingMs, totalMs: 90_000 },
+    });
+    expect(localHudViewChangeKeyFromInput(withTimer(89_967))).toBe(
+      localHudViewChangeKeyFromInput(withTimer(90_000)),
+    );
+    expect(localHudViewChangeKeyFromInput(withTimer(89_000))).not.toBe(
+      localHudViewChangeKeyFromInput(withTimer(90_000)),
     );
   });
 });
