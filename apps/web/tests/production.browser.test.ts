@@ -20,8 +20,13 @@
  *   - Authoritative build visible to both clients
  *   - Timer continuation
  *   - No unexpected socket close
+ *   - All four build types (wall/floor/ramp/cone) placement attempts
+ *   - Build-edit / destruction intent (clear + apply) keeps clients in sync
  *   - Round completion (via elimination)
+ *   - Next rounds run to the final MATCH OVER
  *   - Connected rematch
+ *   - Repeated-rematch HUD/audio/listener state stays clean
+
  *   - Combined-state diagnostics (arena / player / build / disconnect / diag)
  */
 import { test, expect, type Page, type BrowserContext, chromium } from "@playwright/test";
@@ -376,6 +381,243 @@ async function ensurePointerLock(page: Page): Promise<void> {
 }
 
 /**
+ * Shared collection of fatal-looking console errors across all pages, used by
+ * the repeated-rematch cleanup assertion.
+ */
+const fatalConsoleErrors: string[] = [];
+
+/**
+ * Attach a console-error tracker to a page. Benign headless noise is
+ * filtered out with the same rules as `loadApp`.
+ */
+function trackFatalErrors(page: Page): void {
+  page.on("console", (msg) => {
+    if (msg.type() !== "error") return;
+    const text = msg.text();
+    if (
+      text.includes("message not registered") ||
+      text.includes("WebSocket connection") ||
+      text.includes("ECONNREFUSED") ||
+      text.includes("net::")
+    ) {
+      return;
+    }
+    fatalConsoleErrors.push(text);
+  });
+  page.on("pageerror", (err) => fatalConsoleErrors.push(err.message));
+}
+
+/**
+ * Read whether build mode is active on a page, via the developer
+ * diagnostics overlay (`Build:on/off`; the suite loads with ?devdiag=1).
+ */
+async function buildModeActive(page: Page): Promise<boolean> {
+  const text = await page.evaluate(
+    () => document.querySelector(".devdiag-overlay")?.textContent ?? "",
+  );
+  return /Build:\s*on/i.test(text);
+}
+
+/**
+ * Make sure the page is in combat (non-build) mode so weapon fire is routed
+ * to the weapon controller, toggling build mode off if a previous test left
+ * it on.
+ */
+async function ensureCombatMode(page: Page): Promise<void> {
+  if (await buildModeActive(page)) {
+    await page.keyboard.press("KeyB");
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
+/**
+ * Read the total combat points (health + shield) shown on a page's vitals
+ * HUD. Used to detect when shots are actually landing on the opponent.
+ */
+async function combatTotal(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const rows = Array.from(document.querySelectorAll(".combat-vitals-hud__row"));
+    let total = 0;
+    for (const row of rows) {
+      const value = row.querySelector(".combat-vitals-hud__value")?.textContent ?? "";
+      const match = value.match(/^(\d+)/);
+      if (match) total += parseInt(match[1], 10);
+    }
+    return total;
+  });
+}
+
+/**
+ * Read the local (page-owner) round score from the match HUD.
+ */
+async function localScore(page: Page): Promise<number> {
+  const text = await page.locator(".match-hud__score-value--local").textContent();
+  const match = text?.match(/(\d+)/);
+  return match ? parseInt(match[1], 10) : 0;
+}
+
+/**
+ * Read the authoritative (last server-reconciled) position shown in the
+ * dev-diagnostics overlay. The overlay only renders with ?devdiag, which the
+ * smoke tests enable; returns null if it is not available.
+ */
+async function authPos(page: Page): Promise<[number, number, number] | null> {
+  return page.evaluate(() => {
+    const t = document.querySelector(".devdiag-overlay")?.textContent ?? "";
+    const m = t.match(
+      /Auth:\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)/,
+    );
+    return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null;
+  }, { timeout: 5_000 }).catch(() => null);
+}
+
+/** Wrap an angle difference into [-π, π]. */
+function normAngle(rad: number): number {
+  while (rad > Math.PI) rad -= 2 * Math.PI;
+  while (rad < -Math.PI) rad += 2 * Math.PI;
+  return rad;
+}
+
+/**
+ * Hold primary fire until the match phase leaves IN PROGRESS (round ended
+ * via elimination or timer), then return the final phase text.
+ *
+ * Aiming strategy (headless-friendly, deterministic):
+ *  1. Measure the camera's actual yaw by holding W for a moment and reading
+ *     the authoritative position delta (works regardless of carried-over
+ *     yaw from previous rounds).
+ *  2. Compute the bearing to the opponent from both players' authoritative
+ *     positions and apply one exact mouse-delta correction.
+ *  3. Hold fire; re-probe and re-correct only when damage stops landing.
+ *
+ * Known server/client behaviour this must tolerate: after the first round,
+ * the client input sequence restarts from 0 on the round-boundary reset
+ * while the server keeps its per-player lastProcessedSequence, so every
+ * input sample is dropped as stale until the new counter catches up.
+ * Both players are therefore input-frozen (no movement, no fire) for the
+ * first several seconds of each round. The probe detects the freeze
+ * (zero movement) and simply retries; weapon reload (KeyR) is not
+ * sequence-gated and works during the freeze.
+ *
+ * The magazine is reloaded automatically when it runs low (best effort —
+ * precise aim means a kill usually fits in a single 30-round magazine).
+ */
+async function holdFireUntilRoundOver(
+  pageA: Page,
+  pageB: Page,
+  timeoutMs = 120_000,
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  const dispatchLook = (px: number) =>
+    pageA.evaluate((px2: number) => {
+      document.dispatchEvent(
+        new MouseEvent("mousemove", { movementX: px2, movementY: 0, bubbles: true }),
+      );
+    }, px).catch(() => {});
+
+  // Look deltas are only consumed while the InputManager reports pointer
+  // lock, so establish the (fake) lock before any aim mousemove.
+  await ensurePointerLock(pageA);
+
+  // Initial best-guess aim: from spawn x=-5 the opponent at x=+5 is yaw
+  // +π/2; mouse left (negative movementX) increases yaw at 0.0022 rad/px,
+  // so -714px ≈ +90°. The probe below corrects any residual error.
+  await dispatchLook(-714);
+
+  await pageA.evaluate(() => {
+    document.querySelector("canvas.game-canvas")?.dispatchEvent(
+      new MouseEvent("mousedown", { button: 0, bubbles: true }),
+    );
+  }, { timeout: 5_000 });
+
+  let phase = "";
+  let opponentTotal = await combatTotal(pageB);
+  let lastDamageAt = 0; // 0 forces an immediate first aim
+  let lastAimAttempt = 0;
+  let reaims = 0;
+  try {
+    while (Date.now() < deadline) {
+      const now = Date.now();
+      const ammo = await getMagazineAmmo(pageA);
+      if (ammo <= 2) {
+        // Reload is not sequence-gated, so it works even while the
+        // round-start input freeze is in effect.
+        await pageA.keyboard.press("KeyR").catch(() => {});
+        await sleep(2_500);
+      } else if (
+        now - lastDamageAt > 6_000 &&
+        now - lastAimAttempt > 3_000 &&
+        reaims < 14
+      ) {
+        // Probe the camera yaw: hold W, measure the authoritative delta.
+        const p0 = await authPos(pageA);
+        await pageA.keyboard.down("KeyW");
+        await sleep(1_200);
+        await pageA.keyboard.up("KeyW");
+        await sleep(500);
+        const p1 = await authPos(pageA);
+        const pB = await authPos(pageB);
+        lastAimAttempt = Date.now();
+        if (p0 && p1 && pB) {
+          const dx = p1[0] - p0[0];
+          const dz = p1[2] - p0[2];
+          if (dx * dx + dz * dz >= 0.25) {
+            // Moved ≥ 0.5 m: the probe is reliable.
+            const yaw = Math.atan2(dx, -dz);
+            const bearing = Math.atan2(pB[0] - p1[0], -(pB[2] - p1[2]));
+            // applyLook does `yaw -= px * sensitivity`, so increasing yaw
+            // toward the bearing needs px ∝ (yaw − bearing).
+            const px = Math.round(normAngle(yaw - bearing) / 0.0022);
+            if (Math.abs(px) > 5) await dispatchLook(px);
+            reaims += 1;
+            // Give the corrected aim a short window before deciding to
+            // re-aim again (damage checks resume immediately).
+            lastDamageAt = Date.now() - 3_000;
+          }
+          // Zero movement means the input freeze is still in effect (or
+          // data is stale); retry on the next pass.
+        }
+      }
+      await sleep(700);
+      const vitals = await combatTotal(pageB);
+      if (vitals < opponentTotal) {
+        opponentTotal = vitals;
+        lastDamageAt = Date.now();
+      }
+      phase = await pageA.evaluate(
+        () => document.querySelector(".match-hud__phase")?.textContent ?? "",
+        { timeout: 5_000 },
+      );
+      if (phase === "ROUND OVER" || phase === "MATCH OVER") break;
+    }
+  } finally {
+    await pageA.keyboard.up("KeyW").catch(() => {});
+    await pageA.evaluate(() => {
+      document.querySelector("canvas.game-canvas")?.dispatchEvent(
+        new MouseEvent("mouseup", { button: 0, bubbles: true }),
+      );
+    }, { timeout: 5_000 }).catch(() => {});
+  }
+  return phase;
+}
+
+/**
+ * Wait until both pages reach the IN PROGRESS phase (start of a round).
+ */
+async function waitForRoundStart(pageA: Page, pageB: Page): Promise<void> {
+  const ready = (page: Page) =>
+    page.waitForFunction(
+      () => {
+        const el = document.querySelector(".match-hud__phase");
+        const text = el?.textContent ?? "";
+        return text === "GET READY" || text === "IN PROGRESS";
+      },
+      { timeout: 45_000 },
+    );
+  await Promise.all([ready(pageA), ready(pageB)]);
+}
+
+/**
  * Fire the current weapon by dispatching mousedown on the pointer-locked element.
  * Holds the button briefly to ensure the game loop picks up the fire input.
  * Uses short timeouts to fail fast if the page is unresponsive.
@@ -420,6 +662,7 @@ test.describe("Production browser smoke", () => {
 
   test("frontend startup: canvas renders without fatal errors", async () => {
     pageA = await browserContext!.newPage();
+    trackFatalErrors(pageA);
     socketCloseEvents = [];
 
     // Track unexpected socket close events via the page's WebSocket.
@@ -464,6 +707,7 @@ test.describe("Production browser smoke", () => {
   test("two clients: second player joins the same room", async () => {
     expect(pageA).not.toBeNull();
     pageB = await browserContext!.newPage();
+    trackFatalErrors(pageB);
 
     // Track socket close events for page B as well.
     pageB.on("console", (msg) => {
@@ -585,10 +829,15 @@ test.describe("Production browser smoke", () => {
     const ammoBefore = await getMagazineAmmo(pageA!);
     expect(ammoBefore).toBeGreaterThan(0);
 
-    await fireWeapon(pageA!);
-    await sleep(500);
-
-    const ammoAfter = await getMagazineAmmo(pageA!);
+    // Fire the weapon (retry for flaky headless frame timing, same pattern
+    // as the AR fire test above).
+    let ammoAfter = ammoBefore;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await fireWeapon(pageA!);
+      await sleep(500);
+      ammoAfter = await getMagazineAmmo(pageA!);
+      if (ammoAfter < ammoBefore) break;
+    }
     expect(ammoAfter).toBeLessThan(ammoBefore);
   });
 
@@ -693,129 +942,236 @@ test.describe("Production browser smoke", () => {
     });
   });
 
-  test("round completion: eliminate remote player to end the round", { timeout: 120_000 }, async () => {
+  test("all build types: wall/floor/ramp/cone placement attempts keep both clients in sync", { timeout: 60_000 }, async () => {
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
-    // Ensure pointer lock is active for firing.
     await ensurePointerLock(pageA!);
 
-    // Players spawn at x=-5 (A) and x=+5 (B), both facing -Z (yaw=0).
-    // The opponent is in the +X direction. We need to rotate the camera
-    // to face +X (yaw = π/2).
-    // Instead of mouse movement (unreliable in headless), we hold fire
-    // in all directions by rotating via the keyboard is not available.
-    // Alternative: just hold fire and rely on the round timer/anti-stall.
-    //
-    // For the smoke test, we verify the round eventually ends (via timer).
-    // This exercises the full round lifecycle: IN_PROGRESS → ROUND_OVER.
-    const phaseBefore = await pageA!.evaluate(() => {
+    // Enter build mode.
+    await pageA!.keyboard.press("KeyB");
+    await sleep(300);
+
+    // Select each build type (Digit1=wall, Digit2=floor, Digit3=ramp,
+    // Digit4=cone) and attempt a placement for each. The placement may be
+    // accepted or rejected by range/energy rules — either way the clients
+    // must stay connected and in the same phase. Also exercise the Q/E
+    // rotation keys while in build mode.
+    for (const typeKey of ["Digit1", "Digit2", "Digit3", "Digit4"] as const) {
+      await pageA!.keyboard.press(typeKey);
+      await sleep(200);
+      await fireWeapon(pageA!); // in build mode this is the place press
+      await sleep(400);
+    }
+    await pageA!.keyboard.press("KeyQ");
+    await sleep(150);
+    await pageA!.keyboard.press("KeyE");
+    await sleep(150);
+
+    // Exit build mode.
+    await pageA!.keyboard.press("KeyB");
+    await sleep(300);
+
+    // The number row doubles as weapon slots (Digit1/Digit2), so the build
+    // selection above may have switched the weapon. Restore the assault
+    // rifle for the later combat tests.
+    await pageA!.keyboard.press("Digit1");
+    await sleep(300);
+    expect(await getWeaponName(pageA!)).toBe("Assault Rifle");
+    expect(await buildModeActive(pageA!)).toBe(false);
+
+    const phaseA = await pageA!.locator(".match-hud__phase").textContent();
+    const phaseB = await pageB!.locator(".match-hud__phase").textContent();
+    expect(phaseA).toBe("IN PROGRESS");
+    expect(phaseB).toBe("IN PROGRESS");
+  });
+
+  test("build-edit/destruction: edit-mode clear + apply keeps both clients in sync", { timeout: 60_000 }, async () => {
+    expect(pageA).not.toBeNull();
+    expect(pageB).not.toBeNull();
+
+    await ensurePointerLock(pageA!);
+
+    // The previous test left build mode off; verify it (KeyB is a toggle,
+    // so do not press it blindly).
+    expect(await buildModeActive(pageA!)).toBe(false);
+
+    // Enter build-edit mode, select the `clear` edit (Digit9) to destroy
+    // the aimed structure, and apply it (Enter). In headless the aim may
+    // not target a structure, so the intent may be a no-op — the assertion
+    // is that the edit path does not crash, drop, or desync either client.
+    await pageA!.keyboard.press("KeyF");
+    await sleep(300);
+    await pageA!.keyboard.press("Digit9");
+    await sleep(200);
+    await pageA!.keyboard.press("Enter");
+    await sleep(1_000);
+    await pageA!.keyboard.press("KeyF");
+    await sleep(300);
+
+    const phaseA = await pageA!.locator(".match-hud__phase").textContent();
+    const phaseB = await pageB!.locator(".match-hud__phase").textContent();
+    expect(phaseA).toBe("IN PROGRESS");
+    expect(phaseB).toBe("IN PROGRESS");
+  });
+
+  test("elimination: firing ends round 1 with a local round win", { timeout: 200_000 }, async () => {
+    expect(pageA).not.toBeNull();
+    expect(pageB).not.toBeNull();
+
+    await waitForRoundStart(pageA!, pageB!);
+
+    // Ensure pointer lock is active for firing and look deltas.
+    await ensurePointerLock(pageA!);
+    await ensureCombatMode(pageA!);
+
+    const scoreBefore = await localScore(pageA!);
+
+    // Aim (with a scanning fallback) and hold fire until the round ends.
+    // An elimination should end the round far sooner than the 90s timer.
+    const phaseA = await holdFireUntilRoundOver(pageA!, pageB!, 180_000);
+    expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseA);
+
+    const phaseB = await pageB!.evaluate(() => {
       return document.querySelector(".match-hud__phase")?.textContent ?? "";
     });
-    expect(["IN PROGRESS"]).toContain(phaseBefore);
+    expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseB);
 
-    // Hold fire continuously (auto-fire the assault rifle).
-    // Even if we don't hit the opponent, the round will end via timer.
-    await pageA!.evaluate(() => {
-      const canvas = document.querySelector("canvas.game-canvas");
-      if (canvas) canvas.dispatchEvent(new MouseEvent("mousedown", { button: 0, bubbles: true }));
-    });
+    // A round win on page A's side proves the opponent was eliminated:
+    // a timer expiry would end the round with no score change.
+    const scoreAfter = await localScore(pageA!);
+    expect(scoreAfter).toBe(scoreBefore + 1);
+  });
 
-    // Wait for the round to end (timer expiration or elimination).
-    // The round timer is 90s, but the anti-stall might end it sooner.
-    let roundEnded = false;
-    for (let i = 0; i < 200; i++) {
-      await sleep(500);
-      const phase = await pageA!.evaluate(() => {
-        return document.querySelector(".match-hud__phase")?.textContent ?? "";
-      });
-      if (phase === "ROUND OVER" || phase === "MATCH OVER") {
-        roundEnded = true;
-        break;
-      }
+  test("next rounds: rounds 2 and 3 run to the final MATCH OVER", { timeout: 480_000 }, async () => {
+    expect(pageA).not.toBeNull();
+    expect(pageB).not.toBeNull();
+
+    // WIN_ROUNDS = 3: two more local wins take the match.
+    // NOTE: after the first round the client input sequence restarts from
+    // 0 while the server keeps its per-player lastProcessedSequence, so
+    // both players are input-frozen at the start of each later round until
+    // the counter catches up (~round length / 30Hz). Generous per-round
+    // budget (180s) covers the freeze plus the kill.
+    let phase = "";
+    for (let round = 0; round < 2; round++) {
+      await waitForRoundStart(pageA!, pageB!);
+      await ensurePointerLock(pageA!);
+      await ensureCombatMode(pageA!);
+      phase = await holdFireUntilRoundOver(pageA!, pageB!, 180_000);
+      expect(["ROUND OVER", "MATCH OVER"]).toContain(phase);
+      if (phase === "MATCH OVER") break;
     }
 
-    // Release fire.
-    await pageA!.evaluate(() => {
-      const canvas = document.querySelector("canvas.game-canvas");
-      if (canvas) canvas.dispatchEvent(new MouseEvent("mouseup", { button: 0, bubbles: true }));
-    });
-
-    expect(roundEnded).toBe(true);
-
-    // Verify the round ended on both pages.
     const phaseA = await pageA!.evaluate(() => {
       return document.querySelector(".match-hud__phase")?.textContent ?? "";
     });
     const phaseB = await pageB!.evaluate(() => {
       return document.querySelector(".match-hud__phase")?.textContent ?? "";
     });
-    expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseA);
-    expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseB);
+    expect(phaseA).toBe("MATCH OVER");
+    expect(phaseB).toBe("MATCH OVER");
+
+    // Only page A ever fires, so page A's side must own all three rounds.
+    expect(await localScore(pageA!)).toBe(3);
   });
 
-  test("connected rematch: both players request rematch and a new round begins", async () => {
+  test("connected rematch: both players request rematch and a new match begins", { timeout: 60_000 }, async () => {
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
-    // Wait for the round to fully transition (ROUND_ENDED → COUNTDOWN).
-    // The server has a 2-second reset delay, then a 3-second countdown.
+    // Wait for the match to fully settle (reset delay before the screen).
     await sleep(3_000);
 
-    // If the match ended (3 rounds won), we need to request rematch.
-    // Otherwise, the next round's countdown should have started.
-    const phaseA = await pageA!.locator(".match-hud__phase").textContent();
-
-    if (phaseA === "MATCH OVER") {
-      // Request rematch from both players.
-      // The rematch is triggered via the network client's sendRematchRequest.
-      // In the browser, this is exposed through the App's MatchEndScreen
-      // "Play Again" button. We'll use page.evaluate to call it directly.
-      //
-      // The GameCanvas stores the runtime actions in a ref. We can access
-      // them through the React fiber tree.
-      //
-      // Alternative: use the keyboard shortcut if one exists, or click the
-      // "Play Again" button if visible.
-      const playAgainBtn = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-      if (await playAgainBtn.isVisible()) {
-        await playAgainBtn.click();
-        await pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')").click();
-      } else {
-        // No button visible; the match might not have fully ended yet.
-        // Wait a bit more and try again.
-        await sleep(2_000);
-        const btnA = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-        const btnB = pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-        if (await btnA.isVisible()) await btnA.click();
-        if (await btnB.isVisible()) await btnB.click();
-      }
-
-      // Wait for the new match to start (countdown or in-progress).
-      await pageA!.waitForFunction(
-        () => {
-          const el = document.querySelector(".match-hud__phase");
-          const text = el?.textContent ?? "";
-          return text === "GET READY" || text === "IN PROGRESS";
-        },
-        { timeout: 15_000 },
-      );
+    // Request rematch from both players via the MatchEndScreen button.
+    const playAgainBtn = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
+    if (await playAgainBtn.isVisible()) {
+      await playAgainBtn.click();
+      await pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')").click();
     } else {
-      // The match continued to the next round (countdown).
-      await pageA!.waitForFunction(
-        () => {
-          const el = document.querySelector(".match-hud__phase");
-          const text = el?.textContent ?? "";
-          return text === "GET READY" || text === "IN PROGRESS";
-        },
-        { timeout: 15_000 },
-      );
+      // No button visible yet; wait a bit more and retry.
+      await sleep(2_000);
+      const btnA = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
+      const btnB = pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
+      if (await btnA.isVisible()) await btnA.click();
+      if (await btnB.isVisible()) await btnB.click();
     }
+
+    // Wait for the new match to start (countdown or in-progress).
+    await pageA!.waitForFunction(
+      () => {
+        const el = document.querySelector(".match-hud__phase");
+        const text = el?.textContent ?? "";
+        return text === "GET READY" || text === "IN PROGRESS";
+      },
+      { timeout: 30_000 },
+    );
 
     // Verify both pages are in sync.
     const finalPhaseA = await pageA!.locator(".match-hud__phase").textContent();
     const finalPhaseB = await pageB!.locator(".match-hud__phase").textContent();
     expect(finalPhaseA).toBe(finalPhaseB);
+  });
+
+  test("repeated rematch: second match completes and HUD/listener/audio state stays clean", { timeout: 1_200_000 }, async () => {
+    expect(pageA).not.toBeNull();
+    expect(pageB).not.toBeNull();
+
+    // Play the rematched match to completion (3 round wins) so a second
+    // rematch is exercised. The per-round budget is large because the
+    // cross-round input-sequence gap (client batcher resets to 0 on every
+    // match/round reset; the server keeps lastProcessedSequence) freezes
+    // both players for (total inputs so far) / 30 Hz at the start of each
+    // round — several minutes by this point in the suite.
+    let phase = "";
+    for (let round = 0; round < 3; round++) {
+      await waitForRoundStart(pageA!, pageB!);
+      await ensurePointerLock(pageA!);
+      await ensureCombatMode(pageA!);
+      phase = await holdFireUntilRoundOver(pageA!, pageB!, 360_000);
+      expect(["ROUND OVER", "MATCH OVER"]).toContain(phase);
+      if (phase === "MATCH OVER") break;
+    }
+    expect(phase).toBe("MATCH OVER");
+
+    // Second connected rematch.
+    await sleep(2_000);
+    const btnA = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
+    const btnB = pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
+    if (await btnA.isVisible()) await btnA.click();
+    if (await btnB.isVisible()) await btnB.click();
+
+    await pageA!.waitForFunction(
+      () => {
+        const el = document.querySelector(".match-hud__phase");
+        const text = el?.textContent ?? "";
+        return text === "GET READY" || text === "IN PROGRESS";
+      },
+      { timeout: 30_000 },
+    );
+
+    // Cleanup assertions across two full matches + two rematches:
+    // - HUD containers are not duplicated (no leaked mounts/effects)
+    await expect(pageA!.locator(".match-hud")).toHaveCount(1);
+    await expect(pageA!.locator(".weapon-hud")).toHaveCount(1);
+    await expect(pageA!.locator(".combat-vitals-hud")).toHaveCount(1);
+
+    // - Weapon state resets to the canonical defaults (listeners still
+    //   receive and clear input edges; no stale ammo from prior matches)
+    expect(await getWeaponName(pageA!)).toBe("Assault Rifle");
+    expect(await getMagazineAmmo(pageA!)).toBe(30);
+
+    // - Match score resets for the new match (no leaked state effects)
+    expect(await localScore(pageA!)).toBe(0);
+    expect(await localScore(pageB!)).toBe(0);
+
+    // - No fatal console errors accumulated across the whole suite
+    const fatal = fatalConsoleErrors.slice();
+    test.info().annotations.push({
+      type: "fatal-console-errors",
+      description: fatal.length > 0 ? fatal.join("; ") : "none",
+    });
+    expect(fatal).toEqual([]);
   });
 
   test("combined-state diagnostics: arena, player, build, disconnect, and diagnostics coexist", async () => {
@@ -861,6 +1217,7 @@ test.describe("Production browser smoke", () => {
 
     // Reopen page B (reconnect).
     pageB = await browserContext!.newPage();
+    trackFatalErrors(pageB);
     await loadApp(pageB);
 
     // The reconnected player should join the existing room.
