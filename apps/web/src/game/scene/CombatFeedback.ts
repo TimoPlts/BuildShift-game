@@ -6,15 +6,27 @@
  *   1. `playShot(weaponType, origin, aimDirection)`
  *      Local accepted shot: per-weapon muzzle flash plus a short tracer.
  *
- *   2. `triggerHitMarker()`
- *      Confirmed player hit: brief center-screen hit marker. Call only
- *      after an authoritative event confirms the local player as shooter.
+ *   2. `triggerHitMarker(weaponType)`
+ *      Confirmed player hit: brief center-screen hit marker, per-weapon
+ *      size/tint/duration. Call only after an authoritative event confirms
+ *      the local player as shooter.
  *
- *   3. `playBuildImpact(worldPosition)`
- *      Confirmed structure hit: brief spark at the given world position.
- *      Call only after an authoritative event confirms the structure hit.
+ *   3. `triggerDamageTaken()`
+ *      Confirmed damage to the local player: subdued red center-screen
+ *      marker. Call only after an authoritative event confirms the local
+ *      player as the target.
  *
- *   4. `dispose()`
+ *   4. `triggerEliminationMarker()`
+ *      Confirmed kill by the local player: larger, longer red marker.
+ *      Call only after an authoritative elimination event names the local
+ *      player as the killer.
+ *
+ *   5. `playBuildImpact(worldPosition, weaponType)`
+ *      Confirmed structure hit: brief per-weapon spark at the given world
+ *      position. Call only after an authoritative event confirms the
+ *      structure hit.
+ *
+ *   6. `dispose()`
  *      Idempotent teardown: removes the single scene render observer and
  *      releases every owned mesh and material.
  *
@@ -41,6 +53,8 @@ import { activateMuzzleFlash, createMuzzleFlashGroup } from "./combat/muzzleFlas
 import { activateTracer, createTracerGroup } from "./combat/tracer";
 import { activateHitMarker, createHitMarkerGroup } from "./combat/hitMarker";
 import { activateBuildImpact, createBuildImpactGroup } from "./combat/buildImpact";
+import { activateDamageTaken, createDamageTakenGroup } from "./combat/damageTaken";
+import { activateEliminationMarker, createEliminationMarkerGroup } from "./combat/eliminationMarker";
 
 export class CombatFeedback {
   private readonly _scene: Scene;
@@ -48,6 +62,8 @@ export class CombatFeedback {
   private readonly _tracers: PooledEffectGroup;
   private readonly _hitMarkers: PooledEffectGroup;
   private readonly _buildImpacts: PooledEffectGroup;
+  private readonly _damageTaken: PooledEffectGroup;
+  private readonly _eliminationMarkers: PooledEffectGroup;
   private readonly _observer: Observer<Scene>;
   private _disposed = false;
 
@@ -57,6 +73,8 @@ export class CombatFeedback {
     this._tracers = createTracerGroup(scene);
     this._hitMarkers = createHitMarkerGroup(scene);
     this._buildImpacts = createBuildImpactGroup(scene);
+    this._damageTaken = createDamageTakenGroup(scene);
+    this._eliminationMarkers = createEliminationMarkerGroup(scene);
     this._observer = scene.onBeforeRenderObservable.add(() => this._tick());
   }
 
@@ -82,19 +100,37 @@ export class CombatFeedback {
 
   /**
    * Confirmed player hit: brief center-screen hit marker in front of the
-   * active camera.
+   * active camera, sized/tinted per weapon.
    */
-  triggerHitMarker(): void {
+  triggerHitMarker(weaponType: WeaponType): void {
     if (this._disposed) return;
-    activateHitMarker(this._hitMarkers, this._scene, Date.now());
+    activateHitMarker(this._hitMarkers, this._scene, weaponType, Date.now());
   }
 
   /**
-   * Confirmed structure hit: brief world-anchored spark at `worldPosition`.
+   * Confirmed damage to the local player: subdued red center-screen marker.
    */
-  playBuildImpact(worldPosition: Vector3): void {
+  triggerDamageTaken(): void {
     if (this._disposed) return;
-    activateBuildImpact(this._buildImpacts, worldPosition, Date.now());
+    activateDamageTaken(this._damageTaken, this._scene, Date.now());
+  }
+
+  /**
+   * Confirmed kill by the local player: larger, longer red center-screen
+   * marker.
+   */
+  triggerEliminationMarker(): void {
+    if (this._disposed) return;
+    activateEliminationMarker(this._eliminationMarkers, this._scene, Date.now());
+  }
+
+  /**
+   * Confirmed structure hit: brief per-weapon world-anchored spark at
+   * `worldPosition`.
+   */
+  playBuildImpact(worldPosition: Vector3, weaponType: WeaponType): void {
+    if (this._disposed) return;
+    activateBuildImpact(this._buildImpacts, weaponType, worldPosition, Date.now());
   }
 
   /** Immediately deactivate every live effect without disposing anything. */
@@ -104,6 +140,8 @@ export class CombatFeedback {
     this._tracers.deactivateAll();
     this._hitMarkers.deactivateAll();
     this._buildImpacts.deactivateAll();
+    this._damageTaken.deactivateAll();
+    this._eliminationMarkers.deactivateAll();
   }
 
   /**
@@ -119,6 +157,8 @@ export class CombatFeedback {
     this._tracers.dispose();
     this._hitMarkers.dispose();
     this._buildImpacts.dispose();
+    this._damageTaken.dispose();
+    this._eliminationMarkers.dispose();
   }
 
   private _tick(): void {
@@ -127,5 +167,7 @@ export class CombatFeedback {
     this._tracers.tick(nowMs);
     this._hitMarkers.tick(nowMs);
     this._buildImpacts.tick(nowMs);
+    this._damageTaken.tick(nowMs);
+    this._eliminationMarkers.tick(nowMs);
   }
 }
