@@ -61,8 +61,8 @@ describe("tile dimensions", () => {
 // ─── Ramp variants ──────────────────────────────────────────────────────────
 
 describe("RAMP_VARIANTS", () => {
-  it("contains exactly the four valid variants", () => {
-    expect(RAMP_VARIANTS).toEqual(["full", "flipped", "half_left", "half_right"]);
+  it("contains exactly the six valid variants", () => {
+    expect(RAMP_VARIANTS).toEqual(["full", "flipped", "half_left", "half_right", "turn_left", "turn_right"]);
   });
 
   it("isRampVariant accepts valid variants", () => {

@@ -232,6 +232,9 @@ export {
   applyEditAction,
   serializeEditState,
   deserializeEditState,
+  type RampTurnDirection,
+  type RampGeometry,
+  generateRampGeometry,
 } from "./editGrid.js";
 
 // ───── Energy economy & structure durability contract ───────────────────
