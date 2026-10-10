@@ -276,6 +276,50 @@ export class ServerPhysicsWorld {
   }
 
   /**
+   * Replaces a structure's static collision geometry with the given set of
+   * world-space cuboids (one parented cuboid collider per entry on a single
+   * fixed body at the origin). Used by the floor edit system to regenerate a
+   * structure's collision geometry from its canonical tile edit state.
+   *
+   * Any existing body for `structureId` is removed first, so this is a full
+   * replacement. An empty list leaves the structure with no collision body.
+   * No-op when the world is disposed.
+   */
+  public setStructureColliders(
+    structureId: string,
+    cuboids: ReadonlyArray<{ center: Readonly<Translation3>; halfExtents: Readonly<HalfExtents3> }>,
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+    this.removeStructureCollider(structureId);
+    if (cuboids.length === 0) {
+      return;
+    }
+    const body = this.world.createRigidBody(RigidBodyDesc.fixed());
+    body.setTranslation({ x: 0, y: 0, z: 0 }, true);
+    for (const cuboid of cuboids) {
+      const colliderDesc = ColliderDesc.cuboid(
+        cuboid.halfExtents.x,
+        cuboid.halfExtents.y,
+        cuboid.halfExtents.z,
+      );
+      colliderDesc.setTranslation(cuboid.center.x, cuboid.center.y, cuboid.center.z);
+      this.world.createCollider(colliderDesc, body);
+    }
+    this.structures.set(structureId, { body, collider: body.collider(0) });
+  }
+
+  /**
+   * The number of colliders currently backing a structure's physics body
+   * (`0` when the structure has no body). Exposed for authoritative tests.
+   */
+  public structureColliderCount(structureId: string): number {
+    const structure = this.structures.get(structureId);
+    return structure ? structure.body.numColliders() : 0;
+  }
+
+  /**
    * Removes a structure's collision body from the physics world.
    * Idempotent and safe to call after {@link dispose}.
    */
