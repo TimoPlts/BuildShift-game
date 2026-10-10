@@ -5,16 +5,23 @@
  * server-authoritative building contract (docs/TECHNICAL_ARCHITECTURE.md
  * §9/§21–§24):
  *
- *  - build-mode input (toggle / type select / rotate / place intent),
+ *  - build-mode keyboard input (toggle / type select / rotate),
  *  - the grid-snapped non-authoritative placement preview
  *    (valid/invalid state, candidate grid + rotation + anchor world),
- *  - submission of `build:placement_request` intents to the server,
+ *  - submission of `build:placement_request` intents to the server over the
+ *    canonical placement transport — on the press edge and on the held
+ *    primary ("turbo building", rate-limited client-side),
  *  - consumption of the replicated authoritative structure state (room
  *    state sync + `build:structure_placed` / `build:structure_rejected`
- *    events) — the client never creates structures on its own authority.
+ *    events) — the client never creates structures on its own authority
+ *    and never pre-spends energy (the server spends it only on acceptance).
+ *
+ * The shared left mouse button is owned by the centralized `InputManager`;
+ * its build-mode meaning is decided by the single `routePrimaryAction`
+ * policy, so every browser input signal has exactly one owner.
  *
  * Rendering (the translucent ghost preview and structure meshes) is
- * deliberately NOT part of this module yet; consumers read the plain
+ * deliberately NOT part of this module; consumers read the plain
  * state this layer exposes.
  */
 import { BuildingInputController } from "./buildingInputController";
@@ -41,6 +48,7 @@ export {
 
 export {
   BuildingController,
+  PLACEMENT_REQUEST_INTERVAL_MS,
   type BuildingNetworkLike,
   type BuildingFrameContext,
 } from "./buildingController";
@@ -65,7 +73,10 @@ export {
   footprintsOverlap,
 } from "./gridSnap";
 
-export { updateBuildingFrame } from "./buildingFrameUpdate";
+export {
+  updateBuildingFrame,
+  type BuildingFrameDriver,
+} from "./buildingFrameUpdate";
 
 /**
  * The fully-wired client building system, as produced by

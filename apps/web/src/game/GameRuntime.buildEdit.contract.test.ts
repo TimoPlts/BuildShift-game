@@ -57,7 +57,7 @@ describe("GameRuntime build-edit wiring", () => {
     // before edit targeting and HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
+      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),false,this.inputManager.isFiring()).buildPlaceHeld);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame():void");
