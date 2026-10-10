@@ -1,6 +1,6 @@
 import { Room, type Client } from "@colyseus/core";
 import { t } from "@colyseus/schema";
-import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, BUILD_EDIT_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, isBuildEditType, isStructureOpeningPattern } from "@buildshift/protocol";
+import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, BUILD_EDIT_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, isBuildEditType, isStructureOpeningPattern, validateEditActionRequest, applyEditAction, createDefaultEditState, getEditTileCount, serializeEditState } from "@buildshift/protocol";
 import { stepPlayerMovement, movementInputToWorld, fireGate, hitscan, computeShotgunSpread } from "@buildshift/simulation";
 import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_COUNTDOWN_SECONDS as RCS, ROUND_RESET_DELAY_SECONDS as RRS, ROUND_DURATION_SECONDS, ANTI_STALL_TIMEOUT_SECONDS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, isBuildEditAllowedForStructure } from "@buildshift/game-config";
 import { BuildingStateSchema, StructureStateSchema, oc, wc } from "../state/buildingState.js";
@@ -11,6 +11,7 @@ import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceMan
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
 export const WEAPON_SWITCH_INPUT = "two-player:weapon_switch";
+export const EDIT_GRID_ACTION_INPUT = "two-player:edit_grid_action";
 const THZ = 30, TD = 1 / THZ;
 const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gravity, jumpVelocity: VERTICAL_MOVEMENT.jumpVelocity, terminalVelocity: VERTICAL_MOVEMENT.terminalVelocity, groundY: VERTICAL_MOVEMENT.groundY };
 const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
@@ -87,7 +88,7 @@ export class TwoPlayerMovementRoom extends Room<{
         this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; });
         this.reconnectGrace = createReconnectGraceManager(RECONNECT_GRACE_MS, (sid, snap) => this.handleGraceExpire(sid, snap as PlayerSnapshot));
     }
-    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
+    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(EDIT_GRID_ACTION_INPUT, (c, m) => { this.hega(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
     onJoin(c: Client): void {
         // Reconnect within grace: restore prior authoritative state.
         const snap = this.reconnectGrace.restore(c.sessionId) as PlayerSnapshot | undefined;
@@ -257,6 +258,67 @@ export class TwoPlayerMovementRoom extends Room<{
         }
         s.editType = edit as string;
         this.broadcast(BUILD_EDIT_EVENTS.EDIT_RESULT, { structureId: id, success: true, editType: s.editType, updatedStructure: s.toJSON() });
+    }
+    private hega(c: Client, m: unknown): void {
+        const v = validateEditActionRequest(m);
+        if (!v.ok) {
+            c.send(EDIT_GRID_ACTION_INPUT, { structureId: typeof (m as Record<string, unknown>)?.structureId === "string" ? (m as Record<string, unknown>).structureId as string : "", success: false, reason: v.errors.join("; ") });
+            return;
+        }
+        const req = v.value;
+        const reject = (reason: string) => c.send(EDIT_GRID_ACTION_INPUT, { structureId: req.structureId, success: false, reason });
+        const p = this.state.players.get(c.sessionId);
+        const s = this.bld.structures.get(req.structureId);
+        if (!p || !p.alive || p.isEliminated || this.state.matchPhase !== MatchPhase.IN_PROGRESS) {
+            reject("invalid_player_state");
+            return;
+        }
+        if (!s) {
+            reject("structure_not_found");
+            return;
+        }
+        if (s.ownerId !== c.sessionId) {
+            reject("not_owned");
+            return;
+        }
+        // Build the current edit state from the schema fields.
+        let currentState: import("@buildshift/protocol").StructureEditState;
+        if (s.editKind === "wall") {
+            currentState = { kind: "wall", tiles: [...s.editTiles] };
+        } else if (s.editKind === "floor_cone") {
+            currentState = { kind: "floor_cone", tiles: [...s.editTiles] };
+        } else if (s.editKind === "ramp") {
+            currentState = { kind: "ramp", variant: s.editRampVariant as import("@buildshift/protocol").RampVariant };
+        } else {
+            currentState = createDefaultEditState(s.buildType);
+        }
+        // Validate tileIndex bounds for select/deselect.
+        if ((req.action === "select" || req.action === "deselect") && req.tileIndex !== undefined) {
+            const tc = getEditTileCount(s.buildType);
+            if (tc !== null && (req.tileIndex < 0 || req.tileIndex >= tc)) {
+                reject("tile_out_of_range");
+                return;
+            }
+        }
+        // Apply the action.
+        const newState = applyEditAction(currentState, req, s.buildType);
+        if (newState === null) {
+            reject("invalid_action");
+            return;
+        }
+        // Write back to the schema.
+        if (newState.kind === "wall" || newState.kind === "floor_cone") {
+            s.editKind = newState.kind;
+            s.editTiles.length = 0;
+            for (const tile of newState.tiles) s.editTiles.push(tile);
+            s.editRampVariant = "";
+        } else {
+            s.editKind = "ramp";
+            s.editTiles.length = 0;
+            s.editRampVariant = newState.variant;
+        }
+        const result = { structureId: req.structureId, success: true, editState: serializeEditState(newState) };
+        this.broadcast(EDIT_GRID_ACTION_INPUT, result);
     }
     private adv(): void { for (const [sid, p] of this.state.players) {
         const ws = this.wps.get(sid);
