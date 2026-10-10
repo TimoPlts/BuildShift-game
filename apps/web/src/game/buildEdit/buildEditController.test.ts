@@ -151,7 +151,7 @@ function setup(_building: BuildingState, startClock = 0): Setup {
   };
 }
 
-/** A render frame aimed straight down -Z at the structures at z=-3. */
+/** A render frame aimed straight down -Z at the structures at z=-1. */
 function frame(building: BuildingState, overrides: Partial<Parameters<BuildEditController["updateFrame"]>[0]> = {}) {
   return {
     aimOrigin: { x: 0, y: 1, z: 0 },
@@ -191,7 +191,7 @@ describe("supportedEditsFor", () => {
 
 describe("BuildEditController — authoritative route", () => {
   it("submits a canonical build:edit_request for the targeted owned wall", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false }); // door
@@ -208,7 +208,7 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("turns an accepted result into accepted feedback", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -223,7 +223,7 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("names the confirmed edit in the accepted feedback", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.network.emitResult({ structureId: "wall1", success: true, editType: "door" });
@@ -238,7 +238,7 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("ignores an out-of-vocabulary editType on the wire", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     s.network.emitResult({ structureId: "wall1", success: true, editType: "bogus" });
     // The corrupt field is dropped; the accepted message falls back.
@@ -246,7 +246,7 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("turns a rejected result into labelled rejected feedback", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -261,14 +261,14 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("ignores malformed result payloads", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     s.network.emitResult({ success: true }); // missing structureId
     expect(s.controller.getFeedback()).toBeNull();
   });
 
   it("does not send an edit when disconnected", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -280,7 +280,7 @@ describe("BuildEditController — authoritative route", () => {
   });
 
   it("does not send an edit with no target", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     s.lock();
     // Not in edit mode → no target.
@@ -293,7 +293,7 @@ describe("BuildEditController — authoritative route", () => {
 
 describe("BuildEditController — selection clamping", () => {
   it("clamps an invalid edit to the first edit the target allows (floor)", () => {
-    const building = buildingOf([floor("floor1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([floor("floor1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     s.lock();
     s.key.dispatch("keydown", { code: "KeyF", repeat: false });
@@ -305,7 +305,7 @@ describe("BuildEditController — selection clamping", () => {
   });
 
   it("keeps a valid choice across frames", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     s.lock();
     s.key.dispatch("keydown", { code: "KeyF", repeat: false });
@@ -319,7 +319,7 @@ describe("BuildEditController — selection clamping", () => {
 
 describe("BuildEditController — edit-mode enter/exit feedback", () => {
   it("shows an info banner when edit mode is entered and exited", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building, 0);
     s.lock();
     s.key.dispatch("keydown", { code: "KeyF", repeat: false });
@@ -343,7 +343,7 @@ describe("BuildEditController — edit-mode enter/exit feedback", () => {
   });
 
   it("does not clobber a live accepted/rejected banner with an exit notice", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building, 0);
     enterEditMode(s, building);
     s.network.emitResult({ structureId: "wall1", success: true, editType: "door" });
@@ -360,7 +360,7 @@ describe("BuildEditController — edit-mode enter/exit feedback", () => {
   });
 
   it("shows no exit banner for a forced exit (round reset / disconnect)", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
 
@@ -377,7 +377,7 @@ describe("BuildEditController — edit-mode enter/exit feedback", () => {
 
 describe("BuildEditController — feedback expiry (injectable clock)", () => {
   it("keeps feedback until its TTL elapses, then clears it", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building, 0);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -399,7 +399,7 @@ describe("BuildEditController — feedback expiry (injectable clock)", () => {
 
 describe("BuildEditController — cleanup triggers", () => {
   it("resets (round reset / rematch): exits mode, clears target + feedback", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -416,7 +416,7 @@ describe("BuildEditController — cleanup triggers", () => {
   });
 
   it("clears on disconnect: exits mode, clears target + feedback", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -430,7 +430,7 @@ describe("BuildEditController — cleanup triggers", () => {
   });
 
   it("cancel() clears the preview and feedback while keeping the mode", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.key.dispatch("keydown", { code: "Digit5", repeat: false });
@@ -446,7 +446,7 @@ describe("BuildEditController — cleanup triggers", () => {
   });
 
   it("dispose() unsubscribes: later results are ignored", () => {
-    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -3 })]);
+    const building = buildingOf([wall("wall1", { x: 0, y: 0, z: -1 })]);
     const s = setup(building);
     enterEditMode(s, building);
     s.controller.dispose();

@@ -15,7 +15,8 @@ import type { StructureState } from "@buildshift/protocol";
 
 describe("gridSnap", () => {
   it("snaps to correct cell", () => {
-    expect(worldToGridPosition(2.5, 2.5, -2.5)).toEqual({ x: 1, y: 1, z: -2 });
+    // cellSize ≈ 5.12, layerHeight ≈ 3.84: (6,4,-6) snaps to cell (1, layer 1, -2).
+    expect(worldToGridPosition(6.0, 4.0, -6.0)).toEqual({ x: 1, y: 1, z: -2 });
   });
   it("handles negative coords", () => {
     const g = worldToGridPosition(-1.5, 0, -0.5);
@@ -25,8 +26,9 @@ describe("gridSnap", () => {
     expect(worldToGridPosition(0, -5, 0).y).toBe(BUILD_GRID.groundLayer);
   });
   it("gridToWorldAnchor", () => {
+    // cellSize ≈ 5.12, layerHeight ≈ 3.84.
     const a = gridToWorldAnchor({ x: 3, y: 2, z: -1 });
-    expect(a.x).toBe(6); expect(a.y).toBe(3); expect(a.z).toBe(-2);
+    expect(a.x).toBeCloseTo(15.36, 6); expect(a.y).toBeCloseTo(7.68, 6); expect(a.z).toBeCloseTo(-5.12, 6);
   });
   it("round-trip", () => {
     const g = { x: 2, y: 1, z: 3 };
@@ -35,7 +37,7 @@ describe("gridSnap", () => {
     expect(s.x).toBe(g.x); expect(s.z).toBe(g.z);
   });
   it("getFootprint all types", () => {
-    expect(getFootprint("wall")).toEqual([1, 2, 1]);
+    expect(getFootprint("wall")).toEqual([1, 1, 1]);
     expect(getFootprint("floor")).toEqual([1, 1, 1]);
     expect(getFootprint("ramp")).toEqual([2, 1, 1]);
     expect(getFootprint("cone")).toEqual([1, 1, 1]);
@@ -43,8 +45,8 @@ describe("gridSnap", () => {
   it("gridKey", () => {
     expect(gridKey({ x: 1, y: 0, z: -3 })).toBe("1:0:-3");
   });
-  it("wall = 2 cells vertical", () => {
-    expect(footprintCells("wall", { x: 0, y: 0, z: 0 })).toHaveLength(2);
+  it("wall = 1 cell vertical", () => {
+    expect(footprintCells("wall", { x: 0, y: 0, z: 0 })).toHaveLength(1);
   });
   it("floor/ramp/cone cells", () => {
     expect(footprintCells("floor", { x: 1, y: 0, z: 2 })).toHaveLength(1);
@@ -60,9 +62,10 @@ describe("gridSnap", () => {
     const b: OccupiedStructure = { buildType: "wall", grid: { x: 1, y: 0, z: 0 } };
     expect(footprintsOverlap(a, b)).toBe(false);
   });
-  it("floor on wall top overlaps", () => {
+  it("structure on the same cell as another overlaps", () => {
+    // A floor and a wall anchored to the same cell share that cell.
     const w: OccupiedStructure = { buildType: "wall", grid: { x: 0, y: 0, z: 0 } };
-    const f: OccupiedStructure = { buildType: "floor", grid: { x: 0, y: 1, z: 0 } };
+    const f: OccupiedStructure = { buildType: "floor", grid: { x: 0, y: 0, z: 0 } };
     expect(footprintsOverlap(f, w)).toBe(true);
   });
 });
@@ -82,7 +85,7 @@ describe("placementPreview", () => {
     expect(computePlacementPreview(mi({ aimDirection: { x: 1, y: 0, z: 0 } })).reason).toBe("no_candidate");
   });
   it("out_of_range", () => {
-    // aimOrigin x=30 → grid x=15 → anchor x=30 → distance 30 > 12
+    // aimOrigin x=30 → snapped grid x=5 → anchor x≈25.6 → distance ≈25.6 > 12
     expect(computePlacementPreview(mi({ aimOrigin: { x: 30, y: 5, z: 0 } })).reason).toBe("out_of_range");
   });
   it("overlap", () => {

@@ -6,9 +6,12 @@
  * and the authoritative server (validator, collider placement) derive
  * identical world-space dimensions from the same source.
  *
- * These are focused agreement/placement tests: they verify that the
- * shared config produces coherent, non-drifting geometry across all
- * four build types and that the build volume fits within the arena.
+ * The canonical modular unit is an ≈ 5.12 m horizontal cell and an ≈ 3.84 m
+ * layer (a clean 4:3 ratio). A wall or ramp that rises one layer therefore
+ * rises ≈ 3.84 m on both the client and the server. These are focused
+ * agreement/placement tests: they verify that the shared config produces
+ * coherent, non-drifting geometry across all four build types and that the
+ * build volume fits within the arena.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -24,16 +27,21 @@ import {
 // ─────────────────────────── Grid parameters ──────────────────────────────
 
 describe("BUILD_GRID (shared grid lattice)", () => {
-  it("uses a 2 m cell size (noticeably wider than the 0.7 m player)", () => {
-    expect(BUILD_GRID.cellSize).toBe(2);
-    // The cell must be at least 2x the player's width (0.7 m) for
-    // comfortable maneuvering around structures.
-    expect(BUILD_GRID.cellSize).toBeGreaterThanOrEqual(1.4);
+  it("uses a ≈ 5.12 m modular cell (far wider than the 0.7 m player)", () => {
+    expect(BUILD_GRID.cellSize).toBeCloseTo(5.12, 6);
+    // The modular cell is far wider than the player (0.7 m), leaving generous
+    // maneuvering room around structures.
+    expect(BUILD_GRID.cellSize).toBeGreaterThan(2 * 0.7);
   });
 
-  it("uses a 1.5 m layer height (slightly shorter than the legacy 2 m)", () => {
-    expect(BUILD_GRID.layerHeight).toBe(1.5);
-    expect(BUILD_GRID.layerHeight).toBeLessThan(2);
+  it("uses a ≈ 3.84 m modular layer (the wall/ramp rise)", () => {
+    expect(BUILD_GRID.layerHeight).toBeCloseTo(3.84, 6);
+    // The layer is taller than the 1.8 m player — a one-layer wall clears it.
+    expect(BUILD_GRID.layerHeight).toBeGreaterThan(1.8);
+  });
+
+  it("cell : layer keep a clean 4 : 3 ratio (coherent modular set)", () => {
+    expect(BUILD_GRID.cellSize / BUILD_GRID.layerHeight).toBeCloseTo(4 / 3, 6);
   });
 
   it("ground layer is 0", () => {
@@ -78,34 +86,38 @@ describe("BUILD_BOUNDS (fixed build volume)", () => {
 // ─────────────────────────── Structure footprints ─────────────────────────
 
 describe("STRUCTURES (per-kind footprints and costs)", () => {
-  it("wall occupies 1×2×1 cells (2 m × 3 m × 2 m world)", () => {
+  it("wall occupies 1×1×1 cells (≈5.12 m × ≈3.84 m × ≈5.12 m world)", () => {
     const w = getStructureConfig("wall")!;
-    expect(w.footprint).toEqual([1, 2, 1]);
-    expect(w.footprint[0] * BUILD_GRID.cellSize).toBe(2); // width
-    expect(w.footprint[1] * BUILD_GRID.layerHeight).toBe(3); // height
-    expect(w.footprint[2] * BUILD_GRID.cellSize).toBe(2); // depth
+    expect(w.footprint).toEqual([1, 1, 1]);
+    expect(w.footprint[0] * BUILD_GRID.cellSize).toBeCloseTo(5.12, 6); // width
+    expect(w.footprint[1] * BUILD_GRID.layerHeight).toBeCloseTo(3.84, 6); // rise
+    expect(w.footprint[2] * BUILD_GRID.cellSize).toBeCloseTo(5.12, 6); // depth
   });
 
-  it("wall is 3 m tall — 1.67x the player's 1.8 m height (slightly shorter than legacy 4 m)", () => {
+  it("wall rises ≈ 3.84 m (exactly one layer) — taller than the 1.8 m player", () => {
     const w = getStructureConfig("wall")!;
-    const wallHeight = w.footprint[1] * BUILD_GRID.layerHeight;
-    expect(wallHeight).toBe(3);
-    expect(wallHeight).toBeGreaterThan(1.8); // taller than player
-    expect(wallHeight).toBeLessThan(4); // shorter than the legacy 4 m wall
+    const wallRise = w.footprint[1] * BUILD_GRID.layerHeight;
+    expect(wallRise).toBeCloseTo(3.84, 6);
+    expect(wallRise).toBeGreaterThan(1.8); // taller than player
   });
 
-  it("floor occupies 1×1×1 cells (2 m × 1.5 m × 2 m world)", () => {
+  it("floor occupies 1×1×1 cells (≈5.12 m × ≈3.84 m × ≈5.12 m world)", () => {
     const f = getStructureConfig("floor")!;
     expect(f.footprint).toEqual([1, 1, 1]);
   });
 
-  it("ramp occupies 2×1×1 cells (4 m × 1.5 m × 2 m world)", () => {
+  it("ramp occupies 2×1×1 cells (≈10.24 m × ≈3.84 m × ≈5.12 m world)", () => {
     const r = getStructureConfig("ramp")!;
     expect(r.footprint).toEqual([2, 1, 1]);
-    expect(r.footprint[0] * BUILD_GRID.cellSize).toBe(4);
+    expect(r.footprint[0] * BUILD_GRID.cellSize).toBeCloseTo(10.24, 6);
   });
 
-  it("cone occupies 1×1×1 cells (2 m × 1.5 m × 2 m world)", () => {
+  it("ramp rises ≈ 3.84 m (exactly one layer) across its two-cell length", () => {
+    const r = getStructureConfig("ramp")!;
+    expect(r.footprint[1] * BUILD_GRID.layerHeight).toBeCloseTo(3.84, 6);
+  });
+
+  it("cone occupies 1×1×1 cells (≈5.12 m × ≈3.84 m × ≈5.12 m world)", () => {
     const c = getStructureConfig("cone")!;
     expect(c.footprint).toEqual([1, 1, 1]);
   });
@@ -146,7 +158,7 @@ describe("server-client geometry agreement", () => {
       const config = getStructureConfig(buildType)!;
       const [fw, , fd] = config.footprint;
       // Test at a non-origin grid cell
-      const g = { x: 3, y: 1, z: -2 };
+      const g = { x: 1, y: 1, z: -1 };
       // Client: gridToWorldAnchor
       const anchorX = g.x * BUILD_GRID.cellSize;
       const anchorZ = g.z * BUILD_GRID.cellSize;
@@ -185,8 +197,8 @@ describe("server-client geometry agreement", () => {
     for (const buildType of ["wall", "floor", "ramp", "cone"] as const) {
       const config = getStructureConfig(buildType)!;
       const [, fh] = config.footprint;
-      // Test at layer 2
-      const layer = 2;
+      // Test at layer 1
+      const layer = 1;
       // Client: gridToWorldAnchor Y
       const clientY = layer * BUILD_GRID.layerHeight;
       // Server: wc() centre Y
@@ -196,11 +208,11 @@ describe("server-client geometry agreement", () => {
     }
   });
 
-  it("build range is at least 3 cells (6 m) for meaningful placement", () => {
-    // The placement range in cells should be at least 3 so a player can
-    // build a few cells ahead.
+  it("build range covers at least two modular cells for meaningful placement", () => {
+    // With ≈ 5.12 m cells the placement range must cover at least 2 cells so
+    // a player can build a few cells ahead.
     const rangeCells = BUILD_RANGE.maxPlacementDistance / BUILD_GRID.cellSize;
-    expect(rangeCells).toBeGreaterThanOrEqual(3);
+    expect(rangeCells).toBeGreaterThanOrEqual(2);
   });
 
   it("rate limit is unchanged", () => {
@@ -219,10 +231,11 @@ describe("coherent modular set (wall, floor, ramp, cone)", () => {
     }
   });
 
-  it("wall is the tallest structure (2 layers)", () => {
-    const wall = getStructureConfig("wall")!;
-    for (const config of Object.values(STRUCTURES)) {
-      expect(config.footprint[1]).toBeLessThanOrEqual(wall.footprint[1]);
+  it("wall and ramp rise exactly one modular layer (≈ 3.84 m)", () => {
+    for (const key of ["wall", "ramp"] as const) {
+      const config = getStructureConfig(key)!;
+      expect(config.footprint[1]).toBe(1);
+      expect(config.footprint[1] * BUILD_GRID.layerHeight).toBeCloseTo(3.84, 6);
     }
   });
 
@@ -235,11 +248,11 @@ describe("coherent modular set (wall, floor, ramp, cone)", () => {
     }
   });
 
-  it("wall height in world metres is consistent with layer height", () => {
+  it("wall rise in world metres is consistent with the layer height", () => {
     const wall = getStructureConfig("wall")!;
-    const wallHeightMeters = wall.footprint[1] * BUILD_GRID.layerHeight;
+    const wallRiseMeters = wall.footprint[1] * BUILD_GRID.layerHeight;
     // Must be an exact multiple of the layer height (no fractional layers)
-    expect(wallHeightMeters % BUILD_GRID.layerHeight).toBeCloseTo(0, 8);
+    expect(wallRiseMeters % BUILD_GRID.layerHeight).toBeCloseTo(0, 8);
   });
 
   it("floor occupies exactly one layer (walkable platform)", () => {

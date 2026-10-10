@@ -148,8 +148,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(6, 4);
-      expect(mesh.position.z).toBeCloseTo(4, 4);
+      expect(mesh.position.x).toBeCloseTo(15.36, 4);
+      expect(mesh.position.z).toBeCloseTo(10.24, 4);
     });
   });
 
@@ -311,8 +311,9 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // Wall is 2 layers tall (3m): the top-half ghost centres at y = 1.5 + 0.75 = 2.25.
-      expect(ghost.position.y).toBeCloseTo(2.25, 5);
+      // Wall is one layer tall (≈3.84 m): the top-half ghost centres at
+      // y = 1.92 + 0.96 = 2.88.
+      expect(ghost.position.y).toBeCloseTo(2.88, 5);
       expect((ghost.material as StandardMaterial).alpha).toBeCloseTo(0.45, 5);
     });
 
@@ -325,8 +326,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // The bottom-half ghost centres at y = 1.5 - 0.75 = 0.75.
-      expect(ghost.position.y).toBeCloseTo(0.75, 5);
+      // The bottom-half ghost centres at y = 1.92 - 0.96 = 0.96.
+      expect(ghost.position.y).toBeCloseTo(0.96, 5);
     });
 
     it("hides the preview when hidden, for non-wall targets, and on structure removal", () => {
@@ -593,8 +594,8 @@ describe("BuildStructureRenderer", () => {
 
       const preview = scene.getMeshByName("build-preview");
       expect(preview).not.toBeNull();
-      expect(preview!.position.x).toBeCloseTo(4, 4);
-      expect(preview!.position.z).toBeCloseTo(2, 4);
+      expect(preview!.position.x).toBeCloseTo(10.24, 4);
+      expect(preview!.position.z).toBeCloseTo(5.12, 4);
     });
 
     it("eases the ghost toward a new grid cell instead of teleporting", () => {
@@ -607,11 +608,11 @@ describe("BuildStructureRenderer", () => {
       const mid = scene.getMeshByName("build-preview") as Mesh;
       // Strictly between the old and new cell: smoothed, not snapped.
       expect(mid.position.x).toBeGreaterThan(0.01);
-      expect(mid.position.x).toBeLessThan(4);
+      expect(mid.position.x).toBeLessThan(10.24);
 
       for (let i = 0; i < 40; i++) advance(16);
       const settled = scene.getMeshByName("build-preview") as Mesh;
-      expect(settled.position.x).toBeCloseTo(4, 3);
+      expect(settled.position.x).toBeCloseTo(10.24, 3);
     });
 
     it("eases the ghost rotation along the shortest arc", () => {
@@ -637,8 +638,8 @@ describe("BuildStructureRenderer", () => {
 
       const cell = scene.getMeshByName("build-preview-cell");
       expect(cell).not.toBeNull();
-      expect(cell!.position.x).toBeCloseTo(4, 4);
-      expect(cell!.position.z).toBeCloseTo(2, 4);
+      expect(cell!.position.x).toBeCloseTo(10.24, 4);
+      expect(cell!.position.z).toBeCloseTo(5.12, 4);
       expect(cell!.position.y).toBeCloseTo(0.011, 5);
       expect((cell!.material as StandardMaterial).alpha).toBeCloseTo(0.3, 5);
     });
@@ -927,7 +928,7 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(2, 4);
+      expect(mesh.position.x).toBeCloseTo(5.12, 4);
     });
 
     it("still plays destruction after repeated identical syncs", () => {

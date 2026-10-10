@@ -129,7 +129,9 @@ describe("primary left-click routing", () => {
     for (let index = 0; index < 3; index += 1) {
       fixture.setBuildMode(true);
       fixture.click();
-      fixture.update(true, index * 2);
+      // Move the aim a full modular cell (≈5.12 m) per click so each
+      // placement targets a fresh, non-overlapping grid cell.
+      fixture.update(true, index * 6);
       expect(fixture.placeIfPressed()).not.toBeNull();
       fixture.setBuildMode(false);
     }
