@@ -4,11 +4,15 @@
  *
  * Responsibilities:
  *  - Show a grid-snapped placement preview (semi-transparent ghost mesh) at
- *    a given grid cell, coloured green (valid) or red (invalid) with a subtle
- *    pulsing opacity for readability.
+ *    a given grid cell, coloured green (valid) or red (invalid). The ghost
+ *    eases smoothly toward each new snapped cell, a low-opacity ground
+ *    marker keeps the snapped grid cell legible, and the invalid state
+ *    pulses faster/wider plus a short opacity blink on the valid→invalid
+ *    transition for clear rejected-placement feedback.
  *  - Render authoritative structures replicated from the server
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
- *  - Play a short construction pop-in animation when a structure first appears.
+ *  - Play a short construction pop-in animation plus a brief emissive
+ *    confirmation glow when a structure is authoritatively accepted.
  *  - Tint structure meshes to reflect their authoritative durability
  *    (damage) state using a non-linear curve, with a brief white+emissive
  *    flash on each hit and a deterministic warning pulse when nearly broken.
@@ -66,6 +70,11 @@ import {
   WARNING_PULSE_STRENGTH,
   type StructureEffects,
 } from "./buildPresentation/structureEffects";
+import {
+  animationProgress,
+  createAnimation,
+  type AnimationState,
+} from "./buildPresentation/animations";
 
 // ─── Grid → World conversion ───────────────────────────────────────────────
 
@@ -206,8 +215,35 @@ const PREVIEW_VALID_COLOR = new Color3(0.2, 0.9, 0.4);
 const PREVIEW_INVALID_COLOR = new Color3(0.95, 0.25, 0.2);
 const PREVIEW_OPACITY_BASE = 0.4;
 const PREVIEW_OPACITY_PULSE = 0.1;
-/** Pulse frequency: cycles per second. */
+/** Pulse frequency for the *valid* preview (cycles per second). */
 const PREVIEW_PULSE_FREQ = 2.5;
+/** Opacity base for the *invalid* preview (clearer rejected signal). */
+const PREVIEW_INVALID_OPACITY_BASE = 0.5;
+/** Opacity amplitude for the *invalid* preview pulse (wider than valid). */
+const PREVIEW_INVALID_OPACITY_PULSE = 0.22;
+/** Pulse frequency for the *invalid* preview (cycles per second). */
+const PREVIEW_INVALID_PULSE_FREQ = 4.5;
+/** One-shot opacity blink when the preview transitions valid→invalid (ms). */
+const PREVIEW_DENIED_BLINK_DURATION = 180;
+const PREVIEW_DENIED_BLINK_STRENGTH = 0.55;
+/**
+ * Frame-rate-independent exponential smoothing rate for the placement ghost
+ * (per second): position/rotation ease toward the new grid target instead of
+ * snapping. ≈90% of the remaining distance is closed in ~150ms.
+ */
+const PREVIEW_SMOOTHING_RATE = 16;
+/**
+ * Ground marker under the snapped preview cell: a thin, low-opacity slab the
+ * width of one build cell, making the grid snap legible.
+ */
+const PREVIEW_CELL_MARKER_ALPHA = 0.3;
+const PREVIEW_CELL_MARKER_SIZE = 0.94;
+
+/**
+ * Warm emissive glow (RGB) layered onto a newly-accepted structure while its
+ * placement confirmation plays; scaled by the composed `confirmStrength`.
+ */
+const CONFIRM_GLOW = [0.75, 0.6, 0.25] as const;
 
 /** Emissive boost (RGB) applied while a structure is the aimed build-edit target. */
 const EDIT_TARGET_EMISSIVE_BOOST = [0.18, 0.38, 0.22] as const;
@@ -267,6 +303,19 @@ export class BuildStructureRenderer {
   private previewMesh: AbstractMesh | null = null;
   private previewMaterial: StandardMaterial | null = null;
   private previewBuildType: BuildType | null = null;
+  /** Whether the current preview candidate is valid (drives pulse styling). */
+  private previewValid = true;
+  /** Target world position the ghost eases toward (set by showPreview). */
+  private readonly previewTargetPos = new Vector3();
+  /** Target Y-axis rotation the ghost eases toward (set by showPreview). */
+  private previewTargetRotY = 0;
+  /** One-shot opacity blink on the valid→invalid transition. */
+  private previewDeniedBlink: AnimationState | null = null;
+  /** Ground marker for the snapped preview cell (clearer grid snap). */
+  private previewCellMesh: AbstractMesh | null = null;
+  private previewCellMaterial: StandardMaterial | null = null;
+  /** Timestamp of the previous tick (frame-rate-independent ghost easing). */
+  private _lastTickMs: number | null = null;
 
   /** The structure currently aimed for a build edit (emissive highlight). */
   private editTargetId: string | null = null;
@@ -301,7 +350,9 @@ export class BuildStructureRenderer {
   }
 
   /**
-   * Show (or reposition) the grid-snapped placement preview.
+   * Show (or re-target) the grid-snapped placement preview. The ghost eases
+   * toward the new cell/rotation in the render tick; the first appearance
+   * snaps directly (no ease from an arbitrary previous state).
    */
   public showPreview(
     buildType: BuildType,
@@ -310,6 +361,18 @@ export class BuildStructureRenderer {
     valid: boolean,
   ): void {
     if (this.disposed) return;
+
+    const worldPos = gridToWorld(grid);
+    const effectiveHeight = getEffectiveHeight(buildType);
+    this.previewTargetPos.set(
+      worldPos.x,
+      worldPos.y + effectiveHeight / 2,
+      worldPos.z,
+    );
+    this.previewTargetRotY = rotation === 0 ? 0 : rotationToYAxis(rotation);
+    const color = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
+
+    const hadPreview = this.previewMesh !== null;
 
     if (this.previewMesh && this.previewBuildType !== buildType) {
       this.disposePreview();
@@ -324,31 +387,40 @@ export class BuildStructureRenderer {
         rotation,
       );
       const mat = new StandardMaterial("build-preview-material", this.scene);
-      mat.alpha = PREVIEW_OPACITY_BASE;
-      mat.diffuseColor = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
-      mat.emissiveColor = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
+      mat.alpha = valid ? PREVIEW_OPACITY_BASE : PREVIEW_INVALID_OPACITY_BASE;
+      mat.diffuseColor = color;
+      mat.emissiveColor = color;
       mat.specularColor = new Color3(0, 0, 0);
       mesh.material = mat;
+      // Snap directly to the target on first appearance.
+      mesh.position.copyFrom(this.previewTargetPos);
+      mesh.rotation.y = this.previewTargetRotY;
       this.previewMesh = mesh;
       this.previewMaterial = mat;
       this.previewBuildType = buildType;
+      this.createPreviewCellMarker(worldPos.x, worldPos.z, color);
     } else {
-      const worldPos = gridToWorld(grid);
-      const effectiveHeight = getEffectiveHeight(buildType);
-      this.previewMesh.position.set(
-        worldPos.x,
-        worldPos.y + effectiveHeight / 2,
-        worldPos.z,
-      );
-      this.previewMesh.rotation.y =
-        rotation === 0 ? 0 : rotationToYAxis(rotation);
-
+      // Re-target: the render tick eases the ghost toward the new cell and
+      // rotation instead of teleporting it.
       if (this.previewMaterial) {
-        const c = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
-        this.previewMaterial.diffuseColor = c;
-        this.previewMaterial.emissiveColor = c;
+        this.previewMaterial.diffuseColor = color;
+        this.previewMaterial.emissiveColor = color;
+      }
+      if (this.previewCellMaterial) {
+        this.previewCellMaterial.diffuseColor = color;
+        this.previewCellMaterial.emissiveColor = color;
       }
     }
+
+    // Clearer rejected-placement feedback: a short opacity blink when an
+    // existing preview transitions from a valid to an invalid candidate.
+    if (hadPreview && !valid && this.previewValid) {
+      this.previewDeniedBlink = createAnimation(
+        Date.now(),
+        PREVIEW_DENIED_BLINK_DURATION,
+      );
+    }
+    this.previewValid = valid;
   }
 
   /** Hide the placement preview. */
@@ -448,7 +520,42 @@ export class BuildStructureRenderer {
       this.previewMaterial.dispose();
       this.previewMaterial = null;
     }
+    if (this.previewCellMesh) {
+      this.previewCellMesh.dispose();
+      this.previewCellMesh = null;
+    }
+    if (this.previewCellMaterial) {
+      this.previewCellMaterial.dispose();
+      this.previewCellMaterial = null;
+    }
     this.previewBuildType = null;
+    this.previewValid = true;
+    this.previewDeniedBlink = null;
+  }
+
+  /**
+   * Lazily create the low-opacity ground marker for the snapped preview cell.
+   * Reused while the preview is visible; disposed with it.
+   */
+  private createPreviewCellMarker(x: number, z: number, color: Color3): void {
+    if (this.previewCellMesh) return;
+    const size = BUILD_GRID.cellSize * PREVIEW_CELL_MARKER_SIZE;
+    const mesh = MeshBuilder.CreateBox("build-preview-cell", {
+      width: size,
+      height: 0.02,
+      depth: size,
+    }, this.scene);
+    const mat = new StandardMaterial("build-preview-cell-material", this.scene);
+    mat.diffuseColor = color;
+    mat.emissiveColor = color;
+    mat.specularColor = new Color3(0, 0, 0);
+    mat.alpha = PREVIEW_CELL_MARKER_ALPHA;
+    mesh.material = mat;
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    mesh.position.set(x, 0.011, z);
+    this.previewCellMesh = mesh;
+    this.previewCellMaterial = mat;
   }
 
   /**
@@ -739,6 +846,13 @@ export class BuildStructureRenderer {
   private _tick(): void {
     if (this.disposed) return;
     const now = Date.now();
+    // Frame delta for the frame-rate-independent ghost easing (clamped so a
+    // paused tab never produces a giant jump).
+    const dtSec =
+      this._lastTickMs === null
+        ? 0
+        : Math.min(0.05, Math.max(0, (now - this._lastTickMs) / 1000));
+    this._lastTickMs = now;
     const prevEditTarget = this._prevEditTargetId;
     const curEditTarget = this.editTargetId;
 
@@ -795,10 +909,41 @@ export class BuildStructureRenderer {
       this.pendingDestruction.delete(id);
     }
 
-    // Update preview pulsing
+    // Update preview: eased ghost movement + pulsing opacity + grid marker.
     if (this.previewMesh && this.previewMaterial) {
-      const pulse = Math.sin((now / 1000) * PREVIEW_PULSE_FREQ * Math.PI * 2);
-      this.previewMaterial.alpha = PREVIEW_OPACITY_BASE + PREVIEW_OPACITY_PULSE * pulse;
+      // Smooth ghost movement: ease position toward the snapped target and
+      // rotate along the shortest arc (clean rotation feedback).
+      if (dtSec > 0) {
+        const a = 1 - Math.exp(-PREVIEW_SMOOTHING_RATE * dtSec);
+        const pos = this.previewMesh.position;
+        pos.x += (this.previewTargetPos.x - pos.x) * a;
+        pos.y += (this.previewTargetPos.y - pos.y) * a;
+        pos.z += (this.previewTargetPos.z - pos.z) * a;
+        let dRot = this.previewTargetRotY - this.previewMesh.rotation.y;
+        while (dRot > Math.PI) dRot -= Math.PI * 2;
+        while (dRot < -Math.PI) dRot += Math.PI * 2;
+        this.previewMesh.rotation.y += dRot * a;
+      }
+
+      // The ground cell marker tracks the snapped (smoothed) cell.
+      if (this.previewCellMesh) {
+        this.previewCellMesh.position.x = this.previewMesh.position.x;
+        this.previewCellMesh.position.z = this.previewMesh.position.z;
+      }
+
+      // Opacity pulse: valid = calm, invalid = faster and wider (clearer
+      // rejected-placement feedback), plus a one-shot blink on the
+      // valid→invalid transition.
+      const base = this.previewValid ? PREVIEW_OPACITY_BASE : PREVIEW_INVALID_OPACITY_BASE;
+      const amp = this.previewValid ? PREVIEW_OPACITY_PULSE : PREVIEW_INVALID_OPACITY_PULSE;
+      const freq = this.previewValid ? PREVIEW_PULSE_FREQ : PREVIEW_INVALID_PULSE_FREQ;
+      const pulse = Math.sin((now / 1000) * freq * Math.PI * 2);
+      let alpha = base + amp * pulse;
+      if (this.previewDeniedBlink && !this.previewDeniedBlink.done) {
+        const t = animationProgress(this.previewDeniedBlink, now);
+        alpha += (1 - t) * PREVIEW_DENIED_BLINK_STRENGTH;
+      }
+      this.previewMaterial.alpha = alpha;
     }
   }
 
@@ -847,14 +992,15 @@ export class BuildStructureRenderer {
     diffuse.b += d[2];
 
     // Emissive: base (incl. warning pulse) + transient boost + build-edit
-    // target boost, written in place.
+    // target boost + acceptance-confirmation glow, written in place.
     const baseEmissive = this._computeBaseEmissive(runtime, now, this._tempEmissive);
     const e = visual.emissiveBoost;
+    const confirm = visual.confirmStrength;
     const emissive = runtime.material.emissiveColor;
     emissive.copyFrom(baseEmissive);
-    emissive.r += e[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0);
-    emissive.g += e[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0);
-    emissive.b += e[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0);
+    emissive.r += e[0] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[0] : 0) + confirm * CONFIRM_GLOW[0];
+    emissive.g += e[1] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[1] : 0) + confirm * CONFIRM_GLOW[1];
+    emissive.b += e[2] + (isEditTargeted ? EDIT_TARGET_EMISSIVE_BOOST[2] : 0) + confirm * CONFIRM_GLOW[2];
   }
 
   /**
@@ -865,6 +1011,7 @@ export class BuildStructureRenderer {
   private _isStatic(runtime: StructureRuntime): boolean {
     const e = runtime.effects;
     if (e.construction && !e.construction.done) return false;
+    if (e.confirmation && !e.confirmation.done) return false;
     if (e.hitFlash && !e.hitFlash.done) return false;
     if (e.editTransition && !e.editTransition.done) return false;
     if (runtime.durability) {

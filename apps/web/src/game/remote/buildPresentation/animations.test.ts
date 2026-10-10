@@ -9,6 +9,7 @@ import {
   easeInQuad,
   easeInOutCubic,
   easeOutBack,
+  easeOutQuad,
 } from "./animations";
 
 describe("clamp01", () => {
@@ -57,6 +58,22 @@ describe("easeInQuad", () => {
     const firstHalf = easeInQuad(0.5) - easeInQuad(0);
     const secondHalf = easeInQuad(1) - easeInQuad(0.5);
     expect(secondHalf).toBeGreaterThan(firstHalf);
+  });
+});
+
+describe("easeOutQuad", () => {
+  it("starts at 0", () => {
+    expect(easeOutQuad(0)).toBe(0);
+  });
+
+  it("ends at 1", () => {
+    expect(easeOutQuad(1)).toBe(1);
+  });
+
+  it("decelerates (first half covers more distance than second)", () => {
+    const firstHalf = easeOutQuad(0.5) - easeOutQuad(0);
+    const secondHalf = easeOutQuad(1) - easeOutQuad(0.5);
+    expect(firstHalf).toBeGreaterThan(secondHalf);
   });
 });
 

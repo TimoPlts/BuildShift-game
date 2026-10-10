@@ -597,6 +597,124 @@ describe("BuildStructureRenderer", () => {
       expect(preview!.position.z).toBeCloseTo(2, 4);
     });
 
+    it("eases the ghost toward a new grid cell instead of teleporting", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      advance(16); // settle at the first cell
+
+      renderer.showPreview("wall", { x: 2, y: 0, z: 0 }, 0, true);
+      advance(16); // one frame of easing
+
+      const mid = scene.getMeshByName("build-preview") as Mesh;
+      // Strictly between the old and new cell: smoothed, not snapped.
+      expect(mid.position.x).toBeGreaterThan(0.01);
+      expect(mid.position.x).toBeLessThan(4);
+
+      for (let i = 0; i < 40; i++) advance(16);
+      const settled = scene.getMeshByName("build-preview") as Mesh;
+      expect(settled.position.x).toBeCloseTo(4, 3);
+    });
+
+    it("eases the ghost rotation along the shortest arc", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      advance(16);
+
+      // rotation 2 → target yaw of π.
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 2, true);
+      advance(16);
+
+      const mid = scene.getMeshByName("build-preview") as Mesh;
+      expect(Math.abs(mid.rotation.y)).toBeGreaterThan(0.1);
+      expect(Math.abs(mid.rotation.y)).toBeLessThan(Math.PI);
+
+      for (let i = 0; i < 40; i++) advance(16);
+      const settled = scene.getMeshByName("build-preview") as Mesh;
+      expect(Math.abs(settled.rotation.y)).toBeCloseTo(Math.PI, 2);
+    });
+
+    it("shows a low-opacity ground marker on the snapped cell", () => {
+      renderer.showPreview("wall", { x: 2, y: 0, z: 1 }, 0, true);
+      advance(16);
+
+      const cell = scene.getMeshByName("build-preview-cell");
+      expect(cell).not.toBeNull();
+      expect(cell!.position.x).toBeCloseTo(4, 4);
+      expect(cell!.position.z).toBeCloseTo(2, 4);
+      expect(cell!.position.y).toBeCloseTo(0.011, 5);
+      expect((cell!.material as StandardMaterial).alpha).toBeCloseTo(0.3, 5);
+    });
+
+    it("keeps the ground marker tracking the eased ghost position", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      advance(16);
+
+      renderer.showPreview("wall", { x: 2, y: 0, z: 0 }, 0, true);
+      advance(16);
+
+      const ghost = scene.getMeshByName("build-preview") as Mesh;
+      const cell = scene.getMeshByName("build-preview-cell") as Mesh;
+      expect(cell.position.x).toBeCloseTo(ghost.position.x, 6);
+      expect(cell.position.z).toBeCloseTo(ghost.position.z, 6);
+    });
+
+    it("recolors the ground marker with preview validity", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      advance(16);
+      const validMat = (scene.getMeshByName("build-preview-cell")!.material) as StandardMaterial;
+      expect(validMat.diffuseColor.g).toBeGreaterThan(validMat.diffuseColor.r);
+
+      renderer.showPreview("wall", { x: 1, y: 0, z: 0 }, 0, false);
+      advance(16);
+      const invalidMat = (scene.getMeshByName("build-preview-cell")!.material) as StandardMaterial;
+      expect(invalidMat.diffuseColor.r).toBeGreaterThan(invalidMat.diffuseColor.g);
+    });
+
+    it("blinks the preview opacity when the candidate becomes invalid (reject feedback)", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      advance(16);
+
+      renderer.showPreview("wall", { x: 1, y: 0, z: 0 }, 0, false);
+      advance(16); // mid-blink
+
+      const mat = (scene.getMeshByName("build-preview")!.material) as StandardMaterial;
+      // The blink lifts opacity above the invalid pulse envelope
+      // (0.5 ± 0.22 → max 0.72) regardless of pulse phase.
+      expect(mat.alpha).toBeGreaterThan(0.72);
+
+      advance(250); // blink fully expired
+      const settled = (scene.getMeshByName("build-preview")!.material) as StandardMaterial;
+      expect(settled.alpha).toBeLessThanOrEqual(0.5 + 0.22 + 1e-9);
+    });
+
+    it("does not blink when the preview starts invalid (no prior valid state)", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, false);
+      advance(16);
+
+      const mat = (scene.getMeshByName("build-preview")!.material) as StandardMaterial;
+      // No blink: opacity stays inside the invalid pulse envelope.
+      expect(mat.alpha).toBeLessThanOrEqual(0.5 + 0.22 + 1e-9);
+    });
+
+    it("pulses an invalid preview with a wider opacity envelope than a valid one", () => {
+      const sampleEnvelope = (valid: boolean): number => {
+        renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, valid);
+        advance(300); // past any one-shot blink
+        let minA = 2;
+        let maxA = -1;
+        for (let i = 0; i < 90; i++) {
+          advance(16);
+          const a = (scene.getMeshByName("build-preview")!.material as StandardMaterial).alpha;
+          minA = Math.min(minA, a);
+          maxA = Math.max(maxA, a);
+        }
+        renderer.hidePreview();
+        return maxA - minA;
+      };
+
+      // Invalid pulse amplitude is 0.44 total swing vs 0.20 for valid.
+      expect(sampleEnvelope(false)).toBeGreaterThan(0.4);
+      expect(sampleEnvelope(true)).toBeLessThan(0.25);
+    });
+
     it("preview material is green when valid, red when invalid", () => {
       renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
       advance(16);
@@ -630,9 +748,73 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
+  // ─── Placement confirmation ─────────────────────────────────────────────
+
+  describe("placement confirmation", () => {
+    it("plays a short emissive confirmation glow when a structure is accepted", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+
+      advance(40); // mid-confirmation (glow decays over 220ms, ease-out)
+      const midMat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      // SOLID_EMISSIVE.r = 0.02; the glow must lift it clearly.
+      expect(midMat.emissiveColor.r).toBeGreaterThan(0.3);
+      expect(midMat.emissiveColor.g).toBeGreaterThan(0.2);
+
+      advance(300); // past confirm + construction
+      const lateMat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      // Back to the solid base emissive (no residual glow).
+      expect(lateMat.emissiveColor.r).toBeLessThan(0.15);
+    });
+
+    it("confirmation glow settles to a stable material (no lingering per-frame work)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300); // confirm (220ms) fully settled
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      const r0 = mat.emissiveColor.r;
+      const g0 = mat.emissiveColor.g;
+      const b0 = mat.emissiveColor.b;
+
+      for (let i = 0; i < 10; i++) advance(16);
+
+      expect(mat.emissiveColor.r).toBe(r0);
+      expect(mat.emissiveColor.g).toBe(g0);
+      expect(mat.emissiveColor.b).toBe(b0);
+    });
+
+    it("does not re-play the confirmation glow on repeated identical syncs", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300); // confirm settled
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      const baseR = mat.emissiveColor.r;
+
+      renderer.syncStructures({ structures: { wall } });
+      renderer.syncStructures({ structures: { wall } });
+      advance(50);
+
+      // No re-glow: emissive stays at the settled base.
+      const settled = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(settled.emissiveColor.r).toBeCloseTo(baseR, 5);
+    });
+  });
+
   // ─── Cleanup / dispose ───────────────────────────────────────────────────
 
   describe("dispose", () => {
+    it("removes the preview mesh and its ground cell marker on dispose", () => {
+      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
+      renderer.dispose();
+      expect(scene.getMeshByName("build-preview")).toBeNull();
+      expect(scene.getMeshByName("build-preview-cell")).toBeNull();
+    });
+
     it("removes all structure meshes from the scene", () => {
       renderer.syncStructures({
         structures: {

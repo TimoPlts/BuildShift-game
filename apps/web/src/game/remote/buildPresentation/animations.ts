@@ -31,6 +31,14 @@ export function easeInQuad(t: number): number {
 }
 
 /**
+ * Ease-out-quadratic: decelerates toward rest.
+ * Used for the placement-confirmation glow decay.
+ */
+export function easeOutQuad(t: number): number {
+  return 1 - (1 - t) * (1 - t);
+}
+
+/**
  * Ease-in-out-cubic: smooth acceleration then deceleration.
  * Used for edit transitions.
  */
