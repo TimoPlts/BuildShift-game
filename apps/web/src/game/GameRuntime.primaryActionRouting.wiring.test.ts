@@ -22,4 +22,20 @@ describe("GameRuntime primary-action routing", () => {
       "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),false,this.inputManager.isFiring()).buildPlaceHeld);",
     );
   });
+
+  it("suppresses weapon slot switches while build mode is active (no duplicate commands)", () => {
+    // When build mode is on, number keys 1–2 are owned by the building system
+    // (piece selection). The runtime must NOT also send a weapon switch for
+    // the same key press. The gate reads the canonical build-mode state and
+    // discards the weapon slot latch without acting.
+    expect(runtime).toContain(
+      "const inBuild=this.buildingSystem.controller.isBuildModeActive()",
+    );
+    expect(runtime).toContain(
+      "if(wsi&&!inBuild)",
+    );
+    expect(runtime).toContain(
+      "if(wsi2&&!inBuild)",
+    );
+  });
 });
