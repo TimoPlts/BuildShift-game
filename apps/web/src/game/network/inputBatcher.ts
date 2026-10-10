@@ -3,11 +3,24 @@
  * frames to the server each simulation tick.
  *
  * Responsibilities:
- *  - Maintains a monotonically increasing sequence counter starting at 0.
+ *  - Maintains a monotonically increasing sequence counter.
  *  - Each simulation tick, constructs a PlayerNetworkInput from the captured
  *    input sample and sends it via the NetworkClient.
  *  - Stores the sent input in a local ring buffer for reconciliation
  *    (re-applying unacknowledged inputs after a server correction).
+ *
+ * Sequence lifecycle (mirrors the authoritative room):
+ *  - The sequence is monotonic for the LIFETIME OF A SESSION. The room only
+ *    re-baselines a player's sequence (`lastProcessedSequence = -1`) when a
+ *    NEW session joins; it keeps the baseline across round resets, round
+ *    advancement, match end, and in-room rematches.
+ *  - `reset()` (sequence → 0) is therefore reserved for (re)connect, which
+ *    always starts a new session.
+ *  - `discardUnacknowledged()` is for authoritative round/match boundaries
+ *    WITHIN the same session: the room clears its pending input buffer at the
+ *    boundary and never processes the frames in flight, so they must be
+ *    dropped from the reconciliation buffer — but the sequence counter must
+ *    keep advancing, otherwise every subsequent frame is rejected as stale.
  *
  * The InputBatcher is a pure networking concern: it reads a plain input
  * sample handed to it by the caller and converts it into a protocol
@@ -80,11 +93,31 @@ export class InputBatcher {
   private buffer: BufferedInput[] = [];
 
   /**
-   * Reset the sequence counter and input buffer. Called on (re)connect so
-   * sequences restart from 0 for the new session.
+   * Reset the sequence counter and input buffer.
+   *
+   * MUST only be called when a NEW session starts ((re)connect): the
+   * authoritative room re-baselines `lastProcessedSequence` to -1 for a new
+   * session join, so local sequences restart from 0. It must NOT be called
+   * on round/match/rematch boundaries within the same session — the room
+   * keeps its baseline there, and restarting from 0 makes every new frame
+   * stale (the cross-round input freeze).
    */
   public reset(): void {
     this.sequence = 0;
+    this.buffer = [];
+  }
+
+  /**
+   * Discard unacknowledged buffered inputs WITHOUT resetting the sequence.
+   *
+   * Called at an authoritative round/match boundary within the same session.
+   * The room clears its pending input buffer at that boundary and will never
+   * process the still-unacknowledged frames, so keeping them would make
+   * reconciliation replay them on top of the post-reset (spawn) position.
+   * The sequence counter is untouched: it stays monotonic for the lifetime
+   * of the session, matching the room's per-player baseline.
+   */
+  public discardUnacknowledged(): void {
     this.buffer = [];
   }
 

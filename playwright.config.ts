@@ -20,11 +20,10 @@ export default defineConfig({
   forbidOnly: true,
   retries: 0,
   workers: 1,
-  // The late-suite rematch tests must outlast the cross-round input freeze
-  // (client input sequences restart from 0 on every round/match reset while
-  // the server keeps its per-player lastProcessedSequence, so each player is
-  // input-frozen for ~the elapsed game time at the start of later rounds).
-  timeout: 1_200_000,
+  // Generous default for the two-client live round tests; per-test budgets
+  // below cover countdowns, aiming, and kills (input sequences are
+  // monotonic per session, so rounds start with immediate, live input).
+  timeout: 120_000,
   reporter: [["list"]],
   use: {
     browserName: "chromium",

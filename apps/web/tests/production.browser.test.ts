@@ -29,23 +29,29 @@
 
  *   - Combined-state diagnostics (arena / player / build / disconnect / diag)
  */
-import { test, expect, type Page, type BrowserContext, chromium } from "@playwright/test";
+import { test, expect, type Page, type BrowserContext, type Browser, chromium } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import { setTimeout as sleep } from "node:timers/promises";
 import http from "node:http";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, createWriteStream, mkdirSync } from "node:fs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const GAME_SERVER_PORT = 2567;
-const STATIC_SERVER_PORT = 41730;
+// Ports are overridable via env so concurrent worktrees / CI lanes can run
+// the suite without colliding with a foreign server bound to the defaults.
+// The page is pointed at THIS server explicitly via the `?gameServer=`
+// runtime override (see `resolveGameServerUrl`) — without it, the browser
+// client would fall back to `ws://<host>:2567` and could silently play
+// against a foreign server bound to the default port.
+const GAME_SERVER_PORT = Number(process.env.BS_TEST_GAME_SERVER_PORT ?? 25671);
+const STATIC_SERVER_PORT = Number(process.env.BS_TEST_STATIC_SERVER_PORT ?? 41730);
 const GAME_SERVER_URL = `ws://127.0.0.1:${GAME_SERVER_PORT}`;
-const APP_URL = `http://127.0.0.1:${STATIC_SERVER_PORT}/?devdiag=1`;
+const APP_URL = `http://127.0.0.1:${STATIC_SERVER_PORT}/?devdiag=1&gameServer=${GAME_SERVER_URL}`;
 
 // Resolve the monorepo root (three levels up from apps/web/tests).
 const ROOT = path.resolve(__dirname, "../../..");
@@ -56,6 +62,8 @@ const SERVER_ENTRY = path.join(ROOT, "apps/game-server/src/index.ts");
 
 let gameServerProc: ChildProcess | null = null;
 let staticServer: http.Server | null = null;
+/** Server stdout/stderr from the current run, for diagnosing live-round failures. */
+export const SERVER_LOG_PATH = path.join(ROOT, "test-results", "game-server.log");
 
 /**
  * Start the authoritative game server as a child process.
@@ -74,6 +82,9 @@ async function startGameServer(): Promise<void> {
   const serverCwd = path.join(ROOT, "apps/game-server");
 
   return new Promise<void>((resolve, reject) => {
+    mkdirSync(path.dirname(SERVER_LOG_PATH), { recursive: true });
+    const logStream = createWriteStream(SERVER_LOG_PATH, { flag: "a" });
+    logStream.write(`\n=== game server start (port ${GAME_SERVER_PORT}) ${new Date().toISOString()} ===\n`);
     const proc = spawn(tsxBin, [SERVER_ENTRY], {
       cwd: serverCwd,
       env: {
@@ -85,6 +96,7 @@ async function startGameServer(): Promise<void> {
     gameServerProc = proc;
 
     let resolved = false;
+    let procExited = false;
     const timeout = setTimeout(() => {
       if (!resolved) {
         reject(new Error("Game server did not start within 15s"));
@@ -93,6 +105,7 @@ async function startGameServer(): Promise<void> {
     }, 15_000);
 
     proc.stdout?.on("data", (chunk: Buffer) => {
+      logStream.write(chunk);
       const text = chunk.toString();
       if (!resolved && (text.includes("listening") || text.includes("started") || text.includes(String(GAME_SERVER_PORT)))) {
         resolved = true;
@@ -103,6 +116,7 @@ async function startGameServer(): Promise<void> {
 
     proc.stderr?.on("data", (chunk: Buffer) => {
       // Colyseus logs to stderr; also check for the port there.
+      logStream.write(chunk);
       const text = chunk.toString();
       if (!resolved && (text.includes("listening") || text.includes(String(GAME_SERVER_PORT)))) {
         resolved = true;
@@ -117,23 +131,34 @@ async function startGameServer(): Promise<void> {
     });
 
     proc.on("exit", (code) => {
+      procExited = true;
       if (!resolved && code !== null) {
         clearTimeout(timeout);
-        reject(new Error(`Game server exited with code ${code}`));
+        reject(
+          new Error(
+            `Game server exited with code ${code} before becoming ready` +
+              (code === 1 ? ` (EADDRINUSE on port ${GAME_SERVER_PORT}? see ${SERVER_LOG_PATH})` : ""),
+          ),
+        );
       }
     });
 
-    // Fallback: if the server doesn't log "listening" but the port is open,
-    // consider it started. Poll the port.
+    // Fallback: if the server doesn't log "listening" but the port is open
+    // *and this process is still alive*, consider it started. The process
+    // guard matters: a foreign server bound to the same port would otherwise
+    // be mistaken for ours (the page is pointed at this server explicitly via
+    // `?gameServer=`, so a foreign listener is a configuration error, not a
+    // valid fallback).
     const pollPort = async () => {
       for (let i = 0; i < 30; i++) {
         await sleep(500);
+        if (procExited) return;
         try {
           const { default: net } = await import("node:net");
           const sock = net.connect(GAME_SERVER_PORT, "127.0.0.1");
           sock.on("connect", () => {
             sock.destroy();
-            if (!resolved) {
+            if (!resolved && !procExited) {
               resolved = true;
               clearTimeout(timeout);
               resolve();
@@ -143,7 +168,7 @@ async function startGameServer(): Promise<void> {
         } catch {
           // port not ready yet
         }
-        if (resolved) return;
+        if (resolved || procExited) return;
       }
     };
     void pollPort();
@@ -212,6 +237,7 @@ async function stopServers(): Promise<void> {
 
 // ─── Shared state across serial tests ─────────────────────────────────────────
 
+let browser: Browser | null = null;
 let browserContext: BrowserContext | null = null;
 let pageA: Page | null = null;
 let pageB: Page | null = null;
@@ -285,6 +311,34 @@ async function acquirePointerLock(page: Page): Promise<void> {
     document.dispatchEvent(new Event("pointerlockchange"));
   });
   await new Promise((r) => setTimeout(r, 100));
+}
+
+/**
+ * Dump diagnostic state from both pages + any fatal console errors.
+ * Used to capture root-cause data when a live-round assertion fails:
+ * the authoritative phase/round/sequence/connection state as seen by each
+ * client (via the ?devdiag=1 overlay) plus recent fatal console errors.
+ */
+async function dumpDiag(context: string, pageA: Page | null, pageB: Page | null): Promise<void> {
+  const read = async (p: Page | null): Promise<unknown> => {
+    if (!p) return "(no page)";
+    try {
+      return await p.evaluate(() => ({
+        phase: document.querySelector(".match-hud__phase")?.textContent ?? "<no phase>",
+        endScreen: document.querySelector(".match-end-screen") !== null,
+        buttons: Array.from(document.querySelectorAll("button")).map((b) => b.textContent ?? ""),
+        pointerOverlay: document.querySelector(".pointer-lock-overlay") !== null,
+        devdiag: (document.querySelector(".devdiag-overlay")?.textContent ?? "<no devdiag>").replace(/\n+/g, " "),
+      }));
+    } catch (e) {
+      return `(read failed: ${(e as Error).message})`;
+    }
+  };
+  const [a, b] = await Promise.all([read(pageA), read(pageB)]);
+  console.log(`[diag:${context}] A:`, JSON.stringify(a));
+  console.log(`[diag:${context}] B:`, JSON.stringify(b));
+  const fatal = fatalConsoleErrors.slice(-8);
+  if (fatal.length) console.log(`[diag:${context}] fatalConsoleErrors:`, JSON.stringify(fatal));
 }
 
 /**
@@ -378,6 +432,43 @@ async function ensurePointerLock(page: Page): Promise<void> {
     }, { timeout: 5_000 });
     await new Promise((r) => setTimeout(r, 50));
   }
+}
+
+/**
+ * Request a rematch by clicking the MatchEndScreen "Play Again" / "Rematch"
+ * button using a **synthetic DOM click** rather than Playwright's
+ * `locator.click()`.
+ *
+ * `locator.click()` moves the real (virtual) mouse to the button, which emits
+ * genuine `mousemove` events with non-zero `movementY`. While the suite's fake
+ * pointer lock (see `ensurePointerLock`) is active, the InputManager accumulates
+ * those deltas into the camera yaw/pitch, silently tilting the aim (e.g. down
+ * to the -60° pitch clamp) for the next match. That makes the rematched player
+ * fire into the ground and the elimination loop stall. A synthetic `btn.click()`
+ * fires the same React `onClick` handler without moving the mouse, so the
+ * camera state is left intact.
+ *
+ * @returns true when the button was found and clicked, false otherwise.
+ */
+async function requestRematch(page: Page): Promise<boolean> {
+  // Wait for the MatchEndScreen primary button to render.
+  await page
+    .waitForFunction(
+      () =>
+        Array.from(document.querySelectorAll("button")).some((b) =>
+          /play again|rematch/i.test(b.textContent ?? ""),
+        ),
+      { timeout: 20_000 },
+    )
+    .catch(() => {});
+  return page.evaluate(() => {
+    const btn = Array.from(document.querySelectorAll("button")).find((b) =>
+      /play again|rematch/i.test(b.textContent ?? ""),
+    );
+    if (!btn || btn.disabled) return false;
+    btn.click();
+    return true;
+  });
 }
 
 /**
@@ -490,22 +581,13 @@ function normAngle(rad: number): number {
  *     positions and apply one exact mouse-delta correction.
  *  3. Hold fire; re-probe and re-correct only when damage stops landing.
  *
- * Known server/client behaviour this must tolerate: after the first round,
- * the client input sequence restarts from 0 on the round-boundary reset
- * while the server keeps its per-player lastProcessedSequence, so every
- * input sample is dropped as stale until the new counter catches up.
- * Both players are therefore input-frozen (no movement, no fire) for the
- * first several seconds of each round. The probe detects the freeze
- * (zero movement) and simply retries; weapon reload (KeyR) is not
- * sequence-gated and works during the freeze.
- *
  * The magazine is reloaded automatically when it runs low (best effort —
  * precise aim means a kill usually fits in a single 30-round magazine).
  */
 async function holdFireUntilRoundOver(
   pageA: Page,
   pageB: Page,
-  timeoutMs = 120_000,
+  timeoutMs = 90_000,
 ): Promise<string> {
   const deadline = Date.now() + timeoutMs;
   const dispatchLook = (px: number) =>
@@ -540,8 +622,7 @@ async function holdFireUntilRoundOver(
       const now = Date.now();
       const ammo = await getMagazineAmmo(pageA);
       if (ammo <= 2) {
-        // Reload is not sequence-gated, so it works even while the
-        // round-start input freeze is in effect.
+        // Reload is not sequence-gated.
         await pageA.keyboard.press("KeyR").catch(() => {});
         await sleep(2_500);
       } else if (
@@ -568,14 +649,19 @@ async function holdFireUntilRoundOver(
             // applyLook does `yaw -= px * sensitivity`, so increasing yaw
             // toward the bearing needs px ∝ (yaw − bearing).
             const px = Math.round(normAngle(yaw - bearing) / 0.0022);
+            console.log(
+              `[aim:probe] reaim=${reaims} A0=(${p0.map((v) => v.toFixed(1)).join(",")}) ` +
+                `A1=(${p1.map((v) => v.toFixed(1)).join(",")}) B=(${pB.map((v) => v.toFixed(1)).join(",")}) ` +
+                `yaw=${yaw.toFixed(2)} bearing=${bearing.toFixed(2)} px=${px} ammo=${ammo} oppTotal=${opponentTotal}`,
+            );
             if (Math.abs(px) > 5) await dispatchLook(px);
             reaims += 1;
             // Give the corrected aim a short window before deciding to
             // re-aim again (damage checks resume immediately).
             lastDamageAt = Date.now() - 3_000;
           }
-          // Zero movement means the input freeze is still in effect (or
-          // data is stale); retry on the next pass.
+          // Zero movement means the probe data is stale; retry on the
+          // next pass.
         }
       }
       await sleep(700);
@@ -598,6 +684,30 @@ async function holdFireUntilRoundOver(
       );
     }, { timeout: 5_000 }).catch(() => {});
   }
+  if (phase === "IN PROGRESS") {
+    // The deadline elapsed without the round ending: capture where both
+    // players ended up (predicted + authoritative) so an aim / input-stall
+    // failure is diagnosable from the log.
+    const pos = async (p: Page) =>
+      p
+        .evaluate(() => {
+          const t = document.querySelector(".devdiag-overlay")?.textContent ?? "";
+          const pred = t.match(/Pred:\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)/);
+          const auth = t.match(/Auth:\s*\(\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*,\s*(-?\d+\.\d+)\s*\)/);
+          const seq = t.match(/Seq:\s*(\d+)/);
+          const phase = document.querySelector(".match-hud__phase")?.textContent ?? "";
+          return {
+            phase,
+            pred: pred ? [pred[1], pred[2], pred[3]] : null,
+            auth: auth ? [auth[1], auth[2], auth[3]] : null,
+            seq: seq ? Number(seq[1]) : null,
+          };
+        })
+        .catch(() => "(read failed)");
+    const [a, b] = await Promise.all([pos(pageA), pos(pageB)]);
+    console.log(`[diag:holdFire-timeout] A:`, JSON.stringify(a));
+    console.log(`[diag:holdFire-timeout] B:`, JSON.stringify(b));
+  }
   return phase;
 }
 
@@ -614,7 +724,12 @@ async function waitForRoundStart(pageA: Page, pageB: Page): Promise<void> {
       },
       { timeout: 45_000 },
     );
-  await Promise.all([ready(pageA), ready(pageB)]);
+  try {
+    await Promise.all([ready(pageA), ready(pageB)]);
+  } catch (e) {
+    await dumpDiag("waitForRoundStart-timeout", pageA, pageB);
+    throw e;
+  }
 }
 
 /**
@@ -647,9 +762,17 @@ test.describe("Production browser smoke", () => {
     await startGameServer();
     await startStaticServer();
     // Create a persistent browser context for all serial tests.
-    const browser = await chromium.launch({ headless: true });
+    browser = await chromium.launch({ headless: true });
+    browser.on("disconnected", (_b, reason) => {
+      console.log(`[diag:browser] DISCONNECTED reason=${JSON.stringify(reason)} at ${new Date().toISOString()}`);
+    });
     browserContext = await browser.newContext({
       viewport: { width: 1280, height: 720 },
+    });
+    browserContext.on("page", (p) => {
+      p.on("close", () => {
+        console.log(`[diag:browser] page closed at ${new Date().toISOString()}`);
+      });
     });
   });
 
@@ -657,6 +780,7 @@ test.describe("Production browser smoke", () => {
     if (pageA) await pageA.close().catch(() => {});
     if (pageB) await pageB.close().catch(() => {});
     if (browserContext) await browserContext.close().catch(() => {});
+    if (browser) await browser.close().catch(() => {});
     await stopServers();
   });
 
@@ -930,6 +1054,9 @@ test.describe("Production browser smoke", () => {
     await sleep(2_000);
 
     const timer2 = await getRoundTimerText(pageA!);
+    if (timer2 === null) {
+      await dumpDiag("timer-continuation-null", pageA, pageB);
+    }
     expect(timer2).not.toBeNull();
 
     // Timer should have decreased (or the round ended, which is also valid).
@@ -1033,7 +1160,7 @@ test.describe("Production browser smoke", () => {
     expect(phaseB).toBe("IN PROGRESS");
   });
 
-  test("elimination: firing ends round 1 with a local round win", { timeout: 200_000 }, async () => {
+  test("elimination: firing ends round 1 with a local round win", { timeout: 120_000 }, async () => {
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
@@ -1047,7 +1174,7 @@ test.describe("Production browser smoke", () => {
 
     // Aim (with a scanning fallback) and hold fire until the round ends.
     // An elimination should end the round far sooner than the 90s timer.
-    const phaseA = await holdFireUntilRoundOver(pageA!, pageB!, 180_000);
+    const phaseA = await holdFireUntilRoundOver(pageA!, pageB!, 90_000);
     expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseA);
 
     const phaseB = await pageB!.evaluate(() => {
@@ -1061,22 +1188,22 @@ test.describe("Production browser smoke", () => {
     expect(scoreAfter).toBe(scoreBefore + 1);
   });
 
-  test("next rounds: rounds 2 and 3 run to the final MATCH OVER", { timeout: 480_000 }, async () => {
+  test("next rounds: rounds 2 and 3 run to the final MATCH OVER", { timeout: 240_000 }, async () => {
+    // Playwright 1.63: config `timeout` takes precedence over the test-level
+    // options object, so set the effective budget explicitly.
+    test.setTimeout(240_000);
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
-    // WIN_ROUNDS = 3: two more local wins take the match.
-    // NOTE: after the first round the client input sequence restarts from
-    // 0 while the server keeps its per-player lastProcessedSequence, so
-    // both players are input-frozen at the start of each later round until
-    // the counter catches up (~round length / 30Hz). Generous per-round
-    // budget (180s) covers the freeze plus the kill.
+    // WIN_ROUNDS = 3: two more local wins take the match. Input sequences
+    // are monotonic per session, so each round starts with immediate, live
+    // movement and fire — no catch-up window.
     let phase = "";
     for (let round = 0; round < 2; round++) {
       await waitForRoundStart(pageA!, pageB!);
       await ensurePointerLock(pageA!);
       await ensureCombatMode(pageA!);
-      phase = await holdFireUntilRoundOver(pageA!, pageB!, 180_000);
+      phase = await holdFireUntilRoundOver(pageA!, pageB!, 90_000);
       expect(["ROUND OVER", "MATCH OVER"]).toContain(phase);
       if (phase === "MATCH OVER") break;
     }
@@ -1102,28 +1229,25 @@ test.describe("Production browser smoke", () => {
     await sleep(3_000);
 
     // Request rematch from both players via the MatchEndScreen button.
-    const playAgainBtn = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-    if (await playAgainBtn.isVisible()) {
-      await playAgainBtn.click();
-      await pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')").click();
-    } else {
-      // No button visible yet; wait a bit more and retry.
-      await sleep(2_000);
-      const btnA = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-      const btnB = pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-      if (await btnA.isVisible()) await btnA.click();
-      if (await btnB.isVisible()) await btnB.click();
-    }
+    // Synthetic clicks (see requestRematch) keep the virtual mouse still, so
+    // no mousemove deltas leak into the camera aim for the next match.
+    await requestRematch(pageA!);
+    await requestRematch(pageB!);
 
     // Wait for the new match to start (countdown or in-progress).
-    await pageA!.waitForFunction(
-      () => {
-        const el = document.querySelector(".match-hud__phase");
-        const text = el?.textContent ?? "";
-        return text === "GET READY" || text === "IN PROGRESS";
-      },
-      { timeout: 30_000 },
-    );
+    try {
+      await pageA!.waitForFunction(
+        () => {
+          const el = document.querySelector(".match-hud__phase");
+          const text = el?.textContent ?? "";
+          return text === "GET READY" || text === "IN PROGRESS";
+        },
+        { timeout: 30_000 },
+      );
+    } catch (e) {
+      await dumpDiag("rematch-timeout", pageA, pageB);
+      throw e;
+    }
 
     // Verify both pages are in sync.
     const finalPhaseA = await pageA!.locator(".match-hud__phase").textContent();
@@ -1131,22 +1255,24 @@ test.describe("Production browser smoke", () => {
     expect(finalPhaseA).toBe(finalPhaseB);
   });
 
-  test("repeated rematch: second match completes and HUD/listener/audio state stays clean", { timeout: 1_200_000 }, async () => {
+  test("repeated rematch: second match completes and HUD/listener/audio state stays clean", { timeout: 480_000 }, async () => {
+    // Playwright 1.63: config `timeout` takes precedence over the test-level
+    // options object, so set the effective budget explicitly. Playing a full
+    // second match (3 round wins) needs more headroom than the 120s config
+    // default.
+    test.setTimeout(480_000);
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
     // Play the rematched match to completion (3 round wins) so a second
-    // rematch is exercised. The per-round budget is large because the
-    // cross-round input-sequence gap (client batcher resets to 0 on every
-    // match/round reset; the server keeps lastProcessedSequence) freezes
-    // both players for (total inputs so far) / 30 Hz at the start of each
-    // round — several minutes by this point in the suite.
+    // rematch is exercised. Input sequences are monotonic per session,
+    // so each round starts with immediate, live input.
     let phase = "";
     for (let round = 0; round < 3; round++) {
       await waitForRoundStart(pageA!, pageB!);
       await ensurePointerLock(pageA!);
       await ensureCombatMode(pageA!);
-      phase = await holdFireUntilRoundOver(pageA!, pageB!, 360_000);
+      phase = await holdFireUntilRoundOver(pageA!, pageB!, 90_000);
       expect(["ROUND OVER", "MATCH OVER"]).toContain(phase);
       if (phase === "MATCH OVER") break;
     }
@@ -1154,10 +1280,8 @@ test.describe("Production browser smoke", () => {
 
     // Second connected rematch.
     await sleep(2_000);
-    const btnA = pageA!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-    const btnB = pageB!.locator("button:has-text('Play Again'), button:has-text('Rematch')");
-    if (await btnA.isVisible()) await btnA.click();
-    if (await btnB.isVisible()) await btnB.click();
+    await requestRematch(pageA!);
+    await requestRematch(pageB!);
 
     await pageA!.waitForFunction(
       () => {
