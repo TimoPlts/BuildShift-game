@@ -257,7 +257,6 @@ describe("BuildingController", () => {
     const canvas = {} as HTMLCanvasElement;
     const env: BuildingInputEnvironment = {
       keyTarget: { addEventListener: () => {}, removeEventListener: () => {} },
-      mouseTarget: { addEventListener: () => {}, removeEventListener: () => {} },
       pointerLockTarget: { addEventListener: () => {}, removeEventListener: () => {} },
       visibilityTarget: { addEventListener: () => {}, removeEventListener: () => {} },
       getPointerLockElement: () => canvas,

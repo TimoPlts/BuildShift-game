@@ -1,22 +1,29 @@
 /**
- * buildingInputController — browser input for the build-mode controls.
+ * buildingInputController — browser input for the build-mode keyboard
+ * controls.
  *
- * Owns the *player intent* signals for building (docs/TECHNICAL_ARCHITECTURE.md
- * §9 "Client Owns ... Keyboard state, Mouse state, Build ghost preview"):
+ * Owns the *player intent* signals for building that live on the keyboard
+ * (docs/TECHNICAL_ARCHITECTURE.md §9 "Client Owns ... Keyboard state, Mouse
+ * state, Build ghost preview"):
  *
  *  - `B`            toggle build mode on/off
  *  - `1` / `2` / `3` / `4`   select wall / floor / ramp / cone
  *  - `Q` / `E`      rotate the selected placement (counter-clockwise / clockwise)
- *  - left mouse button (while in build mode)   place-structure intent edge
+ *
+ * The shared left mouse button is NOT listened to here: its browser state is
+ * owned by the centralized {@link InputManager} (movement/fire module), and
+ * its build-mode meaning (placement press edge + held rapid placement) is
+ * decided by the single {@link routePrimaryAction} policy. This keeps every
+ * browser input signal in exactly one owner.
  *
  * All signals are only latched while the canvas holds browser pointer lock —
  * the same rule the movement/fire {@link InputManager} uses, so a stale key
- * or click can never produce a building intent after the pointer is
- * released. Releasing pointer lock (or hiding the tab) exits build mode and
- * drops any pending place press, mirroring the fire-input safety behaviour.
+ * can never produce a building intent after the pointer is released.
+ * Releasing pointer lock (or hiding the tab) exits build mode, mirroring the
+ * fire-input safety behaviour.
  *
- * The controller is a *pure intent source*: it reports state and edges but
- * never talks to the network and never decides placement validity. The
+ * The controller is a *pure intent source*: it reports state but never talks
+ * to the network and never decides placement validity. The
  * {@link BuildingController} consumes these signals.
  *
  * Testability: the event targets (window / document) are injectable via
@@ -48,10 +55,6 @@ interface KeyboardLikeEvent {
   repeat: boolean;
 }
 
-interface MouseLikeEvent {
-  button: number;
-}
-
 /** A minimal DOM event target (window or document). */
 export interface InputEventTarget {
   addEventListener(type: string, listener: (event: unknown) => void): void;
@@ -65,8 +68,6 @@ export interface InputEventTarget {
 export interface BuildingInputEnvironment {
   /** Receives `keydown` / `keyup` (normally `window`). */
   readonly keyTarget: InputEventTarget;
-  /** Receives `mousedown` (normally `window`). */
-  readonly mouseTarget: InputEventTarget;
   /** Receives `pointerlockchange` (normally `document`). */
   readonly pointerLockTarget: InputEventTarget;
   /** Receives `visibilitychange` (normally `document`). */
@@ -83,7 +84,6 @@ export function defaultBuildingInputEnvironment(
 ): BuildingInputEnvironment {
   return {
     keyTarget: window,
-    mouseTarget: window,
     pointerLockTarget: document,
     visibilityTarget: document,
     getPointerLockElement: () => document.pointerLockElement,
@@ -100,8 +100,6 @@ export class BuildingInputController {
   private buildModeActive = false;
   private selectedBuildType: BuildType = "wall";
   private rotation: GridRotation = 0;
-  /** Latched place-press edge, pending the next frame's poll. */
-  private placePressed = false;
   private disposed = false;
 
   public constructor(
@@ -111,7 +109,6 @@ export class BuildingInputController {
     this.canvas = canvas;
     this.env = env ?? defaultBuildingInputEnvironment(canvas);
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
-    this.env.mouseTarget.addEventListener("mousedown", this.handleMouseDown);
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -137,18 +134,6 @@ export class BuildingInputController {
     return this.rotation;
   }
 
-  /**
-   * Returns whether a place press (left-click while in build mode) is
-   * pending, and clears the latch. Polled once per render frame by the
-   * runtime — never inside the key/mouse handlers, so a press can never be
-   * consumed before a frame actually runs.
-   */
-  public consumePlacePressed(): boolean {
-    const pressed = this.placePressed;
-    this.placePressed = false;
-    return pressed;
-  }
-
   /** Removes all listeners and drops every latched intent. */
   public dispose(): void {
     if (this.disposed) {
@@ -156,7 +141,6 @@ export class BuildingInputController {
     }
     this.disposed = true;
     this.env.keyTarget.removeEventListener("keydown", this.handleKeyDown);
-    this.env.mouseTarget.removeEventListener("mousedown", this.handleMouseDown);
     this.env.pointerLockTarget.removeEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -207,22 +191,6 @@ export class BuildingInputController {
     }
   };
 
-  private readonly handleMouseDown = (event: unknown): void => {
-    if (this.disposed) {
-      return;
-    }
-    const e = event as MouseLikeEvent;
-    if (e?.button !== 0) {
-      return;
-    }
-    // The place edge only latches while pointer-locked AND in build mode —
-    // outside build mode the left button belongs to the fire input.
-    if (!this.isPointerLocked() || !this.buildModeActive) {
-      return;
-    }
-    this.placePressed = true;
-  };
-
   private readonly handlePointerLockChange = (): void => {
     // Any pointer-lock change that is not "locked to our canvas" means the
     // player is out of the gameplay view: drop every latched intent and
@@ -240,11 +208,10 @@ export class BuildingInputController {
 
   /**
    * Drops every latched intent and exits build mode. Triggered by pointer
-   * lock release and hidden-tab transitions — so a stale click or key can
-   * never fire a build after the player is no longer "in" the game view.
+   * lock release and hidden-tab transitions — so a stale key can never
+   * fire a build after the player is no longer "in" the game view.
    */
   private clearIntents(): void {
     this.buildModeActive = false;
-    this.placePressed = false;
   }
 }

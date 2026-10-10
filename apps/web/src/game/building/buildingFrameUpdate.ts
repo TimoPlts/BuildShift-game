@@ -5,17 +5,33 @@
  * Keeps the runtime wiring a single call:
  *
  *   1. recomputes the grid-snapped placement preview from the current aim
- *      ray / player position / selected build type;
- *   2. polls the pending place-press edge and, when the player is connected,
- *      submits the placement intent for the (valid) preview.
+ *      ray / player position / selected build type (the current
+ *      camera/grid target);
+ *   2. drives held-primary rapid placement ("turbo building"): when the
+ *      routed build-owned primary is held and the player is connected,
+ *      submits a placement intent for the (valid) preview, rate-limited to
+ *      one request per `PLACEMENT_REQUEST_INTERVAL_MS`.
  *
- * The place intent is only *submitted* when connected: while disconnected
- * there is no authoritative server to answer it, and the press edge is
- * always consumed (dropped) so a stale click can never fire later.
+ * The primary button's browser state is owned by the centralized
+ * `InputManager`; the runtime hands over the *routed* build-held value
+ * (from `routePrimaryAction`), so the weapon path and the building path
+ * never see the same hold as theirs. Placement requests are only *sent*
+ * when connected: while disconnected there is no authoritative server to
+ * answer them, and the server's validation (overlap / rate / energy)
+ * remains the final authority on acceptance.
  */
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import type { BuildingSystem } from "./index";
+import type { BuildingController } from "./buildingController";
+
+/**
+ * The narrow building-system surface the frame driver needs. The full
+ * {@link BuildingSystem} satisfies it structurally; tests can pass a bare
+ * controller.
+ */
+export interface BuildingFrameDriver {
+  readonly controller: BuildingController;
+}
 
 /**
  * Reusable per-frame context buffer. `updateBuildingFrame` runs once per
@@ -39,13 +55,19 @@ const _frameContext = {
  * @param aimDirection the current normalized world-space aim direction.
  * @param playerFeet the local player's feet position (range check).
  * @param connected whether the canonical network connection is live.
+ * @param primaryHeld the routed build-owned primary hold (from
+ *        `routePrimaryAction` over the centralized `InputManager` state).
+ * @param nowMs the monotonic frame clock in ms (defaults to
+ *        `performance.now()`); injectable for deterministic tests.
  */
 export function updateBuildingFrame(
-  building: BuildingSystem,
+  building: BuildingFrameDriver,
   camera: Camera,
   aimDirection: Vector3,
   playerFeet: Vector3,
   connected: boolean,
+  primaryHeld: boolean,
+  nowMs?: number,
 ): void {
   const camPos = camera.position;
   const aimOrigin = _frameContext.aimOrigin;
@@ -65,8 +87,10 @@ export function updateBuildingFrame(
 
   building.controller.updateFrame(_frameContext);
 
-  const placePressed = building.controller.consumePlacePressed();
-  if (placePressed && connected) {
-    building.requestPlace();
+  if (connected) {
+    building.controller.pollHeldPlacement(
+      nowMs ?? performance.now(),
+      primaryHeld,
+    );
   }
 }

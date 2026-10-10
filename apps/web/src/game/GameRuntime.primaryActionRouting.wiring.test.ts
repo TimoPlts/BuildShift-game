@@ -13,4 +13,13 @@ describe("GameRuntime primary-action routing", () => {
       "routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),false,this.inputManager.isFiring()).weaponFireHeld",
     );
   });
+
+  it("routes the held primary into the building frame through the same centralized input", () => {
+    // The building frame receives the routed build-owned hold (turbo
+    // building) from the same routePrimaryAction decision over the
+    // centralized InputManager fire state — no second mouse listener.
+    expect(runtime).toContain(
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),false,this.inputManager.isFiring()).buildPlaceHeld);",
+    );
+  });
 });
