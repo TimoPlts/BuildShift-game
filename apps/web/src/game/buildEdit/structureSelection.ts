@@ -80,9 +80,10 @@ const _aabbHe: Vec3Like = { x: 0, y: 0, z: 0 };
  * World AABB centre + half-extents for a structure, mirroring the server's
  * `wc` (grid anchor + footprint, rotation swaps X/Z extents, then scaled by
  * the shared cell size / layer height). Writes into the module-level scratch
- * vectors and returns them.
+ * vectors and returns them — consume synchronously (the same call is shared
+ * by per-structure selection and per-frame tile hit-testing).
  */
-function structureAabb(
+export function structureAabb(
   buildType: StructureState["buildType"],
   grid: StructureState["grid"],
   rotation: StructureState["rotation"],
@@ -109,7 +110,7 @@ function structureAabb(
  * Slab-method ray / AABB intersection. Returns the distance to the box's
  * near face when the ray enters it within `[0, maxRange]`, else `null`.
  */
-function rayAabbDistance(
+export function rayAabbDistance(
   origin: Vec3Like,
   dir: Vec3Like,
   ctr: Vec3Like,

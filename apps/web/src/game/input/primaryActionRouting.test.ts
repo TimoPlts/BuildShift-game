@@ -3,11 +3,11 @@
  *
  * The shared left mouse button's browser state is owned by the centralized
  * `InputManager`; `routePrimaryAction` is the single decision that assigns
- * the press/hold to either weapon fire or build placement. These tests pin
- * the mutual exclusivity of that decision (a held primary is weapon fire
- * when build mode is off and held placement — the turbo-building loop — when
- * it is on) and drive the building side through the same per-frame contract
- * the runtime uses (`updateFrame` + `pollHeldPlacement`).
+ * the press/hold to either weapon fire, build placement, or build-edit tile
+ * selection. These tests pin the mutual exclusivity and priority of that
+ * decision (edit > build > weapon) and drive the building side through the
+ * same per-frame contract the runtime uses (`updateFrame` +
+ * `pollHeldPlacement`).
  */
 import { describe, expect, it } from "vitest";
 import { BuildingController, type BuildingNetworkLike } from "../building/buildingController";
@@ -72,7 +72,7 @@ function createFixture() {
       aimDirection: valid ? { x: 0, y: -1, z: 0 } : { x: 1, y: 0, z: 0 },
       playerPosition: { x: 0, y: 0, z: 0 },
     });
-    const route = routePrimaryAction(input.isBuildModeActive(), false, held);
+    const route = routePrimaryAction(input.isBuildModeActive(), false, held, held);
     controller.pollHeldPlacement(now, route.buildPlaceHeld);
   };
 
@@ -85,11 +85,13 @@ describe("primary left-click routing", () => {
     fixture.frame(true, true);
 
     expect(fixture.sent).toHaveLength(0);
-    expect(routePrimaryAction(false, true, true)).toEqual({
+    expect(routePrimaryAction(false, false, true, true)).toEqual({
       weaponFirePressed: true,
       weaponFireHeld: true,
       buildPlacePressed: false,
       buildPlaceHeld: false,
+      editSelectPressed: false,
+      editSelectHeld: false,
     });
     fixture.controller.dispose();
   });
@@ -99,11 +101,13 @@ describe("primary left-click routing", () => {
     fixture.setBuildMode(true);
     fixture.frame(true, true);
 
-    expect(routePrimaryAction(true, true, true)).toEqual({
+    expect(routePrimaryAction(true, false, true, true)).toEqual({
       weaponFirePressed: false,
       weaponFireHeld: false,
       buildPlacePressed: true,
       buildPlaceHeld: true,
+      editSelectPressed: false,
+      editSelectHeld: false,
     });
     expect(fixture.sent).toEqual([
       expect.objectContaining({ type: "build:placement_request" }),
@@ -116,11 +120,13 @@ describe("primary left-click routing", () => {
     fixture.setBuildMode(true);
     fixture.frame(false, true);
 
-    expect(routePrimaryAction(true, true, true)).toEqual({
+    expect(routePrimaryAction(true, false, true, true)).toEqual({
       weaponFirePressed: false,
       weaponFireHeld: false,
       buildPlacePressed: true,
       buildPlaceHeld: true,
+      editSelectPressed: false,
+      editSelectHeld: false,
     });
     expect(fixture.sent).toHaveLength(0);
     fixture.controller.dispose();
@@ -133,11 +139,13 @@ describe("primary left-click routing", () => {
     fixture.frame(true, true);
 
     expect(fixture.sent).toHaveLength(0);
-    expect(routePrimaryAction(false, true, true)).toEqual({
+    expect(routePrimaryAction(false, false, true, true)).toEqual({
       weaponFirePressed: true,
       weaponFireHeld: true,
       buildPlacePressed: false,
       buildPlaceHeld: false,
+      editSelectPressed: false,
+      editSelectHeld: false,
     });
     fixture.controller.dispose();
   });
@@ -162,5 +170,57 @@ describe("primary left-click routing", () => {
     fixture.frame(true, true, 12, 500);
     expect(fixture.sent).toHaveLength(2);
     fixture.controller.dispose();
+  });
+
+  it("edit mode on routes the primary to tile selection only (never fire, never place)", () => {
+    expect(routePrimaryAction(false, true, true, true)).toEqual({
+      weaponFirePressed: false,
+      weaponFireHeld: false,
+      buildPlacePressed: false,
+      buildPlaceHeld: false,
+      editSelectPressed: true,
+      editSelectHeld: true,
+    });
+  });
+
+  it("edit mode wins over build mode when both flags are somehow active", () => {
+    expect(routePrimaryAction(true, true, true, true)).toEqual({
+      weaponFirePressed: false,
+      weaponFireHeld: false,
+      buildPlacePressed: false,
+      buildPlaceHeld: false,
+      editSelectPressed: true,
+      editSelectHeld: true,
+    });
+  });
+
+  it("leaving edit mode returns the primary to build placement (build on) and weapon (build off)", () => {
+    expect(routePrimaryAction(true, false, true, true)).toEqual({
+      weaponFirePressed: false,
+      weaponFireHeld: false,
+      buildPlacePressed: true,
+      buildPlaceHeld: true,
+      editSelectPressed: false,
+      editSelectHeld: false,
+    });
+    expect(routePrimaryAction(false, false, true, true)).toEqual({
+      weaponFirePressed: true,
+      weaponFireHeld: true,
+      buildPlacePressed: false,
+      buildPlaceHeld: false,
+      editSelectPressed: false,
+      editSelectHeld: false,
+    });
+  });
+
+  it("a released primary selects nothing in edit mode", () => {
+    expect(routePrimaryAction(false, true, false, false)).toEqual({
+      weaponFirePressed: false,
+      weaponFireHeld: false,
+      buildPlacePressed: false,
+      buildPlaceHeld: false,
+      editSelectPressed: false,
+      editSelectHeld: false,
+    });
   });
 });

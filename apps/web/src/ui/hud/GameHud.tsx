@@ -114,8 +114,9 @@ export function GameHud(props: GameHudProps): JSX.Element | null {
           <BuildEditHud
             mode={local.buildEdit.mode}
             target={local.buildEdit.target}
-            selectedEdit={local.buildEdit.selectedEdit}
-            allowedEdits={local.buildEdit.allowedEdits}
+            removedTiles={local.buildEdit.removedTiles}
+            totalTiles={local.buildEdit.totalTiles}
+            rampVariant={local.buildEdit.rampVariant}
             feedback={local.buildEdit.feedback}
             applyReady={local.buildEdit.applyReady}
           />
