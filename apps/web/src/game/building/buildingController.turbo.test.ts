@@ -349,6 +349,99 @@ describe("turbo building: piece switch", () => {
     ]);
     fixture.dispose();
   });
+
+  it("turbo build continues through the full sequence: ramp → floor → cone → wall", () => {
+    const fixture = createFixture();
+    fixture.setBuildMode(true);
+
+    // Start with ramp selected (Digit3). Ramp footprint [2,1,1] occupies
+    // cells (0,0,0) and (1,0,0).
+    fixture.selectPiece("Digit3");
+    fixture.frame(0, true, { gridX: 0 });
+    expect(fixture.placedRequests()).toHaveLength(1);
+    expect(fixture.placedRequests()[0].buildType).toBe("ramp");
+    fixture.confirm(0, 0, "ramp");
+
+    // Switch to floor mid-hold: cell 2 is free (ramp occupies 0 and 1).
+    fixture.selectPiece("Digit2");
+    fixture.frame(PLACEMENT_REQUEST_INTERVAL_MS + 50, true, { gridX: 2 });
+    expect(fixture.placedRequests()).toHaveLength(2);
+    expect(fixture.placedRequests()[1].buildType).toBe("floor");
+    fixture.confirm(2, 1, "floor");
+
+    // Switch to cone mid-hold: cell -1 is free and in range.
+    fixture.selectPiece("Digit4");
+    fixture.frame(2 * PLACEMENT_REQUEST_INTERVAL_MS + 100, true, { gridX: -1 });
+    expect(fixture.placedRequests()).toHaveLength(3);
+    expect(fixture.placedRequests()[2].buildType).toBe("cone");
+    fixture.confirm(-1, 2, "cone");
+
+    // Switch back to wall mid-hold: cell -2 is free and in range.
+    fixture.selectPiece("Digit1");
+    fixture.frame(3 * PLACEMENT_REQUEST_INTERVAL_MS + 150, true, { gridX: -2 });
+    expect(fixture.placedRequests()).toHaveLength(4);
+    expect(fixture.placedRequests()[3].buildType).toBe("wall");
+
+    expect(fixture.placedRequests().map((r) => r.buildType)).toEqual([
+      "ramp", "floor", "cone", "wall",
+    ]);
+    fixture.dispose();
+  });
+
+  it("piece selection is immediate: the next frame uses the new type without delay", () => {
+    const fixture = createFixture();
+    fixture.setBuildMode(true);
+
+    // Place a wall at t=0.
+    fixture.frame(0, true, { gridX: 0 });
+    expect(fixture.placedRequests()).toHaveLength(1);
+    expect(fixture.placedRequests()[0].buildType).toBe("wall");
+    fixture.confirm(0, 0, "wall");
+
+    // Switch to cone; the selection change is synchronous — no extra frame
+    // or state transition is needed. The next valid frame in a new window
+    // places the cone.
+    fixture.selectPiece("Digit4");
+    // The rate window has not opened yet, so even at t=50 no request.
+    fixture.frame(50, true, { gridX: 1 });
+    expect(fixture.placedRequests()).toHaveLength(1);
+
+    // Once the window opens, the cone is placed immediately — proving the
+    // selection took effect on the key-press frame, not a later frame.
+    fixture.frame(PLACEMENT_REQUEST_INTERVAL_MS + 10, true, { gridX: 1 });
+    expect(fixture.placedRequests()).toHaveLength(2);
+    expect(fixture.placedRequests()[1].buildType).toBe("cone");
+    fixture.dispose();
+  });
+
+  it("build mode stays active across all piece key presses", () => {
+    const fixture = createFixture();
+    fixture.setBuildMode(true);
+
+    // Press each piece key in sequence; build mode must remain active.
+    fixture.selectPiece("Digit3");
+    expect(fixture.input.isBuildModeActive()).toBe(true);
+    expect(fixture.input.getSelectedBuildType()).toBe("ramp");
+
+    fixture.selectPiece("Digit2");
+    expect(fixture.input.isBuildModeActive()).toBe(true);
+    expect(fixture.input.getSelectedBuildType()).toBe("floor");
+
+    fixture.selectPiece("Digit4");
+    expect(fixture.input.isBuildModeActive()).toBe(true);
+    expect(fixture.input.getSelectedBuildType()).toBe("cone");
+
+    fixture.selectPiece("Digit1");
+    expect(fixture.input.isBuildModeActive()).toBe(true);
+    expect(fixture.input.getSelectedBuildType()).toBe("wall");
+
+    // Turbo placement still works after all switches (cell 0 is free,
+    // player at origin, anchor at 0 — well within range).
+    fixture.frame(0, true, { gridX: 0 });
+    expect(fixture.placedRequests()).toHaveLength(1);
+    expect(fixture.placedRequests()[0].buildType).toBe("wall");
+    fixture.dispose();
+  });
 });
 
 describe("turbo building: energy stays server-authoritative", () => {
