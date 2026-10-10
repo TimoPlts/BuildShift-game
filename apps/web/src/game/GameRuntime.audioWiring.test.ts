@@ -86,11 +86,27 @@ describe("GameRuntime audio wiring", () => {
     expect(runtime).toContain("this.lastGrounded=predicted.grounded");
   });
 
-  it("plays the countdown tick sound on each countdown event", () => {
+  it("plays the countdown tick sound only when the displayed second changes", () => {
     const idx = runtime.indexOf("private handleCountdownTickEvent");
     expect(idx).toBeGreaterThan(-1);
     const block = runtime.slice(idx, idx + 400);
     expect(block).toContain("this.audio.playCountdownTick()");
+    // The server ticks at 30 Hz; the client must dedupe by displayed second.
+    expect(block).toContain("if(next===this.countdownSeconds)return");
+  });
+
+  it("unlocks audio when the runtime starts", () => {
+    const idx = runtime.indexOf("public start():void");
+    expect(idx).toBeGreaterThan(-1);
+    const block = runtime.slice(idx, idx + 400);
+    expect(block).toContain("this.audio.unlock()");
+  });
+
+  it("plays reload audio when a local reload starts", () => {
+    const idx = runtime.indexOf("this.networkClient.sendWeaponReload()");
+    expect(idx).toBeGreaterThan(-1);
+    const block = runtime.slice(idx, idx + 200);
+    expect(block).toContain("this.audio.playReload()");
   });
 
   it("resets audio on (re)connect and on match reset", () => {
