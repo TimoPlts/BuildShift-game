@@ -65,8 +65,10 @@ export function getEditTileCount(buildType: string): number | null {
  * - `flipped`    — the full ramp with reversed slope direction.
  * - `half_left`  — only the left half of the ramp is present.
  * - `half_right` — only the right half of the ramp is present.
+ * - `turn_left`  — the ramp rises and turns 90° to the left partway.
+ * - `turn_right` — the ramp rises and turns 90° to the right partway.
  */
-export type RampVariant = "full" | "flipped" | "half_left" | "half_right";
+export type RampVariant = "full" | "flipped" | "half_left" | "half_right" | "turn_left" | "turn_right";
 
 /** All valid ramp variants as a frozen tuple. */
 export const RAMP_VARIANTS = Object.freeze([
@@ -74,6 +76,8 @@ export const RAMP_VARIANTS = Object.freeze([
   "flipped",
   "half_left",
   "half_right",
+  "turn_left",
+  "turn_right",
 ] as const);
 
 /** Type guard: `value` is a valid {@link RampVariant}. */
@@ -426,6 +430,69 @@ export function applyEditAction(
 
     default:
       return null;
+  }
+}
+
+// ─── Canonical generated geometry (directional start/end semantics) ────────
+
+/**
+ * The turn direction of a ramp variant.
+ *
+ * - `none` — the ramp is a straight incline (no turn).
+ * - `left` — the ramp turns 90° to the left partway through its length.
+ * - `right` — the ramp turns 90° to the right partway through its length.
+ */
+export type RampTurnDirection = "none" | "left" | "right";
+
+/**
+ * Canonical generated geometry for a ramp variant.
+ *
+ * Uses directional start/end semantics: the ramp is described by its
+ * start height, end height, turn direction, and span — not by wall tiles.
+ * Both the client (renderer) and the server (collision preview) derive
+ * identical geometry from the same variant via {@link generateRampGeometry}.
+ */
+export interface RampGeometry {
+  /** Height at the start (low) end of the ramp, in layers (0 = ground). */
+  startHeight: number;
+  /** Height at the end (high) end of the ramp, in layers. */
+  endHeight: number;
+  /** The fraction of the full 2-cell ramp length that is present (1.0 = full, 0.5 = half). */
+  spanFraction: number;
+  /** The turn direction for turn variants. */
+  turn: RampTurnDirection;
+  /** Whether the ramp slope is in its default direction (`false`) or reversed (`true`). */
+  reversed: boolean;
+}
+
+/**
+ * Generates the canonical geometry for a ramp variant.
+ *
+ * This is the single source of truth for the ramp's directional start/end
+ * shape. Both client and server call this to derive identical geometry.
+ * The geometry is purely data (no engine imports) and is serializable.
+ *
+ * - `full`       → start 0, end 1, span 1.0, no turn, not reversed.
+ * - `flipped`    → start 0, end 1, span 1.0, no turn, reversed.
+ * - `half_left`  → start 0, end 1, span 0.5, no turn, not reversed.
+ * - `half_right` → start 0, end 1, span 0.5, no turn, reversed.
+ * - `turn_left`  → start 0, end 1, span 1.0, turn left, not reversed.
+ * - `turn_right` → start 0, end 1, span 1.0, turn right, not reversed.
+ */
+export function generateRampGeometry(variant: RampVariant): RampGeometry {
+  switch (variant) {
+    case "full":
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "none", reversed: false };
+    case "flipped":
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "none", reversed: true };
+    case "half_left":
+      return { startHeight: 0, endHeight: 1, spanFraction: 0.5, turn: "none", reversed: false };
+    case "half_right":
+      return { startHeight: 0, endHeight: 1, spanFraction: 0.5, turn: "none", reversed: true };
+    case "turn_left":
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "left", reversed: false };
+    case "turn_right":
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "right", reversed: false };
   }
 }
 
