@@ -14,8 +14,14 @@
  *    resets EVERY presentation and tracked-state system, so nothing stale
  *    (effects, weapon model, audio, build edit, remote flags, timers)
  *    survives into the next round or match;
+ *  - the input sequence is monotonic for the lifetime of a session (the
+ *    authoritative room only re-baselines it for a new session join), so the
+ *    round-reset block discards unacknowledged inputs WITHOUT resetting the
+ *    sequence counter — resetting it there is the cross-round input freeze;
  *  - (re)connect (join / rejoin / rematch) resets the same set AND clears
- *    the match bookkeeping, so a rejoin never replays a stale match-end;
+ *    the match bookkeeping, so a rejoin never replays a stale match-end; a
+ *    (re)connect always starts a NEW session, so only there may the input
+ *    sequence restart from 0;
  *  - a connection drop clears the build-edit presentation state;
  *  - teardown stops the render loop, removes the window listener, releases
  *    EVERY network subscription, disposes every owned component (including
@@ -28,10 +34,14 @@ import { describe, expect, it } from "vitest";
 const runtime = readFileSync(new URL("./GameRuntime.ts", import.meta.url), "utf8");
 const internal = readFileSync(new URL("./GameRuntimeInternal.ts", import.meta.url), "utf8");
 
-/** The per-system resets a fresh round / match must perform. */
+/** The per-system resets a fresh round / match must perform. The input
+ *  batcher op here is the boundary-safe discard: the sequence stays
+ *  monotonic for the lifetime of the session, only the unacknowledged
+ *  buffer is dropped (the authoritative room clears its pending inputs at
+ *  the same boundary and never processes them). */
 const ROUND_RESET_OPS = [
   "this.predictionOrchestrator.reset()",
-  "this.inputBatcher.reset()",
+  "this.inputBatcher.discardUnacknowledged()",
   "this.remoteInterpolation.reset()",
   "this.energyConsumer.reset()",
   "this.weaponController.reset()",
@@ -46,6 +56,18 @@ const ROUND_RESET_OPS = [
   "this.lastRoundTimer=null",
   "this.countdownSeconds=0",
 ] as const;
+
+/**
+ * The same per-system resets for (re)connect, except the input batcher:
+ * a (re)connect always starts a NEW session (the room re-baselines
+ * `lastProcessedSequence` to -1 for the new join), so only there may the
+ * local sequence restart from 0.
+ */
+const CONNECT_RESET_OPS = ROUND_RESET_OPS.map((op) =>
+  op === "this.inputBatcher.discardUnacknowledged()"
+    ? "this.inputBatcher.reset()"
+    : op,
+);
 
 /** The authoritative mirrors a fresh round / match must reset as well. */
 const ROUND_RESET_AUTHORITATIVE = [
@@ -86,6 +108,17 @@ describe("round reset / rematch cleanup", () => {
     }
   });
 
+  it("never restarts the input sequence on a round reset (cross-round freeze regression)", () => {
+    // The authoritative room keeps its per-player lastProcessedSequence
+    // across round reset / match end / rematch; restarting the local
+    // sequence from 0 there makes every new frame stale. The round-reset
+    // block must therefore discard unacknowledged inputs only — never
+    // call the session-scoped inputBatcher.reset().
+    const block = shouldResetBlock(runtime);
+    expect(block).not.toContain("this.inputBatcher.reset()");
+    expect(block).toContain("this.inputBatcher.discardUnacknowledged()");
+  });
+
   it("resets the authoritative building / build-edit mirrors on a round reset", () => {
     const block = shouldResetBlock(runtime);
     for (const op of ROUND_RESET_AUTHORITATIVE) {
@@ -95,9 +128,11 @@ describe("round reset / rematch cleanup", () => {
 
   it("resets the full system set AND the match bookkeeping on (re)connect", () => {
     const block = connectBlock(runtime);
-    for (const op of ROUND_RESET_OPS) {
+    for (const op of CONNECT_RESET_OPS) {
       expect(block, op).toContain(op);
     }
+    // A (re)connect is a new session: the input sequence MAY (and must) restart from 0 here.
+    expect(block).toContain("this.inputBatcher.reset()");
     // Rejoin/rematch must also clear the match-level bookkeeping, or a
     // stale match-end / snapshot would bleed into the fresh match.
     expect(block).toContain("this.matchOver=false");
