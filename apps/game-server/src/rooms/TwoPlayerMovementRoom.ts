@@ -7,11 +7,14 @@ import { BuildingStateSchema, StructureStateSchema, oc, wc } from "../state/buil
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
+import { applyWallEditPattern, wallPatternGeometry } from "../state/wallEditPatterns.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
 export const WEAPON_SWITCH_INPUT = "two-player:weapon_switch";
 export const EDIT_GRID_ACTION_INPUT = "two-player:edit_grid_action";
+export const WALL_PATTERN_INPUT = "two-player:wall_pattern";
+export const WALL_PATTERN_RESULT = "two-player:wall_pattern_result";
 const THZ = 30, TD = 1 / THZ;
 const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gravity, jumpVelocity: VERTICAL_MOVEMENT.jumpVelocity, terminalVelocity: VERTICAL_MOVEMENT.terminalVelocity, groundY: VERTICAL_MOVEMENT.groundY };
 const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
@@ -88,7 +91,7 @@ export class TwoPlayerMovementRoom extends Room<{
         this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; });
         this.reconnectGrace = createReconnectGraceManager(RECONNECT_GRACE_MS, (sid, snap) => this.handleGraceExpire(sid, snap as PlayerSnapshot));
     }
-    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(EDIT_GRID_ACTION_INPUT, (c, m) => { this.hega(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
+    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(EDIT_GRID_ACTION_INPUT, (c, m) => { this.hega(c, m); }); this.onMessage(WALL_PATTERN_INPUT, (c, m) => { this.hwp(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
     onJoin(c: Client): void {
         // Reconnect within grace: restore prior authoritative state.
         const snap = this.reconnectGrace.restore(c.sessionId) as PlayerSnapshot | undefined;
@@ -319,6 +322,50 @@ export class TwoPlayerMovementRoom extends Room<{
         }
         const result = { structureId: req.structureId, success: true, editState: serializeEditState(newState) };
         this.broadcast(EDIT_GRID_ACTION_INPUT, result);
+    }
+    private hwp(c: Client, m: unknown): void {
+        const reject = (id: string, reason: string) => c.send(WALL_PATTERN_RESULT, { structureId: id, success: false, reason });
+        if (!m || typeof m !== "object" || Array.isArray(m))
+            return;
+        const r = m as Record<string, unknown>, id = r.structureId;
+        if (typeof id !== "string" || !id)
+            return;
+        const p = this.state.players.get(c.sessionId), s = this.bld.structures.get(id);
+        if (!p || !p.alive || p.isEliminated || this.state.matchPhase !== MatchPhase.IN_PROGRESS) {
+            reject(id, "invalid_player_state");
+            return;
+        }
+        if (!s) {
+            reject(id, "structure_not_found");
+            return;
+        }
+        if (s.ownerId !== c.sessionId) {
+            reject(id, "not_owned");
+            return;
+        }
+        // Edits only apply to intact structures; durability (HP) is never
+        // modified by an edit, matching the existing build-edit routes.
+        if (s.currentDurability <= 0 || s.currentDurability < s.maxDurability) {
+            reject(id, "invalid_structure_state");
+            return;
+        }
+        const applied = applyWallEditPattern(s.buildType, r.pattern);
+        if (!applied.ok) {
+            reject(id, applied.reason);
+            return;
+        }
+        s.editKind = "wall";
+        s.editTiles.length = 0;
+        for (const tile of applied.tiles) s.editTiles.push(tile);
+        s.editRampVariant = "";
+        s.editType = applied.editType;
+        this.broadcast(WALL_PATTERN_RESULT, {
+            structureId: id,
+            success: true,
+            pattern: applied.pattern,
+            editState: { kind: "wall", tiles: applied.tiles },
+            geometry: wallPatternGeometry(applied.pattern, { x: s.grid.x, y: s.grid.y, z: s.grid.z }, s.rotation),
+        });
     }
     private adv(): void { for (const [sid, p] of this.state.players) {
         const ws = this.wps.get(sid);
