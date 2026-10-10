@@ -64,7 +64,7 @@ describe("GameRuntime player presentation wiring", () => {
     expect(hitIdx).toBeGreaterThan(-1);
     const hitHandler = runtime.slice(hitIdx, hitIdx + 400);
     expect(hitHandler).toContain(
-      "if(sid&&e.targetId===sid&&e.shooterId!==sid)this.localHitFlashFrames=6",
+      "if(sid&&e.targetId===sid&&e.shooterId!==sid){this.localHitFlashFrames=6;this.combatFeedback.triggerDamageTaken();}",
     );
     // The render frame applies eliminated + hit-flash state to the local
     // presentation via the same applyState contract the remote body uses.
