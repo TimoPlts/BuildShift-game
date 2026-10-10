@@ -19,8 +19,11 @@
  *    first user interaction).
  *  - `playFire(weaponType)` — AR or shotgun fire sound.
  *  - `playHitConfirm()` — confirmed hit marker sound.
- *  - `playBuildPlace()` — structure placement sound.
- *  - `playBuildDestroy()` — structure destruction sound.
+ *  - `playBuildPlace()` — structure placement sound (throttled: at most
+ *    one blast per 120 ms, so chain events do not stack).
+ *  - `playBuildDestroy()` — structure destruction sound (throttled as
+ *    above; place and destroy use independent guards).
+ *  - `playReload()` — reload start sound.
  *  - `playJump()` — jump takeoff sound.
  *  - `playLand(intensity)` — landing sound (intensity 0–1).
  *  - `playCountdownTick()` — countdown tick sound.
@@ -107,6 +110,10 @@ export class ClientAudio {
   private readonly _activeSources: Set<
     OscillatorNodeLike | BufferSourceNodeLike
   > = new Set();
+  /** Minimum gap between build place/destroy blasts (AudioContext clock). */
+  private static readonly BUILD_SOUND_MIN_GAP_SECONDS = 0.12;
+  private _lastBuildPlaceAt = -Infinity;
+  private _lastBuildDestroyAt = -Infinity;
   private _unlockPointerHandler: (() => void) | null = null;
   private _unlockKeyHandler: (() => void) | null = null;
 
@@ -155,7 +162,8 @@ export class ClientAudio {
     if (this._disposed || !this._unlocked) return;
     const ctx = this._ctx;
     if (!ctx) return;
-    this._playTone(880, 0.05, "sine", 0.3);
+    // Sits slightly above fire noise so the marker reads through gunfire.
+    this._playTone(880, 0.05, "sine", 0.35);
   }
 
   /** Play the build placement sound. */
@@ -163,6 +171,11 @@ export class ClientAudio {
     if (this._disposed || !this._unlocked) return;
     const ctx = this._ctx;
     if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - this._lastBuildPlaceAt < ClientAudio.BUILD_SOUND_MIN_GAP_SECONDS) {
+      return;
+    }
+    this._lastBuildPlaceAt = now;
     this._playTone(200, 0.1, "sine", 0.35);
   }
 
@@ -171,7 +184,23 @@ export class ClientAudio {
     if (this._disposed || !this._unlocked) return;
     const ctx = this._ctx;
     if (!ctx) return;
-    this._playTone(80, 0.2, "sawtooth", 0.5);
+    const now = ctx.currentTime;
+    if (
+      now - this._lastBuildDestroyAt < ClientAudio.BUILD_SOUND_MIN_GAP_SECONDS
+    ) {
+      return;
+    }
+    this._lastBuildDestroyAt = now;
+    this._playTone(80, 0.2, "sawtooth", 0.4);
+  }
+
+  /** Play the reload start sound (two short blips). */
+  public playReload(): void {
+    if (this._disposed || !this._unlocked) return;
+    const ctx = this._ctx;
+    if (!ctx) return;
+    this._playTone(300, 0.05, "triangle", 0.2);
+    this._playTone(450, 0.05, "triangle", 0.2, 0.07);
   }
 
   /** Play the jump takeoff sound. */
@@ -187,7 +216,8 @@ export class ClientAudio {
     if (this._disposed || !this._unlocked) return;
     const ctx = this._ctx;
     if (!ctx) return;
-    const vol = 0.15 + 0.35 * Math.max(0, Math.min(1, intensity));
+    // Frequent movement SFX: peaks below one-shot events like destruction.
+    const vol = 0.1 + 0.25 * Math.max(0, Math.min(1, intensity));
     this._playTone(150, 0.06, "sine", vol);
   }
 
@@ -236,6 +266,9 @@ export class ClientAudio {
       }
     }
     this._activeSources.clear();
+    // A fresh round/reconnect may immediately play build sounds.
+    this._lastBuildPlaceAt = -Infinity;
+    this._lastBuildDestroyAt = -Infinity;
   }
 
   /**
