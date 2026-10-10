@@ -24,18 +24,33 @@
 /**
  * The grid-snapping lattice for structure placement.
  *
- * A build cell is a `cellSize` × `cellSize` (metres) square in the X/Z plane,
- * stacked in layers of `layerHeight` metres. `groundLayer` is the index of the
- * lowest buildable layer (the layer whose base sits on the ground). The client
- * snaps its placement preview to this lattice and the server validates a
- * placement against it; both derive a cell's world-space position from the
- * shared cell size / layer height so they cannot drift.
+ * This is the **canonical modular build geometry**: one shared, authoritative
+ * definition of the build lattice that the client (preview snapper, renderer,
+ * selection, placement offsets) and the authoritative server (validator,
+ * collision collider placement) both consume so they can never drift.
+ *
+ * The modular unit is a `cellSize` × `cellSize` (metres) square in the X/Z
+ * plane — approximately **5.12 m** per cell — stacked in layers of
+ * `layerHeight` metres — approximately **3.84 m** per layer. The cell and the
+ * layer keep a clean 4:3 ratio (5.12 : 3.84), so the grid reads as a coherent
+ * modular set. `groundLayer` is the index of the lowest buildable layer (the
+ * layer whose base sits on the ground). The client snaps its placement preview
+ * to this lattice and the server validates a placement against it; both derive
+ * a cell's world-space position from the shared cell size / layer height, so
+ * the wall/ramp **rise is exactly one layer (≈ 3.84 m)** on both sides.
  */
 export const BUILD_GRID = {
-  /** Size of a single build cell in the X/Z plane, in metres. */
-  cellSize: 2,
-  /** Height of a single build layer, in metres (distance between layer bases). */
-  layerHeight: 1.5,
+  /**
+   * Size of a single build cell in the X/Z plane, in metres. The canonical
+   * modular cell is ≈ 5.12 m wide.
+   */
+  cellSize: 5.12,
+  /**
+   * Height of a single build layer, in metres (distance between layer bases).
+   * The canonical modular layer is ≈ 3.84 m; a wall or ramp that rises one
+   * layer therefore rises ≈ 3.84 m.
+   */
+  layerHeight: 3.84,
   /** The index of the ground layer (the lowest buildable layer). */
   groundLayer: 0,
 } as const;
@@ -47,25 +62,27 @@ export const BUILD_GRID = {
  *
  * A placement is valid only when every cell its footprint occupies lies
  * within `[minX..maxX] × [minLayer..maxLayer] × [minZ..maxZ]` (inclusive).
- * The bounds are symmetric on X/Z and match the 30 m × 30 m arena ground:
- * 15 cells × 2 m/cell = 30 m.
+ * The bounds are symmetric on X/Z and are sized so the build volume fits
+ * within the 30 m × 30 m arena ground: with ≈ 5.12 m cells, 5 cells span
+ * 25.6 m (leaving a margin inside the arena). Vertically the volume allows
+ * three ≈ 3.84 m layers (11.52 m).
  *
  * Both the client preview snapper and the authoritative server validator
  * reference these same bounds so they cannot drift.
  */
 export const BUILD_BOUNDS = {
   /** Minimum cell index along world X. */
-  minX: -7,
+  minX: -2,
   /** Maximum cell index along world X. */
-  maxX: 7,
+  maxX: 2,
   /** Minimum cell index along world Z. */
-  minZ: -7,
+  minZ: -2,
   /** Maximum cell index along world Z. */
-  maxZ: 7,
+  maxZ: 2,
   /** Minimum (lowest) buildable layer index. */
   minLayer: 0,
   /** Maximum (highest) buildable layer index. */
-  maxLayer: 6,
+  maxLayer: 2,
 } as const;
 
 // ─────────────────────────── Range configuration ─────────────────────────────
@@ -121,8 +138,8 @@ export interface StructureConfig {
   buildType: BuildStructureKey;
   /**
    * Grid footprint in build cells: `[width (x), height (y), depth (z)]`,
-   * measured in the units of {@link BUILD_GRID} (cellSize per x/z cell,
-   * layerHeight per y layer). The footprint is how many grid cells the
+   * measured in the units of {@link BUILD_GRID} (≈ 5.12 m per x/z cell,
+   * ≈ 3.84 m per y layer). The footprint is how many grid cells the
    * structure occupies when placed at its anchor cell.
    */
   footprint: [number, number, number];
@@ -139,12 +156,20 @@ export interface StructureConfig {
 /**
  * The per-kind building tuning.
  *
- *  - **wall** — a vertical barrier: 1 cell wide (2 m), 2 layers tall (3 m),
- *   1 deep (2 m), and rotatable in 4 cardinal directions.
- * - **floor** — a single-cell platform (2 m × 1.5 m × 2 m); rotation-invariant.
- * - **ramp** — a two-cell-long (4 m) incline spanning one layer (1.5 m);
- *   rotatable in 4 cardinal directions.
- * - **cone** — a single-cell point/fixture (2 m × 1.5 m × 2 m); rotation-invariant.
+ * All four kinds are built from the same ≈ 5.12 m × ≈ 3.84 m modular cell,
+ * with thin surfaces (the renderer presents walls as thin panels, floors as
+ * thin slabs, ramps as low inclines — see `BuildStructureRenderer`): the
+ * authoritative footprint/collider stays the full cell so gameplay and
+ * authority are unchanged, while the visual reads as a thin surface.
+ *
+ *  - **wall** — a vertical barrier one cell wide (≈ 5.12 m) and one layer
+ *   tall (≈ 3.84 m rise), rotatable in 4 cardinal directions.
+ * - **floor** — a single-cell platform (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
+ *   rotation-invariant.
+ * - **ramp** — a two-cell-long (≈ 10.24 m) incline rising one layer
+ *   (≈ 3.84 m), rotatable in 4 cardinal directions.
+ * - **cone** — a single-cell point/fixture (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
+ *   rotation-invariant.
  *
  * Consumers look a structure up by build type via {@link getStructureConfig};
  * additional structure kinds can be appended to {@link BUILD_STRUCTURE_KEYS}
@@ -154,7 +179,7 @@ export interface StructureConfig {
 export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
   wall: {
     buildType: "wall",
-    footprint: [1, 2, 1],
+    footprint: [1, 1, 1],
     cost: 10,
     rotationCount: 4,
   },

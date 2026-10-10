@@ -41,11 +41,12 @@ function building(
   return { structures: map };
 }
 
-// A wall is footprint [1,2,1] → cellSize 2, layerHeight 1.5. At grid (0,0,-3)
-// rotation 0 its AABB (per the shared wc/structureAabb formula) is
-// ctr=(0, 1.5, -6), he=(1, 1.5, 1) → x ∈ [-1,1], y ∈ [0,3], z ∈ [-7,-5].
+// A wall is footprint [1,1,1] → cellSize ≈ 5.12, layerHeight ≈ 3.84. At grid
+// (0,0,-1) rotation 0 its AABB (per the shared wc/structureAabb formula) is
+// ctr=(0, 1.92, -5.12), he=(2.56, 1.92, 2.56) → x ∈ [-2.56,2.56],
+// y ∈ [0,3.84], z ∈ [-7.68,-2.56].
 // A ray from the camera at (0,2,0) straight down -Z hits its near face at
-// z=-5 → t=5.
+// z=-2.56 → t=2.56.
 const ORIGIN: Vec3Like = { x: 0, y: 2, z: 0 };
 const FORWARD: Vec3Like = { x: 0, y: 0, z: -1 };
 const RANGE = 12;
@@ -56,12 +57,12 @@ describe("selectTargetStructure", () => {
       aimOrigin: ORIGIN,
       aimDirection: FORWARD,
       maxRange: RANGE,
-      building: building([structure("wall1", "wall", { x: 0, y: 0, z: -3 }, "me")]),
+      building: building([structure("wall1", "wall", { x: 0, y: 0, z: -1 }, "me")]),
       ownerId: "me",
     });
     expect(target).not.toBeNull();
     expect(target?.structureId).toBe("wall1");
-    expect(target?.distance).toBeCloseTo(5, 5);
+    expect(target?.distance).toBeCloseTo(2.56, 5);
   });
 
   it("skips structures owned by other players", () => {
@@ -69,7 +70,7 @@ describe("selectTargetStructure", () => {
       aimOrigin: ORIGIN,
       aimDirection: FORWARD,
       maxRange: RANGE,
-      building: building([structure("theirs", "wall", { x: 0, y: 0, z: -3 }, "other")]),
+      building: building([structure("theirs", "wall", { x: 0, y: 0, z: -1 }, "other")]),
       ownerId: "me",
     });
     expect(target).toBeNull();
@@ -81,7 +82,7 @@ describe("selectTargetStructure", () => {
       aimDirection: FORWARD,
       maxRange: RANGE,
       building: building([
-        structure("far", "wall", { x: 0, y: 0, z: -5 }, "me"),
+        structure("far", "wall", { x: 0, y: 0, z: -2 }, "me"),
         structure("near", "wall", { x: 0, y: 0, z: -1 }, "me"),
       ]),
       ownerId: "me",
@@ -131,7 +132,7 @@ describe("selectTargetStructure", () => {
       maxRange: RANGE,
       building: building([
         structure("cone1", "cone", { x: 0, y: 0, z: -1 }, "me"),
-        structure("wall1", "wall", { x: 0, y: 0, z: -3 }, "me"),
+        structure("wall1", "wall", { x: 0, y: 0, z: -2 }, "me"),
       ]),
       ownerId: "me",
       isEligible: (s) => s.buildType !== "cone",
@@ -140,14 +141,14 @@ describe("selectTargetStructure", () => {
   });
 
   it("selects an owned floor (a valid edit target) on the aim ray", () => {
-    // Floor at grid (0,0,-3): footprint [1,1,1], layerHeight 1.5 → AABB
-    // ctr=(0, 0.75, -6), he=(1, 0.75, 1) → y ∈ [0,1.5], z ∈ [-7,-5].
-    // A ray at y=0.75, z=0 going -Z intersects the y slab [0,1.5] → hit.
+    // Floor at grid (0,0,-1): footprint [1,1,1], layerHeight ≈ 3.84 → AABB
+    // ctr=(0, 1.92, -5.12), he=(2.56, 1.92, 2.56) → y ∈ [0,3.84], z ∈ [-7.68,-2.56].
+    // A ray at y=0.75, z=0 going -Z intersects the y slab [0,3.84] → hit.
     const target = selectTargetStructure({
       aimOrigin: { x: 0, y: 0.75, z: 0 },
       aimDirection: FORWARD,
       maxRange: RANGE,
-      building: building([structure("floor1", "floor", { x: 0, y: 0, z: -3 }, "me")]),
+      building: building([structure("floor1", "floor", { x: 0, y: 0, z: -1 }, "me")]),
       ownerId: "me",
     });
     expect(target?.structureId).toBe("floor1");
