@@ -15,17 +15,21 @@ import {
   DESTRUCTION_IMPACT_RATIO,
   EDIT_TRANSITION_DURATION,
   HIT_FLASH_DURATION,
+  PLACEMENT_CONFIRM_DURATION,
   type StructureEffects,
 } from "./structureEffects";
 
 const NOW = 10_000;
 
 describe("createConstructionEffects", () => {
-  it("has an active construction animation and no other effects", () => {
+  it("has an active construction + confirmation animation and no other effects", () => {
     const effects = createConstructionEffects(NOW);
     expect(effects.construction).not.toBeNull();
     expect(effects.construction!.startTime).toBe(NOW);
     expect(effects.construction!.duration).toBe(CONSTRUCTION_DURATION);
+    expect(effects.confirmation).not.toBeNull();
+    expect(effects.confirmation!.startTime).toBe(NOW);
+    expect(effects.confirmation!.duration).toBe(PLACEMENT_CONFIRM_DURATION);
     expect(effects.hitFlash).toBeNull();
     expect(effects.destruction).toBeNull();
     expect(effects.editTransition).toBeNull();
@@ -42,9 +46,41 @@ describe("createConstructionEffects", () => {
 
   it("composeVisual after duration gives scale 1 and allDone", () => {
     const effects = createConstructionEffects(NOW);
-    const { visual, allDone } = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION);
+    const { visual, allDone } = composeVisual(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION);
     expect(visual.uniformScale).toBeCloseTo(1, 2);
     expect(allDone).toBe(true);
+  });
+});
+
+describe("placement confirmation glow", () => {
+  it("decays from full strength to zero over the confirm duration", () => {
+    const effects = createConstructionEffects(NOW);
+
+    const atStart = composeVisual(effects, 1, 0, NOW);
+    expect(atStart.visual.confirmStrength).toBeCloseTo(1, 5);
+    expect(atStart.allDone).toBe(false);
+
+    const mid = composeVisual(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION * 0.5);
+    expect(mid.visual.confirmStrength).toBeGreaterThan(0);
+    expect(mid.visual.confirmStrength).toBeLessThan(1);
+
+    const after = composeVisual(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION);
+    expect(after.visual.confirmStrength).toBe(0);
+    expect(after.allDone).toBe(true);
+  });
+
+  it("keeps allDone false while the confirm glow is still decaying", () => {
+    const effects = createConstructionEffects(NOW);
+    // Construction (200ms) finishes before confirmation (220ms).
+    const { allDone } = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION);
+    expect(allDone).toBe(false);
+  });
+
+  it("is absent from destruction effects", () => {
+    const effects = createDestructionEffects(NOW);
+    expect(effects.confirmation).toBeNull();
+    const { visual } = composeVisual(effects, 1, 0, NOW);
+    expect(visual.confirmStrength).toBe(0);
   });
 });
 
@@ -55,6 +91,7 @@ describe("createDestructionEffects", () => {
     expect(effects.destruction!.startTime).toBe(NOW);
     expect(effects.destruction!.duration).toBe(DESTRUCTION_DURATION);
     expect(effects.construction).toBeNull();
+    expect(effects.confirmation).toBeNull();
     expect(effects.hitFlash).toBeNull();
     expect(effects.editTransition).toBeNull();
   });
@@ -136,6 +173,7 @@ describe("startEditTransition", () => {
   it("interpolates from full to half-top over duration", () => {
     const effects: StructureEffects = {
       construction: null,
+      confirmation: null,
       hitFlash: null,
       destruction: null,
       editTransition: null,
@@ -161,6 +199,7 @@ describe("startEditTransition", () => {
   it("interpolates from half-top back to full", () => {
     const effects: StructureEffects = {
       construction: null,
+      confirmation: null,
       hitFlash: null,
       destruction: null,
       editTransition: null,
@@ -178,6 +217,7 @@ describe("composeVisual with no effects", () => {
   it("returns identity visual and allDone", () => {
     const effects: StructureEffects = {
       construction: null,
+      confirmation: null,
       hitFlash: null,
       destruction: null,
       editTransition: null,
@@ -189,6 +229,7 @@ describe("composeVisual with no effects", () => {
     expect(visual.alpha).toBe(1);
     expect(visual.emissiveBoost).toEqual([0, 0, 0]);
     expect(visual.diffuseBoost).toEqual([0, 0, 0]);
+    expect(visual.confirmStrength).toBe(0);
     expect(allDone).toBe(true);
     expect(shouldRemove).toBe(false);
   });
@@ -213,7 +254,11 @@ describe("composeVisualInto (in-place composition)", () => {
 
     const done = composeVisualInto(effects, 1, 0, NOW + CONSTRUCTION_DURATION, out);
     expect(out.uniformScale).toBeCloseTo(1, 2);
-    expect(done.allDone).toBe(true);
+    expect(done.allDone).toBe(false); // confirm glow (220ms) still decaying
+
+    const settled = composeVisualInto(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION, out);
+    expect(settled.allDone).toBe(true);
+    expect(out.confirmStrength).toBe(0);
   });
 
   it("agrees with composeVisual for the same inputs", () => {
@@ -242,5 +287,16 @@ describe("composeVisualInto (in-place composition)", () => {
     composeVisualInto(effects, 1, 0, NOW + DESTRUCTION_DURATION, out);
     expect(out.emissiveBoost).toEqual([0, 0, 0]);
     expect(out.diffuseBoost).toEqual([0, 0, 0]);
+    expect(out.confirmStrength).toBe(0);
+  });
+
+  it("resets confirmStrength on frames without a confirmation glow", () => {
+    const effects = createConstructionEffects(NOW);
+    const out = createComposedVisual();
+    composeVisualInto(effects, 1, 0, NOW, out);
+    expect(out.confirmStrength).toBeGreaterThan(0);
+    // A frame with no active confirmation (destruction effects) resets it.
+    composeVisualInto(createDestructionEffects(NOW), 1, 0, NOW, out);
+    expect(out.confirmStrength).toBe(0);
   });
 });

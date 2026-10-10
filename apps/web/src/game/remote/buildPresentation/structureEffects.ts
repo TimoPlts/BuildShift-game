@@ -1,9 +1,10 @@
 /**
  * Per-structure visual effect state for build presentation.
  *
- * Tracks the three transient effects that can be active on a structure mesh
+ * Tracks the transient visual effects that can be active on a structure mesh
  * simultaneously:
  *  - **construction** — scale-in pop when a structure first appears
+ *  - **confirmation** — short emissive glow confirming an accepted placement
  *  - **hitFlash** — brief emissive flash when durability decreases
  *  - **destruction** — scale-out + fade when a structure is authoritatively removed
  *
@@ -20,6 +21,7 @@ import {
   easeInQuad,
   easeInOutCubic,
   easeOutBack,
+  easeOutQuad,
   type AnimationState,
 } from "./animations";
 
@@ -27,6 +29,13 @@ import {
 
 /** Construction pop-in duration. */
 export const CONSTRUCTION_DURATION = 200;
+/**
+ * Placement-confirmation glow duration: the short authoritative acceptance
+ * pulse that plays (on top of the pop-in) when a structure first appears in
+ * the replicated state. Kept at or under the construction duration so the
+ * structure is fully settled once both transient effects are done.
+ */
+export const PLACEMENT_CONFIRM_DURATION = 220;
 /** Hit flash duration. */
 export const HIT_FLASH_DURATION = 180;
 /** Destruction fade-out duration. */
@@ -50,6 +59,8 @@ export const DESTRUCTION_IMPACT_RATIO = 0.3;
  */
 export interface StructureEffects {
   construction: AnimationState | null;
+  /** Short acceptance glow when the structure first appears (authoritative). */
+  confirmation: AnimationState | null;
   hitFlash: AnimationState | null;
   destruction: AnimationState | null;
   editTransition: EditTransition | null;
@@ -68,10 +79,12 @@ export interface EditTransition {
 
 // ─── Factories ───────────────────────────────────────────────────────────────
 
-/** Fresh effects for a newly-constructed structure (construction pop active). */
+/** Fresh effects for a newly-constructed structure (construction pop +
+ * authoritative placement-confirmation glow active). */
 export function createConstructionEffects(now: number): StructureEffects {
   return {
     construction: createAnimation(now, CONSTRUCTION_DURATION),
+    confirmation: createAnimation(now, PLACEMENT_CONFIRM_DURATION),
     hitFlash: null,
     destruction: null,
     editTransition: null,
@@ -82,6 +95,7 @@ export function createConstructionEffects(now: number): StructureEffects {
 export function createDestructionEffects(now: number): StructureEffects {
   return {
     construction: null,
+    confirmation: null,
     hitFlash: null,
     destruction: createAnimation(now, DESTRUCTION_DURATION),
     editTransition: null,
@@ -134,6 +148,11 @@ export interface ComposedVisual {
   emissiveBoost: [number, number, number];
   /** Additional diffuse color to add (hit flash white-shift). */
   diffuseBoost: [number, number, number];
+  /**
+   * Placement-confirmation glow strength (0..1): 1 when a structure is first
+   * accepted, decaying to 0 over {@link PLACEMENT_CONFIRM_DURATION}.
+   */
+  confirmStrength: number;
 }
 
 /**
@@ -148,6 +167,7 @@ export function createComposedVisual(): ComposedVisual {
     alpha: 1,
     emissiveBoost: [0, 0, 0],
     diffuseBoost: [0, 0, 0],
+    confirmStrength: 0,
   };
 }
 
@@ -200,6 +220,7 @@ export function composeVisualInto(
   diffuseBoost[0] = 0;
   diffuseBoost[1] = 0;
   diffuseBoost[2] = 0;
+  out.confirmStrength = 0;
   let allDone = true;
 
   // Edit transition: lerp between old and new edit pose
@@ -216,6 +237,13 @@ export function composeVisualInto(
     const t = animationProgress(effects.construction, now);
     uniformScale = easeOutBack(t);
     if (!effects.construction.done) allDone = false;
+  }
+
+  // Placement-confirmation glow (short authoritative acceptance pulse)
+  if (effects.confirmation && !effects.confirmation.done) {
+    const t = animationProgress(effects.confirmation, now);
+    out.confirmStrength = 1 - easeOutQuad(t);
+    if (!effects.confirmation.done) allDone = false;
   }
 
   // Destruction scale-out + fade, with an impact flash at the start

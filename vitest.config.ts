@@ -30,7 +30,8 @@ export default defineConfig({
       // interim.
       "apps/web/src/net/**",
       "apps/web/src/network/**",
-      "apps/web/src/game/remote/**",
+      // Retired empty stub (0 bytes); the rest of game/remote holds live suites.
+      "apps/web/src/game/remote/remotePlayerSet.test.ts",
       "apps/web/src/game/GameRuntime.twoPlayer.integration.test.ts",
       // Browser/E2E tests are run via Playwright, not Vitest.
       "**/*.browser.test.ts",
