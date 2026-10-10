@@ -79,6 +79,22 @@ export const StructureStateSchema = schema(
      * carries the most recently applied edit.
      */
     editType: t.string(),
+    /**
+     * The edit-grid kind discriminator: "wall" (3×3), "floor_cone" (2×2),
+     * or "ramp" (directional). Empty string when no edit grid is active.
+     */
+    editKind: t.string(),
+    /**
+     * Tile states for the edit grid (row-major booleans).
+     * 9 elements for wall, 4 for floor/cone, empty for ramp.
+     * `true` = solid, `false` = removed.
+     */
+    editTiles: t.array("boolean"),
+    /**
+     * The active ramp variant ("full" | "flipped" | "half_left" | "half_right").
+     * Empty string when the structure is not a ramp or no variant is set.
+     */
+    editRampVariant: t.string(),
   },
   "StructureStateSchema",
 );

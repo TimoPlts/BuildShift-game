@@ -204,6 +204,36 @@ export {
   validateStructurePlacementIntent,
 } from "./building.js";
 
+// ───── Canonical edit-grid model (tile-based build editing) ─────────────
+
+export {
+  WALL_EDIT_COLS,
+  WALL_EDIT_ROWS,
+  WALL_EDIT_TILE_COUNT,
+  FLOOR_CONE_EDIT_COLS,
+  FLOOR_CONE_EDIT_ROWS,
+  FLOOR_CONE_EDIT_TILE_COUNT,
+  getEditTileCount,
+  RAMP_VARIANTS,
+  isRampVariant,
+  type RampVariant,
+  type WallEditState,
+  type FloorConeEditState,
+  type RampEditState,
+  type StructureEditState,
+  createDefaultEditState,
+  EDIT_ACTION_TYPES,
+  isEditActionType,
+  type EditActionType,
+  type EditActionRequest,
+  type EditActionResult,
+  validateEditActionRequest,
+  validateEditState,
+  applyEditAction,
+  serializeEditState,
+  deserializeEditState,
+} from "./editGrid.js";
+
 // ───── Energy economy & structure durability contract ───────────────────
 
 export {
