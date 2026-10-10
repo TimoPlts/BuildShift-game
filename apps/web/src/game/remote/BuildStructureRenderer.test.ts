@@ -187,6 +187,155 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
+  // ─── Construction build-up (transparent start) ─────────────────────────
+
+  describe("construction build-up (transparent start)", () => {
+    it("new structures start semi-transparent and build up to solid", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+
+      // At creation: lightweight, semi-transparent shell
+      advance(0);
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(mat.alpha).toBeCloseTo(0.35, 2);
+
+      // Mid build-up: partially solidified
+      advance(100);
+      const midAlpha = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(midAlpha.alpha).toBeGreaterThan(0.5);
+      expect(midAlpha.alpha).toBeLessThan(1);
+
+      // After the construction duration: fully solid
+      advance(100);
+      const endMat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(endMat.alpha).toBeCloseTo(1, 5);
+    });
+
+    it("keeps the durability tint readable while the build-up is still transparent", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      // Heavy damage while the build-up is still in progress.
+      renderer.updateStructureDurability("wall", durability(40, 200));
+      advance(50); // mid build-up
+
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = mesh.material as StandardMaterial;
+      // Still mid build-up…
+      expect(mat.alpha).toBeGreaterThan(0.3);
+      expect(mat.alpha).toBeLessThan(1);
+      // …but the damage tint is applied to the diffuse color and remains
+      // readable (wall base diffuse r ≈ 0.42; heavy damage pulls it toward
+      // the damaged red ≈ 0.92).
+      expect(mat.diffuseColor.r).toBeGreaterThan(0.6);
+      expect(mat.diffuseColor.r).toBeGreaterThan(mat.diffuseColor.b);
+
+      // After the build-up settles, the tint is unchanged.
+      advance(200);
+      const settled = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(settled.alpha).toBeCloseTo(1, 5);
+      expect(settled.diffuseColor.r).toBeGreaterThan(0.6);
+    });
+
+    it("keeps the hit flash emissive visible while the build-up is still transparent", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      // Establish the durability baseline (no flash on the first report).
+      renderer.updateStructureDurability("wall", durability(200, 200));
+      advance(60); // mid build-up
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const baseEmissiveR = (mesh.material as StandardMaterial).emissiveColor.r;
+
+      renderer.updateStructureDurability("wall", durability(120, 200)); // a hit
+      advance(16);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(mat.alpha).toBeLessThan(1); // still mid build-up
+      expect(mat.emissiveColor.r).toBeGreaterThan(baseEmissiveR); // flash visible
+      const flashEmissiveR = mat.emissiveColor.r; // snapshot (material is written in place)
+
+      // Flash decays and the build-up completes to solid.
+      advance(300);
+      const settled = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(settled.alpha).toBeCloseTo(1, 5);
+      expect(settled.emissiveColor.r).toBeLessThan(flashEmissiveR);
+    });
+  });
+
+  // ─── Construction lifecycle cleanup ─────────────────────────────────
+
+  describe("construction lifecycle cleanup", () => {
+    it("removal during the build-up fades from the current transparency (no opacity pop)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(100); // mid build-up
+      const midAlpha = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(midAlpha.alpha).toBeLessThan(1);
+
+      // Authoritatively removed mid build-up.
+      renderer.syncStructures({ structures: {} });
+      advance(16);
+
+      // The destruction fade starts from the current (partial) transparency,
+      // not from opaque.
+      const mesh = scene.getMeshByName("structure-wall");
+      expect(mesh).not.toBeNull();
+      const fadeAlpha = (mesh!.material as StandardMaterial).alpha;
+      expect(fadeAlpha).toBeLessThan(1);
+      expect(fadeAlpha).toBeLessThanOrEqual(midAlpha.alpha + 0.01);
+
+      // Cleanup completes: mesh disposed.
+      advance(300);
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("an authoritative reset (empty state) during the build-up disposes all construction resources", () => {
+      renderer.syncStructures({
+        structures: {
+          wall: structure("wall", "wall"),
+          cone: structure("cone", "cone"),
+        },
+      });
+      advance(50); // mid build-up for both
+      renderer.syncStructures({ structures: {} });
+      advance(300); // destruction fades complete
+
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+      expect(
+        scene.materials.filter((m) => m.name.startsWith("structure-material-")).length,
+      ).toBe(0);
+    });
+
+    it("dispose during the build-up cleans up meshes and materials", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(50); // mid build-up
+      renderer.dispose();
+
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+      expect(
+        scene.materials.filter((m) => m.name.startsWith("structure-material-")).length,
+      ).toBe(0);
+      // Ticking after dispose must not throw or resurrect resources.
+      expect(() => scene.onBeforeRenderObservable.notifyObservers(scene)).not.toThrow();
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+    });
+
+    it("does not leak meshes across interrupted build-up create/destroy cycles", () => {
+      for (let i = 0; i < 6; i++) {
+        const id = `wall-${i}`;
+        renderer.syncStructures({ structures: { [id]: structure(id, "wall") } });
+        advance(60); // interrupt mid build-up
+        renderer.syncStructures({ structures: {} });
+        advance(300); // destruction fade completes
+      }
+      expect(
+        scene.meshes.filter((m) => m.name.startsWith("structure-")).length,
+      ).toBe(0);
+    });
+  });
+
   // ─── Half-wall edit transition ───────────────────────────────────────────
 
   describe("half-wall edit transition", () => {

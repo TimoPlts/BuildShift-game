@@ -11,6 +11,7 @@ import {
   startEditTransition,
   triggerHitFlash,
   CONSTRUCTION_DURATION,
+  CONSTRUCTION_ALPHA_START,
   DESTRUCTION_DURATION,
   DESTRUCTION_IMPACT_RATIO,
   EDIT_TRANSITION_DURATION,
@@ -35,12 +36,12 @@ describe("createConstructionEffects", () => {
     expect(effects.editTransition).toBeNull();
   });
 
-  it("composeVisual at start gives scale 0", () => {
+  it("composeVisual at start gives scale 0 and the lightweight build-up alpha", () => {
     const effects = createConstructionEffects(NOW);
     const { visual, allDone } = composeVisual(effects, 1, 0, NOW);
     expect(visual.uniformScale).toBeCloseTo(0, 2);
     expect(visual.scaleY).toBe(1);
-    expect(visual.alpha).toBe(1);
+    expect(visual.alpha).toBeCloseTo(CONSTRUCTION_ALPHA_START, 5);
     expect(allDone).toBe(false);
   });
 
@@ -49,6 +50,55 @@ describe("createConstructionEffects", () => {
     const { visual, allDone } = composeVisual(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION);
     expect(visual.uniformScale).toBeCloseTo(1, 2);
     expect(allDone).toBe(true);
+  });
+});
+
+describe("construction transparency build-up", () => {
+  it("ramps alpha monotonically from the lightweight start to solid (1)", () => {
+    const effects = createConstructionEffects(NOW);
+    const samples = [0, 0.25, 0.5, 0.75, 1].map((f) =>
+      composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION * f).visual.alpha,
+    );
+    // Starts at the lightweight, semi-transparent value…
+    expect(samples[0]).toBeCloseTo(CONSTRUCTION_ALPHA_START, 5);
+    // …and solidifies to full opacity.
+    expect(samples[4]).toBeCloseTo(1, 5);
+    // Monotonic build-up.
+    for (let i = 1; i < samples.length; i++) {
+      expect(samples[i]).toBeGreaterThanOrEqual(samples[i - 1]);
+    }
+    // Strictly increasing until settled.
+    for (let i = 1; i < samples.length - 1; i++) {
+      expect(samples[i]).toBeGreaterThan(samples[i - 1]);
+    }
+  });
+
+  it("keeps alpha exactly 1 after the construction duration (solid, no lingering transparency)", () => {
+    const effects = createConstructionEffects(NOW);
+    const { visual, allDone } = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION + 1);
+    expect(visual.alpha).toBe(1);
+    expect(allDone).toBe(false); // confirmation (220ms) still decaying
+  });
+
+  it("keeps the hit flash emissive readable while the build-up is still transparent", () => {
+    const effects = createConstructionEffects(NOW);
+    triggerHitFlash(effects, NOW + 100);
+    const { visual } = composeVisual(effects, 1, 0, NOW + 100);
+    // Still mid build-up: transparent shell…
+    expect(visual.alpha).toBeGreaterThan(CONSTRUCTION_ALPHA_START);
+    expect(visual.alpha).toBeLessThan(1);
+    // …but the damage feedback is still composed additively on top.
+    expect(visual.emissiveBoost[0]).toBeGreaterThan(0);
+    expect(visual.emissiveBoost[1]).toBeGreaterThan(0);
+    expect(visual.emissiveBoost[2]).toBeGreaterThan(0);
+    expect(visual.diffuseBoost[0]).toBeGreaterThan(0);
+  });
+
+  it("does not apply the build-up to destruction-only effects", () => {
+    const effects = createDestructionEffects(NOW);
+    const { visual } = composeVisual(effects, 1, 0, NOW);
+    // Destruction fades from full opacity (no construction alpha floor).
+    expect(visual.alpha).toBeCloseTo(1, 5);
   });
 });
 
@@ -242,7 +292,7 @@ describe("composeVisualInto (in-place composition)", () => {
 
     const atStart = composeVisualInto(effects, 1, 0, NOW, out);
     expect(out.uniformScale).toBeCloseTo(0, 2);
-    expect(out.alpha).toBe(1);
+    expect(out.alpha).toBeCloseTo(CONSTRUCTION_ALPHA_START, 5);
     expect(atStart.allDone).toBe(false);
     expect(atStart.shouldRemove).toBe(false);
 
@@ -250,10 +300,13 @@ describe("composeVisualInto (in-place composition)", () => {
     const mid = composeVisualInto(effects, 1, 0, NOW + CONSTRUCTION_DURATION / 2, out);
     expect(out.uniformScale).toBeGreaterThan(0.01);
     expect(out.uniformScale).toBeLessThan(1.2);
+    expect(out.alpha).toBeGreaterThan(CONSTRUCTION_ALPHA_START);
+    expect(out.alpha).toBeLessThan(1);
     expect(mid.allDone).toBe(false);
 
     const done = composeVisualInto(effects, 1, 0, NOW + CONSTRUCTION_DURATION, out);
     expect(out.uniformScale).toBeCloseTo(1, 2);
+    expect(out.alpha).toBe(1); // build-up settled: solid
     expect(done.allDone).toBe(false); // confirm glow (220ms) still decaying
 
     const settled = composeVisualInto(effects, 1, 0, NOW + PLACEMENT_CONFIRM_DURATION, out);

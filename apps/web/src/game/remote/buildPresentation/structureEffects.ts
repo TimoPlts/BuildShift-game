@@ -3,7 +3,9 @@
  *
  * Tracks the transient visual effects that can be active on a structure mesh
  * simultaneously:
- *  - **construction** — scale-in pop when a structure first appears
+ *  - **construction** — scale-in pop plus a transparency build-up (the
+ *    structure starts as a lightweight, semi-transparent shell and
+ *    solidifies to full opacity) when a structure first appears
  *  - **confirmation** — short emissive glow confirming an accepted placement
  *  - **hitFlash** — brief emissive flash when durability decreases
  *  - **destruction** — scale-out + fade when a structure is authoritatively removed
@@ -29,6 +31,14 @@ import {
 
 /** Construction pop-in duration. */
 export const CONSTRUCTION_DURATION = 200;
+/**
+ * Material alpha at the start of the construction build-up: accepted
+ * structures begin as a lightweight, transparent shell and ramp to full
+ * opacity (1) over the construction duration. Kept light enough that the
+ * damage tint and hit flashes underneath stay readable while the build-up
+ * plays.
+ */
+export const CONSTRUCTION_ALPHA_START = 0.35;
 /**
  * Placement-confirmation glow duration: the short authoritative acceptance
  * pulse that plays (on top of the pop-in) when a structure first appears in
@@ -142,7 +152,10 @@ export interface ComposedVisual {
   scaleY: number;
   /** Y position offset in world units (for half-wall shifts). */
   yOffset: number;
-  /** Material alpha (1 = opaque, fades during destruction). */
+  /**
+   * Material alpha (1 = opaque). Builds up from {@link CONSTRUCTION_ALPHA_START}
+   * during construction and fades during destruction.
+   */
   alpha: number;
   /** Additional emissive color to add (hit flash, destruction impact). */
   emissiveBoost: [number, number, number];
@@ -232,10 +245,14 @@ export function composeVisualInto(
     if (!effects.editTransition.done) allDone = false;
   }
 
-  // Construction pop-in
+  // Construction pop-in + transparency build-up: the accepted structure
+  // starts as a lightweight, semi-transparent shell and solidifies to full
+  // opacity over the construction duration. Damage tint and hit flashes are
+  // composed additively on top and remain readable while this plays.
   if (effects.construction && !effects.construction.done) {
     const t = animationProgress(effects.construction, now);
     uniformScale = easeOutBack(t);
+    alpha = CONSTRUCTION_ALPHA_START + (1 - CONSTRUCTION_ALPHA_START) * easeOutQuad(t);
     if (!effects.construction.done) allDone = false;
   }
 

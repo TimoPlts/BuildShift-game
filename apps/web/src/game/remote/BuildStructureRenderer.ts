@@ -11,8 +11,11 @@
  *    transition for clear rejected-placement feedback.
  *  - Render authoritative structures replicated from the server
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
- *  - Play a short construction pop-in animation plus a brief emissive
- *    confirmation glow when a structure is authoritatively accepted.
+ *  - Play the original BuildShift construction presentation when a
+ *    structure is authoritatively accepted: a short, transparent,
+ *    lightweight build-up (semi-transparent shell solidifying to full
+ *    opacity) plus a scale-in pop and a brief emissive confirmation glow.
+ *    The durability tint and hit flashes remain readable while it plays.
  *  - Tint structure meshes to reflect their authoritative durability
  *    (damage) state using a non-linear curve, with a brief white+emissive
  *    flash on each hit and a deterministic warning pulse when nearly broken.
@@ -327,7 +330,7 @@ export class BuildStructureRenderer {
   private structures = new Map<string, StructureRuntime>();
 
   /** Structures awaiting destruction animation completion before mesh disposal. */
-  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3 }>();
+  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3; /** Composed visual alpha at destruction start (interrupted build-ups fade from their current transparency instead of popping to opaque). */ startAlpha: number }>();
 
   /**
    * Fingerprint of the last synced state (keyed by structureId). Lets the
@@ -806,12 +809,25 @@ export class BuildStructureRenderer {
     // Persist the base emissive for the pending-destruction tick (one
     // allocation per destruction event, not per frame).
     const baseEmissive = this._computeBaseEmissive(runtime, now, this._tempEmissive).clone();
+    // Capture the current visual alpha so a build-up interrupted mid-
+    // construction fades from its actual (partially transparent) state
+    // rather than popping to opaque. Completed builds compose to 1, so the
+    // normal destruction fade is unchanged.
+    composeVisualInto(
+      runtime.effects,
+      runtime.targetScaleY,
+      runtime.targetYOffset,
+      now,
+      this._composed,
+    );
+    const startAlpha = this._composed.alpha;
     this.pendingDestruction.set(id, {
       mesh: runtime.mesh,
       material: runtime.material,
       effects,
       scaleY: runtime.targetScaleY,
       baseEmissive,
+      startAlpha,
     });
     // Reset diffuse to base (clear any active hit-flash boost)
     runtime.material.diffuseColor = runtime.baseDiffuse.clone();
@@ -891,7 +907,7 @@ export class BuildStructureRenderer {
         visual.uniformScale * pending.scaleY,
         visual.uniformScale,
       );
-      pending.material.alpha = visual.alpha;
+      pending.material.alpha = visual.alpha * pending.startAlpha;
       // Write the boost into the existing material color (no allocation).
       const emissive = pending.material.emissiveColor;
       emissive.copyFrom(pending.baseEmissive);
