@@ -13,6 +13,12 @@
  *    `build:edit_result` into accepted/rejected feedback.
  *  - {@link buildBuildEditHudView} / {@link buildEditHudChangeKey} — pure
  *    mapping of the controller's presentation state into the flat HUD view.
+ *  - {@link buildEditPreviewGeometry} — pure mapping of the canonical edit
+ *    model into a lightweight preview descriptor (tiles / ramp variant /
+ *    validity), engine-free and serializable.
+ *  - {@link EditPreviewPresentation} — the presentation-only Babylon preview
+ *    of a prospective edit (full piece, projected grid, selection highlight,
+ *    resulting shape, clear invalid indication).
  *  - {@link createBuildEditSystem} — wires the input + controller together and
  *    owns their lifecycle (dispose tears both down).
  *
@@ -144,3 +150,16 @@ export {
   type ConeCornerGeometry,
   type ConeGeometry,
 } from "./coneEdit";
+export {
+  buildEditPreviewGeometry,
+  type EditPreviewTile,
+  type EditPreviewRamp,
+  type EditPreviewGeometry,
+} from "./editPreviewGeometry";
+export {
+  EditPreviewPresentation,
+  editTileLayout,
+  editRampLayout,
+  type EditPreviewInput,
+  type EditTileLayout,
+} from "./EditPreviewPresentation";
