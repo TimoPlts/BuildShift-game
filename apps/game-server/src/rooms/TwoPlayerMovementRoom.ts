@@ -7,8 +7,9 @@ import { BuildingStateSchema, StructureStateSchema, oc, wc } from "../state/buil
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
-import { applyWallEditPattern, wallPatternGeometry } from "../state/wallEditPatterns.js";
+import { applyWallEditPattern, wallCollisionCuboids, wallPatternGeometry } from "../state/wallEditPatterns.js";
 import { classifyFloorForm, generateFloorEditGeometry } from "../match/floorEditGeometry.js";
+import { rampCollisionCuboids } from "../match/rampCollisionGeometry.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
@@ -329,16 +330,26 @@ export class TwoPlayerMovementRoom extends Room<{
             s.editTiles.length = 0;
             s.editRampVariant = newState.variant;
         }
-        // Floor edits regenerate collision geometry from the canonical edit
-        // state: one quarter-cell cuboid per remaining tile.
-        if (s.buildType === "floor" && newState.kind === "floor_cone") {
-            const pw = await this.pwp;
+        // Task 14: regenerate collision from the canonical edit state for all
+        // build types that have per-tile or per-variant geometry.
+        const pw = await this.pwp;
+        if (s.buildType === "wall" && newState.kind === "wall") {
+            const cuboids = wallCollisionCuboids({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, s.rotation, newState.tiles);
+            if (cuboids.length > 0) pw.setStructureColliders(req.structureId, cuboids);
+            else pw.removeStructureCollider(req.structureId);
+        } else if (s.buildType === "floor" && newState.kind === "floor_cone") {
             pw.setStructureColliders(req.structureId, generateFloorEditGeometry({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, newState.tiles));
+        } else if (s.buildType === "cone" && newState.kind === "floor_cone") {
+            pw.setStructureColliders(req.structureId, generateFloorEditGeometry({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, newState.tiles));
+        } else if (s.buildType === "ramp" && newState.kind === "ramp") {
+            const cuboids = rampCollisionCuboids({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, s.rotation, newState.variant);
+            if (cuboids.length > 0) pw.setStructureColliders(req.structureId, cuboids);
+            else pw.removeStructureCollider(req.structureId);
         }
         const result = { structureId: req.structureId, success: true, editState: serializeEditState(newState) };
         this.broadcast(EDIT_GRID_ACTION_INPUT, result);
     }
-    private hwp(c: Client, m: unknown): void {
+    private async hwp(c: Client, m: unknown): Promise<void> {
         const reject = (id: string, reason: string) => c.send(WALL_PATTERN_RESULT, { structureId: id, success: false, reason });
         if (!m || typeof m !== "object" || Array.isArray(m))
             return;
@@ -381,6 +392,13 @@ export class TwoPlayerMovementRoom extends Room<{
             editState: { kind: "wall", tiles: applied.tiles },
             geometry: wallPatternGeometry(applied.pattern, { x: s.grid.x, y: s.grid.y, z: s.grid.z }, s.rotation),
         });
+        const cuboids = wallCollisionCuboids({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, s.rotation, applied.tiles);
+        const pw = await this.pwp;
+        if (cuboids.length > 0) {
+            pw.setStructureColliders(id, cuboids);
+        } else {
+            pw.removeStructureCollider(id);
+        }
     }
     private adv(): void { for (const [sid, p] of this.state.players) {
         const ws = this.wps.get(sid);
