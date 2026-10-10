@@ -124,3 +124,23 @@ export {
   type BuildEditTargetHud,
   type BuildEditFeedbackHud,
 } from "./buildEditHudView";
+export {
+  CONE_CORNER_COUNT,
+  CONE_CORNER_NAMES,
+  CONE_SHAPE_IDS,
+  CONE_SHAPE_TILES,
+  isConeShapeId,
+  coneTilesForShape,
+  coneShapeForTiles,
+  validateConeTiles,
+  isConeEditState,
+  classifyConeEditState,
+  resetConeEditState,
+  coneGeometryFromTiles,
+  coneGeometryFromState,
+  type ConeShapeId,
+  type ConeTilePattern,
+  type ConeTilesValidation,
+  type ConeCornerGeometry,
+  type ConeGeometry,
+} from "./coneEdit";
