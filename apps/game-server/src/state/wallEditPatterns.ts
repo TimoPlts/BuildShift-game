@@ -342,3 +342,73 @@ export function wallPatternGeometry(
     solidTiles: tileGeometry.filter((t) => t.solid),
   };
 }
+
+// ─── Collision geometry (center-convention, matching `wc`) ─────────────────
+
+/** A world-space collision cuboid (centre + half-extents, metres). */
+export interface WallCollisionCuboid {
+  center: { x: number; y: number; z: number };
+  halfExtents: { x: number; y: number; z: number };
+}
+
+/**
+ * Generates the wall's collision cuboids from the canonical 9-tile edit state.
+ *
+ * Uses the same tile→world mapping as {@link wallPatternGeometry} but in the
+ * center-convention coordinate system (the grid anchor is the centre of the
+ * cell, matching the `wc` collider and the rendered mesh). Each solid tile
+ * produces one thin-panel cuboid (WALL_PANEL_THICKNESS along the normal axis).
+ * Removed tiles produce no cuboid — bullets and players pass through openings.
+ *
+ * Returns an empty array for malformed tile inputs or when no tile is solid.
+ */
+export function wallCollisionCuboids(
+  anchor: { x: number; y: number; z: number },
+  rotation: number,
+  tiles: readonly boolean[],
+): WallCollisionCuboid[] {
+  if (tiles.length !== WALL_EDIT_PATTERN_TILE_COUNT) return [];
+
+  const cs = BUILD_GRID.cellSize;
+  const lh = BUILD_GRID.layerHeight;
+  const tileW = cs / 3;
+  const tileH = lh / 3;
+  const wpt = WALL_PANEL_THICKNESS;
+
+  // Center-convention: the grid anchor is the centre of the cell.
+  const cx = anchor.x * cs;
+  const cz = anchor.z * cs;
+  const yBase = anchor.y * lh;
+
+  const widthAxisX = rotation === 0 || rotation === 2;
+  const leftStartsAtMin = rotation === 0 || rotation === 1;
+
+  const out: WallCollisionCuboid[] = [];
+  for (let i = 0; i < WALL_EDIT_PATTERN_TILE_COUNT; i++) {
+    if (!tiles[i]) continue;
+    const col = i % 3;
+    const row = Math.floor(i / 3);
+    const span = leftStartsAtMin ? col : 2 - col;
+
+    if (widthAxisX) {
+      out.push({
+        center: {
+          x: cx - cs / 2 + (span + 0.5) * tileW,
+          y: yBase + (2 - row + 0.5) * tileH,
+          z: cz,
+        },
+        halfExtents: { x: tileW / 2, y: tileH / 2, z: wpt / 2 },
+      });
+    } else {
+      out.push({
+        center: {
+          x: cx,
+          y: yBase + (2 - row + 0.5) * tileH,
+          z: cz - cs / 2 + (span + 0.5) * tileW,
+        },
+        halfExtents: { x: wpt / 2, y: tileH / 2, z: tileW / 2 },
+      });
+    }
+  }
+  return out;
+}
