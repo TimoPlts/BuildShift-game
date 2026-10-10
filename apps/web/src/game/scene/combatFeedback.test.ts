@@ -2,8 +2,11 @@
  * Behavioral NullEngine tests for CombatFeedback:
  *  - per-weapon distinction (flash scale/tint/duration, tracer width/duration)
  *  - tracer lifecycle (posed from origin along the aim direction, then expires)
- *  - build impact lifecycle (world-anchored, separate from the hit marker)
- *  - hit marker lifecycle (camera-space, unchanged 200ms behavior)
+ *  - build impact lifecycle (world-anchored, separate from the hit marker,
+ *    per-weapon size/duration)
+ *  - hit marker lifecycle (camera-space, per-weapon size/duration/tint)
+ *  - damage-taken marker (subdued red, camera-anchored, distinct from hits)
+ *  - elimination marker (larger, redder, longer than a hit marker)
  *  - repeated-fire bounds (pools are fixed-size; no mesh/material growth)
  *  - idempotent disposal and no-op behavior after dispose
  */
@@ -164,12 +167,12 @@ describe("CombatFeedback", () => {
     expect(alphaOf(tracers[0])).toBe(0);
   });
 
-  it("hit marker appears in front of the camera and expires after 200ms", () => {
+  it("hit marker appears in front of the camera and expires after 200ms (rifle)", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
     feedback = new CombatFeedback(scene);
 
-    feedback.triggerHitMarker();
+    feedback.triggerHitMarker("assault_rifle");
 
     const marker = liveFeedbackMeshes(scene, "combat-feedback-hitmarker");
     expect(marker.length).toBe(1);
@@ -185,13 +188,86 @@ describe("CombatFeedback", () => {
     expect(liveFeedbackMeshes(scene, "combat-feedback-hitmarker").length).toBe(0);
   });
 
+  it("assault-rifle and shotgun hit markers differ in size, tint, and duration", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    feedback.triggerHitMarker("assault_rifle");
+    const rifleMesh = liveFeedbackMeshes(scene, "combat-feedback-hitmarker")[0];
+    const rifleRadius = rifleMesh.scaling.x;
+    const rifleBlue = (rifleMesh.material as StandardMaterial).emissiveColor.b;
+    expect(rifleRadius).toBeCloseTo(0.035, 4);
+    expect(rifleBlue).toBeCloseTo(1.0, 4); // crisp white
+
+    // The single-slot pool is reused for the next confirmed hit.
+    feedback.triggerHitMarker("shotgun");
+    const shotgun = liveFeedbackMeshes(scene, "combat-feedback-hitmarker")[0];
+    const shotgunBlue = (shotgun.material as StandardMaterial).emissiveColor.b;
+    expect(shotgun.scaling.x).toBeCloseTo(0.06, 4); // heavier, bigger beat
+    expect(shotgun.scaling.x).toBeGreaterThan(rifleRadius);
+    expect(shotgunBlue).toBeLessThan(rifleBlue); // warmer tint
+
+    // Rifle markers expire at 200ms; the shotgun marker outlasts that.
+    advance(200);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-hitmarker").length).toBe(1);
+    advance(60); // 260ms since the shotgun activation
+    expect(liveFeedbackMeshes(scene, "combat-feedback-hitmarker").length).toBe(0);
+  });
+
+  it("damage-taken marker is a subdued red camera-anchored effect and expires", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    feedback.triggerDamageTaken();
+
+    const marker = liveFeedbackMeshes(scene, "combat-feedback-damagetaken");
+    expect(marker.length).toBe(1);
+    // Camera-anchored like the hit marker (camera at (0,1,-3), forward (0,0,1)).
+    expect(marker[0].position.z).toBeCloseTo(-1.5, 1);
+    expect(marker[0].scaling.x).toBeCloseTo(0.045, 4);
+    const tint = (marker[0].material as StandardMaterial).emissiveColor;
+    expect(tint.r).toBeGreaterThan(tint.g); // red-dominant
+    expect(tint.b).toBeLessThan(0.5);
+    // A separate effect: no hit marker was created.
+    expect(liveFeedbackMeshes(scene, "combat-feedback-hitmarker").length).toBe(0);
+
+    advance(120);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-damagetaken").length).toBe(1);
+    advance(120); // 240ms total
+    expect(liveFeedbackMeshes(scene, "combat-feedback-damagetaken").length).toBe(0);
+  });
+
+  it("elimination marker is bigger and redder than a hit marker and outlasts it", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    feedback.triggerEliminationMarker();
+
+    const marker = liveFeedbackMeshes(scene, "combat-feedback-elimmarker");
+    expect(marker.length).toBe(1);
+    expect(marker[0].position.z).toBeCloseTo(-1.5, 1); // camera-anchored
+    expect(marker[0].scaling.x).toBeCloseTo(0.07, 4);
+    expect(marker[0].scaling.x).toBeGreaterThan(0.06); // bigger than any hit marker
+    const tint = (marker[0].material as StandardMaterial).emissiveColor;
+    expect(tint.g).toBeLessThan(0.5); // red-orange, distinct from white hits
+
+    // Outlives the 260ms shotgun hit marker duration.
+    advance(300);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-elimmarker").length).toBe(1);
+    advance(50); // 350ms total
+    expect(liveFeedbackMeshes(scene, "combat-feedback-elimmarker").length).toBe(0);
+  });
+
   it("build impact is world-anchored, separate from the hit marker, and expires", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
     feedback = new CombatFeedback(scene);
 
     const spot = new Vector3(3, 2, 4);
-    feedback.playBuildImpact(spot);
+    feedback.playBuildImpact(spot, "assault_rifle");
 
     const impact = liveFeedbackMeshes(scene, "combat-feedback-buildimpact");
     expect(impact.length).toBe(1);
@@ -208,6 +284,34 @@ describe("CombatFeedback", () => {
     expect(liveFeedbackMeshes(scene, "combat-feedback-buildimpact").length).toBe(0);
   });
 
+  it("build impact differs per weapon: shotgun reads heavier than rifle", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    feedback.playBuildImpact(new Vector3(0, 0, 0), "assault_rifle");
+    feedback.playBuildImpact(new Vector3(5, 0, 0), "shotgun");
+
+    const rifle = liveFeedbackMeshes(scene, "combat-feedback-buildimpact").find(
+      (m) => m.position.x === 0,
+    )!;
+    const shotgun = liveFeedbackMeshes(scene, "combat-feedback-buildimpact").find(
+      (m) => m.position.x === 5,
+    )!;
+    expect(shotgun.scaling.x).toBeCloseTo(0.12, 4);
+    expect(rifle.scaling.x).toBeCloseTo(0.08, 4);
+    expect(shotgun.scaling.x).toBeGreaterThan(rifle.scaling.x);
+
+    // The rifle spark expires at 150ms; the heavier shotgun one lingers to 200ms.
+    advance(100);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-buildimpact").length).toBe(2);
+    advance(50);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-buildimpact").length).toBe(1);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-buildimpact")[0].position.x).toBe(5);
+    advance(50);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-buildimpact").length).toBe(0);
+  });
+
   it("repeated firing does not grow meshes or materials and everything expires", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
@@ -220,7 +324,7 @@ describe("CombatFeedback", () => {
     // 50 rapid rifle shots (30ms apart, faster than the effects expire).
     for (let i = 0; i < 50; i++) {
       feedback.playShot("assault_rifle", new Vector3(i % 7, 0, 0), new Vector3(0, 0, 1));
-      feedback.playBuildImpact(new Vector3(i % 5, 1, 0));
+      feedback.playBuildImpact(new Vector3(i % 5, 1, 0), "assault_rifle");
       advance(30);
     }
 
@@ -231,6 +335,16 @@ describe("CombatFeedback", () => {
     // After the longest effect duration, nothing is still visible.
     advance(200);
     expect(liveFeedbackMeshes(scene).length).toBe(0);
+  });
+
+  it("keeps every pooled presentation mesh out of gameplay picking", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    const presentationMeshes = scene.meshes.filter((mesh) => mesh.name.startsWith(NAME_PREFIX));
+    expect(presentationMeshes.length).toBeGreaterThan(0);
+    expect(presentationMeshes.every((mesh) => mesh.isPickable === false)).toBe(true);
   });
 
   it("rapid fire beyond the pool size reuses slots instead of growing", () => {
@@ -261,10 +375,12 @@ describe("CombatFeedback", () => {
     feedback = new CombatFeedback(scene);
 
     feedback.playShot("shotgun", new Vector3(0, 0, 0), new Vector3(0, 0, 1));
-    feedback.triggerHitMarker();
-    feedback.playBuildImpact(new Vector3(1, 1, 1));
+    feedback.triggerHitMarker("assault_rifle");
+    feedback.triggerDamageTaken();
+    feedback.triggerEliminationMarker();
+    feedback.playBuildImpact(new Vector3(1, 1, 1), "assault_rifle");
     // playShot creates two effects (muzzle flash + tracer).
-    expect(liveFeedbackMeshes(scene).length).toBe(4);
+    expect(liveFeedbackMeshes(scene).length).toBe(6);
 
     const meshCount = feedbackMeshCount(scene);
     feedback.reset();
@@ -282,8 +398,10 @@ describe("CombatFeedback", () => {
     feedback = new CombatFeedback(scene);
 
     feedback.playShot("assault_rifle", new Vector3(0, 0, 0), new Vector3(0, 0, 1));
-    feedback.triggerHitMarker();
-    feedback.playBuildImpact(new Vector3(1, 1, 1));
+    feedback.triggerHitMarker("assault_rifle");
+    feedback.triggerDamageTaken();
+    feedback.triggerEliminationMarker();
+    feedback.playBuildImpact(new Vector3(1, 1, 1), "assault_rifle");
     expect(feedbackMeshCount(scene)).toBeGreaterThan(0);
 
     feedback.dispose();
@@ -316,8 +434,10 @@ describe("CombatFeedback", () => {
       feedback.playShot("assault_rifle", new Vector3(0, 0, 0), new Vector3(0, 0, 1))
     ).not.toThrow();
     expect(() => feedback.triggerMuzzleFlash("shotgun", new Vector3(0, 0, 0))).not.toThrow();
-    expect(() => feedback.triggerHitMarker()).not.toThrow();
-    expect(() => feedback.playBuildImpact(new Vector3(0, 0, 0))).not.toThrow();
+    expect(() => feedback.triggerHitMarker("assault_rifle")).not.toThrow();
+    expect(() => feedback.triggerDamageTaken()).not.toThrow();
+    expect(() => feedback.triggerEliminationMarker()).not.toThrow();
+    expect(() => feedback.playBuildImpact(new Vector3(0, 0, 0), "shotgun")).not.toThrow();
 
     expect(feedbackMeshCount(scene)).toBe(0);
     advance(100);

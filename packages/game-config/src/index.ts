@@ -87,6 +87,7 @@ export {
 // ───── Building configuration (server-authoritative multiplayer building) ─────
 export {
   BUILD_GRID,
+  BUILD_BOUNDS,
   BUILD_RANGE,
   BUILD_RATE,
   BUILD_STRUCTURE_KEYS,

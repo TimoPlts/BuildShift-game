@@ -1,0 +1,19 @@
+/* Developer diagnostics overlay — OFF by default, shown via ?devdiag=1 */
+.devdiag-overlay {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #7fd4ff;
+  background: rgb(8 12 18 / 78%);
+  padding: 8px 12px;
+  border: 1px solid rgb(127 212 255 / 20%);
+  border-radius: 4px;
+  pointer-events: none;
+  white-space: pre;
+  z-index: 200;
+  backdrop-filter: blur(0.25rem);
+  user-select: none;
+}

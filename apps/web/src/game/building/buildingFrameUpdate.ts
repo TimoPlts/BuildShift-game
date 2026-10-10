@@ -18,6 +18,20 @@ import type { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { BuildingSystem } from "./index";
 
 /**
+ * Reusable per-frame context buffer. `updateBuildingFrame` runs once per
+ * render frame, so the three `Vec3Like` payloads are written into one
+ * module-level object instead of allocating three new objects every frame.
+ * This is safe because `BuildingController.updateFrame` (and the
+ * `computePlacementPreview` it calls) only reads the context synchronously
+ * and never retains a reference to it.
+ */
+const _frameContext = {
+  aimOrigin: { x: 0, y: 0, z: 0 },
+  aimDirection: { x: 0, y: 0, z: 0 },
+  playerPosition: { x: 0, y: 0, z: 0 },
+};
+
+/**
  * Drives the building system for one render frame.
  *
  * @param building the wired building system (from `createBuildingSystem`).
@@ -34,15 +48,22 @@ export function updateBuildingFrame(
   connected: boolean,
 ): void {
   const camPos = camera.position;
-  building.controller.updateFrame({
-    aimOrigin: { x: camPos.x, y: camPos.y, z: camPos.z },
-    aimDirection: {
-      x: aimDirection.x,
-      y: aimDirection.y,
-      z: aimDirection.z,
-    },
-    playerPosition: { x: playerFeet.x, y: playerFeet.y, z: playerFeet.z },
-  });
+  const aimOrigin = _frameContext.aimOrigin;
+  aimOrigin.x = camPos.x;
+  aimOrigin.y = camPos.y;
+  aimOrigin.z = camPos.z;
+
+  const dir = _frameContext.aimDirection;
+  dir.x = aimDirection.x;
+  dir.y = aimDirection.y;
+  dir.z = aimDirection.z;
+
+  const pos = _frameContext.playerPosition;
+  pos.x = playerFeet.x;
+  pos.y = playerFeet.y;
+  pos.z = playerFeet.z;
+
+  building.controller.updateFrame(_frameContext);
 
   const placePressed = building.controller.consumePlacePressed();
   if (placePressed && connected) {

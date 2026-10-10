@@ -38,7 +38,11 @@ export class PooledEffectGroup {
 
   constructor(createSlot: (index: number) => EffectSlot, slotCount: number) {
     for (let i = 0; i < slotCount; i++) {
-      this.slots.push(createSlot(i));
+      const slot = createSlot(i);
+      // These meshes are short-lived presentation only. They must never be a
+      // selectable surface for any gameplay raycast now or in the future.
+      slot.mesh.isPickable = false;
+      this.slots.push(slot);
     }
   }
 

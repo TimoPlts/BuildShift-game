@@ -1,9 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@colyseus/core";
-import { ASSAULT_RIFLE, SHOTGUN, SHOTGUN_WEAPON } from "@buildshift/game-config";
+import { ASSAULT_RIFLE, ROUNDS_TO_WIN, SHOTGUN, SHOTGUN_WEAPON } from "@buildshift/game-config";
 import { BUILD_EDIT_EVENTS, MatchPhase } from "@buildshift/protocol";
 import { TwoPlayerMovementRoom, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
 import { StructureStateSchema } from "../state/buildingState.js";
+import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 
 // Use the production handlers and simulation, with a manually advanced server
 // clock. No sleeps, duplicate implementation, or private-state authority mocks.
@@ -46,6 +47,47 @@ describe("canonical weapon and build-edit authority", () => {
     internal.br();
   });
   afterEach(() => { room.onDispose(); room.clock.clear(); vi.restoreAllMocks(); });
+
+  it("registers only the canonical build-edit transport", () => {
+    expect(handlers.has(BUILD_EDIT_EVENTS.EDIT_REQUEST)).toBe(true);
+    expect(handlers.has("two-player:build_edit")).toBe(false);
+  });
+
+  it("completes repeated mutual rematches through one canonical handler without disconnecting", () => {
+    const completeMatch = () => {
+      for (let round = 1; round <= ROUNDS_TO_WIN; round += 1) {
+        room.state.matchPhase = MatchPhase.IN_PROGRESS;
+        room.state.currentRound = round;
+        internal.endRound("a", "b", "test");
+      }
+      expect(room.state.matchPhase).toBe(MatchPhase.MATCH_ENDED);
+      expect(room.state.roundScore.get("a")?.value).toBe(ROUNDS_TO_WIN);
+    };
+    const rematchRequest = "match:rematch_request";
+    const request = handlers.get(rematchRequest);
+    expect(request).toBeDefined();
+
+    completeMatch();
+    request!(a, {});
+    expect(room.state.matchPhase).toBe(MatchPhase.MATCH_ENDED);
+    request!(b, {});
+    expect(room.state.matchPhase).toBe(MatchPhase.COUNTDOWN);
+    expect(room.state.currentRound).toBe(0);
+    expect(room.state.roundScore.get("a")?.value).toBe(0);
+    expect(room.state.roundScore.get("b")?.value).toBe(0);
+    expect(room.clients).toHaveLength(2);
+    internal.br();
+    expect(room.state.matchPhase).toBe(MatchPhase.IN_PROGRESS);
+
+    completeMatch();
+    request!(a, {});
+    request!(b, {});
+    const accepted = (room.broadcast as ReturnType<typeof vi.fn>).mock.calls
+      .filter(([event]) => event === MATCH_EVENTS.REMATCH_ACCEPTED);
+    expect(accepted).toHaveLength(2);
+    expect(handlers.has(rematchRequest)).toBe(true);
+    expect(room.clients).toHaveLength(2);
+  });
 
   it("switches through the production route and preserves per-slot ammo", () => {
     fire(10);
@@ -169,7 +211,7 @@ describe("canonical weapon and build-edit authority", () => {
     if (reason === "type") s.buildType = "ramp";
     if (reason === "cell") payload.gridOffset.x = 3;
     if (reason === "missing") payload.structureId = "missing";
-    send("two-player:build_edit", payload);
+    send(BUILD_EDIT_EVENTS.EDIT_REQUEST, payload);
     expect(s.editType).toBe("");
     expect(a.send).toHaveBeenLastCalledWith(BUILD_EDIT_EVENTS.EDIT_RESULT, expect.objectContaining({ success: false }));
   });

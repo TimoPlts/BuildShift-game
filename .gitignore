@@ -14,6 +14,7 @@ out/
 # Testing / coverage
 coverage/
 .nyc_output/
+test-results/
 
 # Environment files
 .env

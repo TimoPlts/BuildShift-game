@@ -40,6 +40,10 @@ export const TRACER_SPECS: Record<WeaponType, TracerSpec> = {
 /** Unit cylinder local axis (the cylinder's height axis). */
 const LOCAL_Y = new Vector3(0, 1, 0);
 
+/** Module-level scratch vectors (reused on every activation to avoid per-shot allocation). */
+const _direction = new Vector3();
+const _midpoint = new Vector3();
+
 /** Creates the fixed-size tracer pool. */
 export function createTracerGroup(scene: Scene, slotCount = 6): PooledEffectGroup {
   return new PooledEffectGroup((i) => {
@@ -74,16 +78,22 @@ export function activateTracer(
 ): void {
   const spec = TRACER_SPECS[weaponType];
 
-  const direction = aimDirection.clone();
-  if (direction.lengthSquared() < 1e-8) return;
-  direction.normalize();
+  _direction.copyFrom(aimDirection);
+  if (_direction.lengthSquared() < 1e-8) return;
+  _direction.normalize();
 
-  const midpoint = origin.add(direction.scale(spec.length / 2));
+  // midpoint = origin + direction * (length / 2)  — no allocation
+  const half = spec.length / 2;
+  _midpoint.set(
+    origin.x + _direction.x * half,
+    origin.y + _direction.y * half,
+    origin.z + _direction.z * half,
+  );
 
   group.spawn(nowMs, spec.durationMs, (slot) => {
     slot.mesh.scaling.set(spec.radius, spec.length, spec.radius);
-    slot.mesh.position.copyFrom(midpoint);
-    slot.mesh.rotationQuaternion = Quaternion.FromUnitVectorsToRef(LOCAL_Y, direction, new Quaternion());
+    slot.mesh.position.copyFrom(_midpoint);
+    slot.mesh.rotationQuaternion = Quaternion.FromUnitVectorsToRef(LOCAL_Y, _direction, new Quaternion());
     slot.material.diffuseColor.copyFrom(spec.color);
     slot.material.emissiveColor.copyFrom(spec.color);
     slot.mesh.setEnabled(true);

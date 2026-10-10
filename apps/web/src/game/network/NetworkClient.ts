@@ -33,6 +33,7 @@ import {
   type ParsedPlayerState,
 } from "./playerStateParse";
 import { resolveGameServerUrl } from "./serverUrl";
+import { REMATCH_REQUEST_MESSAGE } from "./matchEvents";
 
 export const ROOM_NAME = "two-player-movement";
 export const INPUT_MESSAGE_TYPE = "two-player:input";
@@ -56,6 +57,7 @@ export interface RoomLike {
   ) => unknown;
   onLeave: (callback: (code: number, reason?: string) => void) => void;
   onDrop: (callback: (code: number, reason?: string) => void) => void;
+  onError: (callback: (code: number, reason?: string) => void) => void;
   leave: (consented?: boolean) => Promise<number>;
 }
 
@@ -92,6 +94,7 @@ export class NetworkClient {
   private readonly messageHandlerRemovers = new Map<string, () => void>();
   private disposed = false;
   private started = false;
+  private startPromise: Promise<void> | null = null;
 
   public constructor(options: NetworkClientOptions = {}) {
     this.serverUrl = options.serverUrl ?? resolveGameServerUrl();
@@ -112,17 +115,41 @@ export class NetworkClient {
 
   public async start(): Promise<void> {
     if (this.disposed) throw new Error("NetworkClient is disposed.");
-    if (this.started) return;
+    if (this.started) return this.startPromise ?? Promise.resolve();
     this.started = true;
-    this.client = new Client(this.serverUrl);
-    const sdkRoom = await this.client.joinOrCreate(this.roomName);
-    this.attachRoom(sdkRoom as unknown as RoomLike);
+    const client = new Client(this.serverUrl);
+    this.client = client;
+    this.startPromise = client
+      .joinOrCreate(this.roomName)
+      .then((sdkRoom) => {
+        // A React teardown can happen while the Colyseus matchmake/join is
+        // still pending. Never attach that late room to an already-stopped
+        // runtime; leave it instead so it cannot become an orphan socket.
+        if (this.disposed || !this.started || this.client !== client) {
+          void sdkRoom.leave().catch(() => {});
+          return;
+        }
+        this.attachRoom(sdkRoom as unknown as RoomLike);
+      })
+      .catch((error: unknown) => {
+        console.error(
+          `NetworkClient: joinOrCreate("${this.roomName}") failed at ${this.serverUrl}.`,
+          error,
+        );
+        if (this.client === client) {
+          this.client = null;
+          this.started = false;
+        }
+        throw error;
+      });
+    return this.startPromise;
   }
 
   public stop(): void {
     if (!this.started || this.disposed) return;
     this.detachRoom();
     this.started = false;
+    this.startPromise = null;
     this._isConnected = false;
     this._sessionId = null;
     this._parsedState = {
@@ -169,6 +196,11 @@ export class NetworkClient {
     editPattern: StructureOpeningPattern,
   ): boolean {
     return this.send(BUILD_EDIT_MESSAGE, { structureId, editPattern });
+  }
+
+  /** Send one canonical mutual-rematch vote without leaving the current room. */
+  public sendRematchRequest(): boolean {
+    return this.send(REMATCH_REQUEST_MESSAGE, {});
   }
 
   public send(type: string, payload?: unknown): boolean {
@@ -221,8 +253,8 @@ export class NetworkClient {
   }
 
   public dispose(): void {
-    this.disposed = true;
     this.stop();
+    this.disposed = true;
     this.stateListeners.clear();
     this.connectionListeners.clear();
     this.eventListeners.clear();
@@ -238,6 +270,11 @@ export class NetworkClient {
     this._sessionId = room.sessionId;
     this._isConnected = true;
     room.onStateChange((state) => { this.handleStateChange(state); });
+    room.onError((code, reason) => {
+      console.error(
+        `NetworkClient: room ${room.roomId} connection error (${code})${reason ? `: ${reason}` : ""}.`,
+      );
+    });
     room.onLeave(() => { this.handleDisconnect(); });
     room.onDrop(() => { this.handleDisconnect(); });
     for (const eventName of this.eventListeners.keys()) {

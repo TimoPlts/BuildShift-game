@@ -71,30 +71,32 @@ describe("PlayerController — capturePredictionState", () => {
     expect(body).toContain("verticalVelocity: this.verticalVelocity");
     expect(body).toContain("lastGrounded: this.lastGrounded");
     expect(body).toContain("jump: this.jumpController.captureState()");
-    expect(body).toContain("facingYaw: this.mesh.rotation.y");
+    // The presentation root's Y rotation is the NEGATED yaw (Babylon's node
+    // Y-rotation turns local -Z toward -X, while the shared movement
+    // convention turns forward toward +X); the prediction state stores the
+    // shared-movement yaw, so capture negates the mesh rotation.
+    expect(body).toContain("facingYaw: -this.mesh.rotation.y");
     // It reads the capsule centre from the physics authority, not the mesh.
     expect(body).toContain("this.physics.getPosition()");
   });
 });
 
 describe("PlayerController — restorePredictionState", () => {
-  it("restores physics position, vy, grounded, jump, mesh position, and yaw", () => {
+  it("restores physics position, vy, grounded, jump, and presentation transform", () => {
     const body = methodBody("restorePredictionState");
     expect(body).toContain("this.physics.setPosition(state.position)");
     expect(body).toContain("this.verticalVelocity = state.verticalVelocity");
     expect(body).toContain("this.lastGrounded = state.lastGrounded");
     expect(body).toContain("this.jumpController.restoreState(state.jump)");
-    expect(body).toContain("this.mesh.position.set(");
-    expect(body).toContain("this.mesh.rotation.y = state.facingYaw");
+    expect(body).toContain("this._presentation.setTransform(state.position, state.facingYaw)");
   });
 });
 
 describe("PlayerController — setAuthoritativePosition (narrow override)", () => {
-  it("updates ONLY physics position, mesh position, and facing yaw", () => {
+  it("updates ONLY physics position and presentation transform", () => {
     const body = methodBody("setAuthoritativePosition");
     expect(body).toContain("this.physics.setPosition(position)");
-    expect(body).toContain("this.mesh.position.set(position.x, position.y, position.z)");
-    expect(body).toContain("this.mesh.rotation.y = yaw");
+    expect(body).toContain("this._presentation.setTransform(position, yaw)");
   });
 
   it("does NOT touch verticalVelocity, lastGrounded, or JumpController timing", () => {

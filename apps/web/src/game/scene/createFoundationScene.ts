@@ -63,6 +63,10 @@ function buildArenaObject(
   );
   mesh.position = new Vector3(px, py, pz);
   mesh.material = material;
+  // Collider meshes are purely presentational — they must never
+  // participate in gameplay picking or collision detection.
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
 }
 
 /** Creates (or reuses) the shared material for an arena material kind. */
@@ -76,15 +80,17 @@ function getMaterial(scene: Scene, kind: ArenaMaterialKind): StandardMaterial {
   switch (kind) {
     case "ground":
       material.diffuseColor = ARENA_PALETTE.groundColor;
-      material.specularColor = new Color3(0.04, 0.05, 0.07);
+      material.specularColor = new Color3(0.03, 0.04, 0.06);
       break;
     case "accent":
       material.diffuseColor = ARENA_PALETTE.accentColor;
+      material.emissiveColor = ARENA_PALETTE.accentColor.scale(0.15);
+      material.specularColor = new Color3(0.1, 0.12, 0.15);
       break;
     case "neutral":
-      // Muted grey-blue used by the Stage 1E test obstacles so they read as
-      // "test furniture" rather than the accent/warm reference geometry.
-      material.diffuseColor = new Color3(0.42, 0.47, 0.55);
+      // Muted blue-grey: reads as intentional arena cover, not debug props.
+      material.diffuseColor = ARENA_PALETTE.coverColor;
+      material.specularColor = new Color3(0.03, 0.04, 0.05);
       break;
     case "warm":
       material.diffuseColor = new Color3(0.92, 0.48, 0.18);

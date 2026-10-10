@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
-import { MatchHud, type MatchHudProps } from "../ui/MatchHud";
+import type { MatchHudProps } from "../ui/MatchHud";
+import { GameHud } from "../ui/hud/GameHud";
+import { EliminatedSpectatorOverlay } from "../ui/EliminatedSpectatorOverlay";
+import type { LocalHudView } from "./localHudView";
 import { mapMatchStateToHudProps } from "./matchHudMapper";
 import { buildMatchLifecycleView, type MatchLifecycleView } from "./matchLifecycleView";
 import type { ParsedMatchState } from "./network";
@@ -15,12 +18,12 @@ export interface GameRuntimeActions {
   /**
    * Request a rematch after the match has ended.
    *
-   * Routes through the runtime's existing rejoin mechanism to start a
-   * fresh match without the caller needing to know the transport details.
+   * Routes through the runtime's canonical rematch command without leaving
+   * the authoritative room.
    * The parent (e.g. App) calls this from the MatchEndScreen's
    * "Play Again" / "Rematch" button.
    */
-  requestRematch: () => Promise<void>;
+  requestRematch: () => boolean;
 }
 
 /**
@@ -48,6 +51,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
   const [matchHudProps, setMatchHudProps] = useState<MatchHudProps | null>(null);
+  const [localHud, setLocalHud] = useState<LocalHudView | null>(null);
   const onLifecycleChangeRef = useRef(onMatchLifecycleChange);
   const onRuntimeReadyRef = useRef(onRuntimeReady);
   onLifecycleChangeRef.current = onMatchLifecycleChange;
@@ -62,62 +66,82 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
     let active = true;
     let runtime: GameRuntime | undefined;
     let unsubMatch: (() => void) | undefined;
+    let unsubLocalHud: (() => void) | undefined;
 
-    GameRuntime.create(canvas)
-      .then((r) => {
-        if (!active) {
-          r.dispose();
-          return;
-        }
-        runtime = r;
-        r.start();
+    // React StrictMode deliberately runs an effect setup/cleanup/setup cycle
+    // in development. `GameRuntime.create` has immediate Babylon/WebGL side
+    // effects before its asynchronous Rapier initialisation resolves, so an
+    // `active` check *after* create is too late: two engines can briefly own
+    // the same canvas. Defer creation one macrotask; the synthetic first
+    // cleanup cancels its timer before it can construct a runtime, while the
+    // real mounted effect starts exactly one canonical runtime/network path.
+    const startupTimer = window.setTimeout(() => {
+      void GameRuntime.create(canvas)
+        .then((r) => {
+          if (!active) {
+            r.dispose();
+            return;
+          }
+          runtime = r;
+          r.start();
 
-        // Build and emit the initial lifecycle view (disconnected state).
-        const initialView = buildMatchLifecycleView(
-          r.getMatchState(),
-          r.getSessionId(),
-          0,
-          r.connected,
-        );
-        onLifecycleChangeRef.current?.(initialView);
+          // Prime the local HUD (vitals, energy, weapon, build state) from the
+          // runtime's existing authoritative / predicted sources.
+          setLocalHud(r.getLocalHudView());
 
-        // Notify parent that runtime actions are available, including
-        // the rematch action routed through the existing runtime rejoin.
-        onRuntimeReadyRef.current?.({
-          leaveRoom: () => r.leaveRoom(),
-          rejoinRoom: () => r.rejoinRoom(),
-          requestRematch: () => r.rejoinRoom(),
-        });
+          // Build and emit the initial lifecycle view (disconnected state).
+          const initialView = buildMatchLifecycleView(
+            r.getMatchState(),
+            r.getSessionId(),
+            r.getCountdownSeconds(),
+            r.connected,
+          );
+          onLifecycleChangeRef.current?.(initialView);
 
-        // Subscribe to authoritative match-state updates to drive the HUD
-        // and the match lifecycle view.
-        unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
-          const sid = r.getSessionId();
-          if (!sid) return;
-
-          // Build the lifecycle view to derive countdown and connection state.
-          const view = buildMatchLifecycleView(state, sid, 0, r.connected);
-
-          // Wire the full lifecycle-derived props into the presentation-only
-          // MatchHud: base score/phase data plus the optional countdown and
-          // waiting-for-opponent indicator.
-          const baseHud = mapMatchStateToHudProps(state, sid);
-          setMatchHudProps({
-            ...baseHud,
-            countdownSeconds: view.countdownRemainingSeconds,
-            waitingForOpponent:
-              r.connected &&
-              state.matchPhase === MatchPhase.COUNTDOWN &&
-              state.currentRound === 0,
+          // Notify parent that runtime actions are available, including the
+          // canonical in-room rematch action.
+          onRuntimeReadyRef.current?.({
+            leaveRoom: () => r.leaveRoom(),
+            rejoinRoom: () => r.rejoinRoom(),
+            requestRematch: () => r.requestRematch(),
           });
 
-          // Propagate the lifecycle view to the parent for overlay screens.
-          onLifecycleChangeRef.current?.(view);
+          // Subscribe to the authoritative match-state updates (score / phase /
+          // banners) and to the runtime's local HUD snapshots (vitals, energy,
+          // weapon, build state, authoritative round timer / countdown).
+          unsubLocalHud = r.onLocalHudChange(setLocalHud);
+          unsubMatch = r.onMatchStateChange((state: ParsedMatchState) => {
+            const sid = r.getSessionId();
+            if (!sid) return;
+
+            // Build the lifecycle view to derive countdown and connection state.
+            const view = buildMatchLifecycleView(
+              state,
+              sid,
+              r.getCountdownSeconds(),
+              r.connected,
+            );
+
+            // Wire the full lifecycle-derived props into the presentation-only
+            // MatchHud: base score/phase data plus the optional countdown and
+            // waiting-for-opponent indicator.
+            const baseHud = mapMatchStateToHudProps(state, sid);
+            setMatchHudProps({
+              ...baseHud,
+              waitingForOpponent:
+                r.connected &&
+                state.matchPhase === MatchPhase.COUNTDOWN &&
+                state.currentRound === 0,
+            });
+
+            // Propagate the lifecycle view to the parent for overlay screens.
+            onLifecycleChangeRef.current?.(view);
+          });
+        })
+        .catch((error) => {
+          console.error("Failed to start the game runtime:", error);
         });
-      })
-      .catch((error) => {
-        console.error("Failed to start the game runtime:", error);
-      });
+    }, 0);
 
     const handlePointerLockChange = () => {
       setPointerLocked(document.pointerLockElement === canvas);
@@ -127,7 +151,9 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
 
     return () => {
       active = false;
+      window.clearTimeout(startupTimer);
       unsubMatch?.();
+      unsubLocalHud?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
       runtime?.dispose();
     };
@@ -141,22 +167,78 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         aria-label="BuildShift 3D game viewport"
       />
       {pointerLocked && <div className="crosshair" aria-hidden="true" />}
-      {matchHudProps && <MatchHud {...matchHudProps} />}
+      {matchHudProps !== null && <GameHud match={matchHudProps} local={localHud} />}
+      {localHud?.eliminated && matchHudProps?.phase === MatchPhase.IN_PROGRESS && (
+        <EliminatedSpectatorOverlay visible={true} />
+      )}
       {!pointerLocked && (
         <div className="pointer-lock-overlay">
           <strong>Click to play</strong>
+          {/*
+            Accurate, context-grouped keybind list — the bindings mirror the
+            live input controllers exactly: movement/fire (InputManager),
+            build mode (BuildingInputController), and build-edit
+            (BuildEditInputController). Shown only while the pointer is
+            unlocked (paused), never during gameplay, so it is help chrome
+            rather than in-match clutter.
+          */}
           <ul className="control-hints" aria-label="Controls">
-            <li>
-              <kbd>W A S D</kbd> move
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Move</span>
+              <span>
+                <kbd>W A S D</kbd> move
+              </span>
+              <span>
+                <kbd>Space</kbd> jump
+              </span>
+              <span>
+                <kbd>Mouse</kbd> look
+              </span>
             </li>
-            <li>
-              <kbd>Mouse</kbd> look
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Combat</span>
+              <span>
+                <kbd>Left click</kbd> fire
+              </span>
+              <span>
+                <kbd>R</kbd> reload
+              </span>
+              <span>
+                <kbd>1</kbd>/ <kbd>2</kbd> weapons
+              </span>
             </li>
-            <li>
-              <kbd>Space</kbd> jump
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Build</span>
+              <span>
+                <kbd>B</kbd> build mode
+              </span>
+              <span>
+                <kbd>1</kbd>-<kbd>4</kbd> select piece
+              </span>
+              <span>
+                <kbd>Q</kbd>/ <kbd>E</kbd> rotate
+              </span>
+              <span>
+                <kbd>Left click</kbd> place
+              </span>
             </li>
-            <li>
-              <kbd>Esc</kbd> unlock cursor
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">Edit</span>
+              <span>
+                <kbd>F</kbd> edit mode
+              </span>
+              <span>
+                <kbd>5</kbd>-<kbd>9</kbd> choose edit
+              </span>
+              <span>
+                <kbd>Enter</kbd> apply
+              </span>
+            </li>
+            <li className="control-hints__group">
+              <span className="control-hints__group-label">System</span>
+              <span>
+                <kbd>Esc</kbd> release cursor
+              </span>
             </li>
           </ul>
           <p>1v1 Energy Box Fight — first to 3 round wins takes the match</p>

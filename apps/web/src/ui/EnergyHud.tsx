@@ -56,13 +56,22 @@ export function EnergyHud(props: EnergyHudProps): JSX.Element {
         ? "energy-hud__bar-fill--low"
         : "energy-hud__bar-fill--critical";
 
+  // Mirror the bar state on the numeric read-out so the value is readable
+  // at a glance even when the eye is not on the bar itself.
+  const valueClass =
+    fraction > 0.5
+      ? ""
+      : fraction > 0.25
+        ? "energy-hud__value--low"
+        : "energy-hud__value--critical";
+
   return (
     <div className="energy-hud" aria-live="polite">
       <div className="energy-hud__top-row">
         <span className="energy-hud__label" aria-hidden="true">
           ⚡ ENERGY
         </span>
-        <span className="energy-hud__value">
+        <span className={`energy-hud__value ${valueClass}`}>
           {Math.round(clamped)} / {Math.round(maxEnergy)}
         </span>
       </div>

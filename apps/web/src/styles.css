@@ -80,7 +80,7 @@ html, body {
   place-content: center;
   text-align: center;
   gap: 0.35rem;
-  background: rgb(5 8 12 / 35%);
+  background: rgb(5 8 12 / 55%);
   pointer-events: none;
 }
 .pointer-lock-overlay strong {
@@ -93,15 +93,27 @@ html, body {
 }
 .control-hints {
   display: grid;
-  gap: 0.3rem;
+  grid-template-columns: repeat(2, minmax(11rem, max-content));
+  gap: 0.5rem 1.6rem;
   margin: 0.5rem 0;
-  padding: 0.5rem 0.9rem;
+  padding: 0.6rem 1rem;
   list-style: none;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
   color: #aeb9ca;
-  border: 1px solid rgb(255 255 255 / 10%);
+  border: 1px solid rgb(255 255 255 / 14%);
   border-radius: 0.5rem;
-  background: rgb(8 12 18 / 55%);
+  background: rgb(8 12 18 / 72%);
+}
+.control-hints__group {
+  display: grid;
+  gap: 0.15rem;
+}
+.control-hints__group-label {
+  font-size: 0.68rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #f5b642;
 }
 .control-hints kbd {
   display: inline-block;
@@ -209,8 +221,74 @@ html, body {
   align-items: center;
   gap: 0.5rem;
 }
+/* Waiting-for-opponent pill (lobby state). */
+.match-hud__waiting {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #aeb9ca;
+  padding: 0.2rem 0.6rem;
+  border: 1px solid rgb(255 255 255 / 12%);
+  border-radius: 0.4rem;
+  background: rgb(255 255 255 / 4%);
+}
+/* Pre-round countdown presentation lives in the full-screen lifecycle
+   overlay (CountdownOverlay); the header keeps only persistent info. */
+/* Round timer: track + remaining time. */
+.match-hud__timer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.match-hud__timer-track {
+  width: 11rem;
+  height: 6px;
+  background: rgb(0 0 0 / 55%);
+  border: 1px solid rgb(255 255 255 / 15%);
+  border-radius: 3px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 45%);
+}
+.match-hud__timer-fill {
+  height: 100%;
+  background: #67e8f9;
+  border-radius: 3px;
+  /* The authoritative timer updates at whole-second resolution; a linear
+     1s transition keeps the bar visibly smooth between updates. */
+  transition: width 1s linear;
+}
+.match-hud__timer--low .match-hud__timer-fill {
+  background: #f0616d;
+}
+.match-hud__timer-value {
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #e6e8ee;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+}
+.match-hud__timer--low .match-hud__timer-value {
+  color: #f0616d;
+  /* Subtle low-time cue: a gentle breath so remaining time is felt, not
+     just read. Stops under prefers-reduced-motion (see animations.css). */
+  animation: match-timer-low-pulse 1s ease-in-out infinite;
+}
+
+@keyframes match-timer-low-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+/* Round-end outcome presentation lives in the RoundEndBanner overlay; the
+   header no longer carries a per-round reason tag. */
 .match-hud__score-value {
-  font-size: 1.4rem;
+  font-size: 1.5rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: #e6e8ee;
@@ -226,6 +304,25 @@ html, body {
   font-size: 1.2rem;
   color: #aeb9ca;
 }
+/* Score-change pulse: the span is re-keyed on its authoritative value, so
+   the animation replays exactly when a round win is scored. */
+.match-hud__score-value--pulse {
+  display: inline-block;
+  animation: match-score-pulse 450ms ease-out;
+}
+
+@keyframes match-score-pulse {
+  0% {
+    transform: scale(1);
+  }
+  35% {
+    transform: scale(1.35);
+    text-shadow: 0 0 14px currentColor;
+  }
+  100% {
+    transform: scale(1);
+  }
+}
 .match-hud__phase-row {
   display: flex;
   align-items: center;
@@ -235,33 +332,18 @@ html, body {
   font-size: 0.75rem;
   color: #aeb9ca;
   letter-spacing: 0.03em;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase {
   font-size: 0.7rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: #6b7280;
+  color: #8b93a7;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase--active {
   color: #f5b642;
-}
-.match-hud__banner {
-  font-size: 1.5rem;
-  font-weight: 700;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  text-shadow: 0 2px 6px rgb(0 0 0 / 70%);
-}
-.match-hud__banner--success {
-  color: #34d399;
-}
-.match-hud__banner--failure {
-  color: #f0616d;
-}
-.match-hud__banner--match {
-  font-size: 2rem;
-  letter-spacing: 0.18em;
 }
 .build-hud {
   position: absolute;
@@ -283,7 +365,26 @@ html, body {
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 .build-hud--inactive {
-  opacity: 0.55;
+  opacity: 0.7;
+}
+/* Inactive-state keybind prompt ("Press B to build"). */
+.build-hud__toggle-hint {
+  font-size: 0.7rem;
+  letter-spacing: 0.03em;
+  color: #8b93a7;
+}
+.build-hud__toggle-hint kbd {
+  display: inline-block;
+  min-width: 1.4rem;
+  margin: 0 0.15rem;
+  padding: 0.05rem 0.3rem;
+  font-family: inherit;
+  font-size: 0.7rem;
+  text-align: center;
+  color: #e6e8ee;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.25rem;
+  background: rgb(255 255 255 / 8%);
 }
 .build-hud__top-row {
   display: flex;
@@ -295,7 +396,7 @@ html, body {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-hud__mode-label--active {
   color: #f5b642;
@@ -325,6 +426,10 @@ html, body {
   border-radius: 0.35rem;
   background: rgb(255 255 255 / 4%);
   min-width: 3.5rem;
+  /* Settle selection changes smoothly instead of snapping. */
+  transition:
+    border-color 150ms ease-out,
+    background 150ms ease-out;
 }
 .build-hud__type--selected {
   border-color: rgb(245 182 66 / 60%);
@@ -342,10 +447,42 @@ html, body {
   font-size: 0.6rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #6b7280;
+  color: #8b93a7;
 }
 .build-hud__type--selected .build-hud__type-label {
   color: #f5b642;
+}
+/* Number-key hint under each build-type chip (mirrors BUILD_TYPE_KEYS). */
+.build-hud__type-key {
+  font-size: 0.62rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #8b93a7;
+}
+.build-hud__type--selected .build-hud__type-key {
+  color: #f5b642;
+}
+/* Contextual control-hint row (rotate / place-or-aim / exit). */
+.build-hud__hint {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.03em;
+  color: #8b93a7;
+}
+.build-hud__hint kbd {
+  display: inline-block;
+  min-width: 1.2rem;
+  margin: 0 0.1rem;
+  padding: 0.02rem 0.28rem;
+  font-family: inherit;
+  font-size: 0.64rem;
+  text-align: center;
+  color: #e6e8ee;
+  border: 1px solid rgb(255 255 255 / 18%);
+  border-radius: 0.25rem;
+  background: rgb(255 255 255 / 8%);
 }
 .build-hud__bottom-row {
   display: flex;
@@ -365,6 +502,126 @@ html, body {
 }
 .build-hud__grid {
   font-size: 0.7rem;
-  color: #6b7280;
+  color: #8b93a7;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── BuildEditHud — owned-wall edit panel (sits above the build HUD) ── */
+.build-edit-hud {
+  position: absolute;
+  bottom: 5.6rem;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 1.1rem;
+  border: 1px solid rgb(96 165 250 / 28%);
+  border-radius: 0.5rem;
+  background: rgb(8 12 20 / 80%);
+  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
+  pointer-events: none;
+  backdrop-filter: blur(0.35rem);
+  z-index: 1000;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+.build-edit-hud--feedback-only {
+  border-color: rgb(255 255 255 / 12%);
+}
+.build-edit-hud__top-row {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+}
+.build-edit-hud__mode-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #8b93a7;
+}
+.build-edit-hud__mode-label--active {
+  color: #60a5fa;
+}
+.build-edit-hud__target {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e6e8ee;
+  letter-spacing: 0.02em;
+}
+.build-edit-hud__edits {
+  display: flex;
+  gap: 0.35rem;
+}
+.build-edit-hud__edit {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.12rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgb(255 255 255 / 10%);
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 4%);
+  min-width: 3.6rem;
+  /* Settle selection changes smoothly instead of snapping. */
+  transition:
+    border-color 150ms ease-out,
+    background 150ms ease-out;
+}
+.build-edit-hud__edit--empty {
+  border-style: dashed;
+}
+.build-edit-hud__edit--selected {
+  border-color: rgb(96 165 250 / 65%);
+  background: rgb(96 165 250 / 14%);
+}
+.build-edit-hud__edit-key {
+  font-size: 0.72rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #8b93a7;
+}
+.build-edit-hud__edit--selected .build-edit-hud__edit-key {
+  color: #60a5fa;
+}
+.build-edit-hud__edit-label {
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #8b93a7;
+}
+.build-edit-hud__edit--selected .build-edit-hud__edit-label {
+  color: #93c5fd;
+}
+.build-edit-hud__feedback {
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  padding: 0.15rem 0.6rem;
+  border-radius: 0.35rem;
+}
+.build-edit-hud__feedback--accepted {
+  color: #34d399;
+  background: rgb(52 211 153 / 12%);
+}
+.build-edit-hud__feedback--rejected {
+  color: #f0616d;
+  background: rgb(240 97 109 / 12%);
+}
+.build-edit-hud__feedback--info {
+  color: #60a5fa;
+  background: rgb(96 165 250 / 12%);
+}
+.build-edit-hud__hint {
+  font-size: 0.62rem;
+  color: #8b93a7;
+  letter-spacing: 0.04em;
+}
+.build-edit-hud__hint--warn {
+  color: #fbbf24;
+}
+.build-edit-hud__hint span {
+  color: #8b93a7;
+  font-weight: 700;
 }

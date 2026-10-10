@@ -7,11 +7,10 @@ import { BuildingStateSchema, StructureStateSchema, oc, wc } from "../state/buil
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
+import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
 export const WEAPON_SWITCH_INPUT = "two-player:weapon_switch";
-const RELOAD_INPUT = "two-player:reload";
-const BUILD_EDIT_INPUT = "two-player:build_edit";
 const THZ = 30, TD = 1 / THZ;
 const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gravity, jumpVelocity: VERTICAL_MOVEMENT.jumpVelocity, terminalVelocity: VERTICAL_MOVEMENT.terminalVelocity, groundY: VERTICAL_MOVEMENT.groundY };
 const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
@@ -30,6 +29,22 @@ interface WS {
 interface PWS {
     equippedWeaponId: WeaponId;
     slots: Map<WeaponId, WS>;
+}
+/** Plain-data snapshot of a player's authoritative state, saved during the
+ *  reconnect grace window. Restored verbatim if the session re-joins before
+ *  the window expires. */
+interface PlayerSnapshot {
+    x: number; y: number; z: number; yaw: number; velocityY: number;
+    grounded: boolean; lastProcessedSequence: number;
+    health: number; shield: number; energy: number;
+    ammo: number; lastFireSequence: number;
+    alive: boolean; isEliminated: boolean; currentWeapon: WeaponId;
+    weaponState: PWS;
+    spawnIndex: number;
+    roundScoreValue: number;
+    nextFireTickValue: number;
+    inactiveTicksValue: number;
+    lastPlacementTick: number;
 }
 function cws(): PWS { return { equippedWeaponId: CWO, slots: new Map<WeaponId, WS>([[ASSAULT_RIFLE.id as WeaponId, { magazineAmmo: ASSAULT_RIFLE.maxAmmo, reserveAmmo: ASSAULT_RIFLE.maxReserve, reloading: false, reloadProgress: 0 }], [SHOTGUN.id as WeaponId, { magazineAmmo: SHOTGUN.maxAmmo, reserveAmmo: SHOTGUN.maxReserve, reloading: false, reloadProgress: 0 }]]) }; }
 function tws(ws: PWS): WeaponState { const s = ws.slots.get(ws.equippedWeaponId)!; return { weaponId: ws.equippedWeaponId, ammoInMag: s.magazineAmmo, ammoReserve: s.reserveAmmo, reloading: s.reloading, reloadRemainingMs: s.reloading ? Math.ceil((wcfg(ws.equippedWeaponId).reloadTicks - s.reloadProgress) * 1000 / THZ) : 0 }; }
@@ -65,22 +80,101 @@ export class TwoPlayerMovementRoom extends Room<{
     private readonly inactiveTicks = new Map<string, number>();
     private readonly rematchVotes = new Set<string>();
     private matchEndedAt = 0;
-    constructor(...args: ConstructorParameters<typeof Room>) { super(...args); this.bld.structures = this.state.structures; this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; }); }
-    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(RELOAD_INPUT, (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_INPUT, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
-    onJoin(c: Client): void { const si = this.jc % SP.length, sp = SP[si]; this.jc++; this.ss.set(c.sessionId, si); const p = new PlayerStateSchema(); p.x = sp.x; p.y = sp.y; p.z = sp.z; p.yaw = 0; p.velocityY = 0; p.grounded = true; p.lastProcessedSequence = -1; p.health = MAX_HEALTH; p.shield = MAX_SHIELD; p.energy = ENERGY.startingEnergy; p.alive = true; p.isEliminated = false; initW(p); this.wps.set(c.sessionId, cws()); this.state.players.set(c.sessionId, p); const r = new RoundScoreSchema(); r.value = 0; this.state.roundScore.set(c.sessionId, r); if (this.state.matchPhase === MatchPhase.MATCH_ENDED)
-        this.resetMatch(); }
-    onLeave(c: Client, _e?: number): void { const ph = this.state.matchPhase as MatchPhase; if (ph === MatchPhase.IN_PROGRESS) {
-        const op = this.getOpp(c.sessionId);
-        if (op)
-            this.endRound(op, c.sessionId, "disconnect");
-    } this.state.players.delete(c.sessionId); this.inb.delete(c.sessionId); this.inactiveTicks.delete(c.sessionId); this.rematchVotes.delete(c.sessionId); this.ss.delete(c.sessionId); this.lpt.delete(c.sessionId); this.wps.delete(c.sessionId); this.nextFireTick.delete(c.sessionId); }
-    onDispose(): void { this.inb.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); if (this.pw) {
+    private readonly reconnectGrace: ReconnectGraceManager;
+    constructor(...args: ConstructorParameters<typeof Room>) {
+        super(...args);
+        this.bld.structures = this.state.structures;
+        this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; });
+        this.reconnectGrace = createReconnectGraceManager(RECONNECT_GRACE_MS, (sid, snap) => this.handleGraceExpire(sid, snap as PlayerSnapshot));
+    }
+    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
+    onJoin(c: Client): void {
+        // Reconnect within grace: restore prior authoritative state.
+        const snap = this.reconnectGrace.restore(c.sessionId) as PlayerSnapshot | undefined;
+        if (snap) {
+            this.restoreFromSnapshot(c.sessionId, snap);
+            return;
+        }
+        const si = this.jc % SP.length, sp = SP[si]; this.jc++; this.ss.set(c.sessionId, si); const p = new PlayerStateSchema(); p.x = sp.x; p.y = sp.y; p.z = sp.z; p.yaw = 0; p.velocityY = 0; p.grounded = true; p.lastProcessedSequence = -1; p.health = MAX_HEALTH; p.shield = MAX_SHIELD; p.energy = ENERGY.startingEnergy; p.alive = true; p.isEliminated = false; initW(p); this.wps.set(c.sessionId, cws()); this.state.players.set(c.sessionId, p); const r = new RoundScoreSchema(); r.value = 0; this.state.roundScore.set(c.sessionId, r); if (this.state.matchPhase === MatchPhase.MATCH_ENDED)
+        this.resetMatch();
+    }
+    onLeave(c: Client, _e?: number): void {
+        // Preserve the player's state for the reconnect grace window.
+        // The round is NOT ended here — the grace expiry handler does that
+        // if the player fails to rejoin in time.
+        const p = this.state.players.get(c.sessionId);
+        if (p) {
+            this.reconnectGrace.save(c.sessionId, this.createSnapshot(c.sessionId, p));
+        }
+        this.state.players.delete(c.sessionId); this.inb.delete(c.sessionId); this.inactiveTicks.delete(c.sessionId); this.rematchVotes.delete(c.sessionId); this.ss.delete(c.sessionId); this.lpt.delete(c.sessionId); this.wps.delete(c.sessionId); this.nextFireTick.delete(c.sessionId);
+    }
+    onDispose(): void { this.reconnectGrace.dispose(); this.inb.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); this.inactiveTicks.clear(); this.nextFireTick.clear(); this.rematchVotes.clear(); if (this.pw) {
         this.pw.dispose();
         this.pw = null;
     } }
     private getOpp(sid: string): string | null { for (const k of this.state.players.keys())
         if (k !== sid)
             return k; return null; }
+    /** Build a plain-data snapshot of the player's authoritative state. */
+    private createSnapshot(sid: string, p: PE): PlayerSnapshot {
+        const ws = this.wps.get(sid);
+        const weaponState: PWS = ws
+            ? { equippedWeaponId: ws.equippedWeaponId, slots: new Map(ws.slots) }
+            : cws();
+        return {
+            x: p.x, y: p.y, z: p.z, yaw: p.yaw, velocityY: p.velocityY,
+            grounded: p.grounded, lastProcessedSequence: p.lastProcessedSequence,
+            health: p.health, shield: p.shield, energy: p.energy,
+            ammo: p.ammo, lastFireSequence: p.lastFireSequence,
+            alive: p.alive, isEliminated: p.isEliminated, currentWeapon: p.currentWeapon as WeaponId,
+            weaponState,
+            spawnIndex: this.ss.get(sid) ?? 0,
+            roundScoreValue: this.state.roundScore.get(sid)?.value ?? 0,
+            nextFireTickValue: this.nextFireTick.get(sid) ?? 0,
+            inactiveTicksValue: this.inactiveTicks.get(sid) ?? 0,
+            lastPlacementTick: this.lpt.get(sid) ?? 0,
+        };
+    }
+    /** Restore a player's authoritative state from a grace snapshot. */
+    private restoreFromSnapshot(sid: string, snap: PlayerSnapshot): void {
+        const p = new PlayerStateSchema();
+        p.x = snap.x; p.y = snap.y; p.z = snap.z;
+        p.yaw = snap.yaw; p.velocityY = snap.velocityY; p.grounded = snap.grounded;
+        p.lastProcessedSequence = snap.lastProcessedSequence;
+        p.health = snap.health; p.shield = snap.shield; p.energy = snap.energy;
+        p.alive = snap.alive; p.isEliminated = snap.isEliminated;
+        p.currentWeapon = snap.currentWeapon; p.lastFireSequence = snap.lastFireSequence;
+        p.ammo = snap.ammo;
+        // Restore per-weapon schema map from the snapshot's weapon state.
+        p.weapons.clear();
+        for (const [wid, slot] of snap.weaponState.slots) {
+            const w = new WeaponAmmoStateSchema();
+            w.magazineAmmo = slot.magazineAmmo;
+            w.reserveAmmo = slot.reserveAmmo;
+            w.isReloading = slot.reloading;
+            w.reloadProgress = slot.reloadProgress;
+            p.weapons.set(wid, w);
+        }
+        // Restore room-level maps.
+        this.wps.set(sid, { equippedWeaponId: snap.weaponState.equippedWeaponId, slots: new Map(snap.weaponState.slots) });
+        this.ss.set(sid, snap.spawnIndex);
+        this.inactiveTicks.set(sid, snap.inactiveTicksValue);
+        this.nextFireTick.set(sid, snap.nextFireTickValue);
+        if (snap.lastPlacementTick > 0) this.lpt.set(sid, snap.lastPlacementTick);
+        // Restore round score.
+        const rs = this.state.roundScore.get(sid);
+        if (rs) rs.value = snap.roundScoreValue;
+        else { const r = new RoundScoreSchema(); r.value = snap.roundScoreValue; this.state.roundScore.set(sid, r); }
+        this.state.players.set(sid, p);
+    }
+    /** Grace window elapsed without reconnection: apply the disconnect consequence. */
+    private handleGraceExpire(sid: string, _snap: PlayerSnapshot): void {
+        const ph = this.state.matchPhase as MatchPhase;
+        if (ph === MatchPhase.IN_PROGRESS) {
+            const op = this.getOpp(sid);
+            if (op) this.endRound(op, sid, "disconnect");
+        }
+    }
     private hi(c: Client, m: unknown): void { const i = pi(m); if (!i)
         return; this.inb.set(c.sessionId, i); this.inactiveTicks.set(c.sessionId, 0); }
     private async hpr(c: Client, msg: unknown): Promise<void> { this.sc++; await handleBuildPlacement(c, msg, { state: this.state, bld: this.bld, occ: this.occ, lpt: this.lpt, tc: this.tc, structureId: this.roomId + "-" + this.sc, pwPromise: this.pwp, broadcast: (ev, d) => this.broadcast(ev, d), sendTo: (cl2, ev, d) => cl2.send(ev, d) }); }
@@ -301,7 +395,7 @@ export class TwoPlayerMovementRoom extends Room<{
         return;
     } this.state.matchPhase = MatchPhase.ROUND_ENDED; this.ptl = RT; }
     private resetMatch(): void { this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.roundTicks = 0; this.matchEndedAt = 0; this.rematchVotes.clear(); for (const [, r] of this.state.roundScore)
-        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.inb.clear(); }
+        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.inb.clear(); this.reconnectGrace.clearAll(); }
     private resolveTimeout(): void { const players = [...this.state.players.entries()]; if (players.length < 2)
         return; const [a, ap] = players[0], [b, bp] = players[1]; this.endRound(ap.health > bp.health || (ap.health === bp.health && a < b) ? a : b, ap.health > bp.health || (ap.health === bp.health && a < b) ? b : a, "time_expired"); }
     private rm(c: Client): void { if (this.state.matchPhase !== MatchPhase.MATCH_ENDED || Date.now() - this.matchEndedAt > REMATCH_WINDOW_SECONDS * 1000) {

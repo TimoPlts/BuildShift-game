@@ -54,6 +54,8 @@ export interface WeaponInputFrame {
 export class InputManager {
   private readonly heldCodes = new Set<string>();
   private readonly lookDelta = { x: 0, y: 0 };
+  private readonly lookDeltaOut: LookDelta = { x: 0, y: 0 };
+  private readonly movementOut: LocalMovementInput = { x: 0, z: 0 };
   private jumpPressed = false;
   private pointerLocked = false;
   private inputCleared = false;
@@ -92,22 +94,25 @@ export class InputManager {
 
   public getMovementInput(): LocalMovementInput {
     if (!this.pointerLocked) {
-      return { x: 0, z: 0 };
+      this.movementOut.x = 0;
+      this.movementOut.z = 0;
+      return this.movementOut;
     }
-    return {
-      x: Number(this.heldCodes.has("KeyD")) - Number(this.heldCodes.has("KeyA")),
-      z: Number(this.heldCodes.has("KeyS")) - Number(this.heldCodes.has("KeyW")),
-    };
+    this.movementOut.x = Number(this.heldCodes.has("KeyD")) - Number(this.heldCodes.has("KeyA"));
+    this.movementOut.z = Number(this.heldCodes.has("KeyS")) - Number(this.heldCodes.has("KeyW"));
+    return this.movementOut;
   }
 
   public consumeLookDelta(): LookDelta {
-    const delta = { x: this.lookDelta.x, y: this.lookDelta.y };
+    this.lookDeltaOut.x = this.lookDelta.x;
+    this.lookDeltaOut.y = this.lookDelta.y;
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
     if (!this.pointerLocked) {
-      return { x: 0, y: 0 };
+      this.lookDeltaOut.x = 0;
+      this.lookDeltaOut.y = 0;
     }
-    return delta;
+    return this.lookDeltaOut;
   }
 
   public pollJumpPressed(): boolean {

@@ -219,7 +219,9 @@
   .match-end-screen__panel,
   .score-bar__pip--won-local,
   .score-bar__pip--won-remote,
-  .score-bar__score-display {
+  .score-bar__score-display,
+  .match-hud__score-value--pulse,
+  .match-hud__timer--low .match-hud__timer-value {
     animation: none;
     opacity: 1;
     transform: none;
