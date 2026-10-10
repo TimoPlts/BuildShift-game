@@ -165,24 +165,56 @@ describe("Disconnection integration", () => {
       await wfs(a, (s) => ph(s) === MatchPhase.COUNTDOWN, 10_000);
       expect(ph(a.state)).toBe(MatchPhase.COUNTDOWN);
       expect(cr(a.state)).toBe(1);
+      // B returns with a FRESH session and its join must be confirmed BEFORE
+      // A drops. With maxPlayers = 2 and Colyseus autoDispose, a
+      // mid-countdown disconnect by the last remaining client disposes the
+      // room (the disconnect grace only preserves state, it does not reserve
+      // the seat), making the countdown unobservable. A confirmed second
+      // client keeps the room alive deterministically.
+      const b2 = await jn(url);
+      b2.onMessage(MATCH_EVENTS.ROUND_OVER, (m) => ro.push(m));
+      await wfs(b2, (s) => pf(s, b2.sessionId) !== undefined, 5000);
       // A disconnects during countdown
       try { a.connection.close(); } catch {}
-      // Connect observer to verify countdown completes cleanly
-      const obs = await jn(url);
       try {
-        await wfs(obs, (s) => ph(s) !== "" && cr(s) > 0, 5000);
-        const p = ph(obs.state);
-        expect([MatchPhase.COUNTDOWN, MatchPhase.IN_PROGRESS]).toContain(p);
-        if (p === MatchPhase.COUNTDOWN) {
-          await wfs(obs, (s) => ph(s) === MatchPhase.IN_PROGRESS, 10_000);
+        // Synchronize on the authoritative transition into an active round
+        // at or past round 2. Do NOT assert an exact round number after this
+        // async boundary: A's 3s reconnect grace may expire almost as soon
+        // as round 2 begins (A dropped near the end of the countdown) and
+        // legitimately award round 2 — a NEW round, not a re-award of round
+        // 1 — to the remaining player, after which the match resets (2s)
+        // and counts down (3s) into round 3. Both outcomes satisfy the same
+        // contract; the invariants below hold in either case.
+        await wfs(b2, (s) => ph(s) === MatchPhase.IN_PROGRESS && cr(s) >= 2, 12_000);
+        // (1) Countdown not corrupted: the mid-countdown disconnect did not
+        // stop the lifecycle — the match still transitioned COUNTDOWN →
+        // IN_PROGRESS and advanced to round 2 or later.
+        expect(ph(b2.state)).toBe(MatchPhase.IN_PROGRESS);
+        expect(cr(b2.state)).toBeGreaterThanOrEqual(2);
+        // (2) No round re-awarded: round 1's win is preserved exactly once.
+        expect(sc(b2.state, sidA)).toBe(1);
+        // (3) Both disconnected sessions are gone from authoritative state.
+        expect(pf(b2.state, sidA)).toBeUndefined();
+        expect(pf(b2.state, sidB)).toBeUndefined();
+        // (4) Round 1 was awarded exactly once, to A. Any further ROUND_OVER
+        // must belong to a later round with the disconnected session as the
+        // loser (the disconnect consequence), never a duplicate of round 1.
+        // If the state already reflects round 3, the round-2 award event was
+        // broadcast earlier on the same connection, so it is guaranteed
+        // delivered; if we snapped during round 2 it may not have arrived
+        // yet, so only validate the events that are present.
+        const round1 = ro.filter((m) => m.roundNumber === 1);
+        expect(round1.length).toBe(1);
+        expect(round1[0].winnerId).toBe(sidA);
+        expect(round1[0].loserId).toBe(sidB);
+        for (const m of ro) {
+          if (m.roundNumber > 1) {
+            expect(m.loserId).toBe(sidA);
+            expect(m.reason).toBe("disconnect");
+          }
         }
-        expect(ph(obs.state)).toBe(MatchPhase.IN_PROGRESS);
-        expect(sc(obs.state, sidA)).toBe(1);
-        expect(pf(obs.state, sidA)).toBeUndefined();
-        expect(pf(obs.state, sidB)).toBeUndefined();
-        expect(cr(obs.state)).toBe(2);
       } finally {
-        await dl(td(obs), 5000, "tdObs");
+        await dl(td(b2), 5000, "tdB2");
       }
     } finally {
       await dl(td(a), 5000, "tdA");
