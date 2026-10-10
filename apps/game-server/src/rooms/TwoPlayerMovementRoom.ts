@@ -8,6 +8,7 @@ import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
 import { applyWallEditPattern, wallPatternGeometry } from "../state/wallEditPatterns.js";
+import { classifyFloorForm, generateFloorEditGeometry } from "../match/floorEditGeometry.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
@@ -262,7 +263,7 @@ export class TwoPlayerMovementRoom extends Room<{
         s.editType = edit as string;
         this.broadcast(BUILD_EDIT_EVENTS.EDIT_RESULT, { structureId: id, success: true, editType: s.editType, updatedStructure: s.toJSON() });
     }
-    private hega(c: Client, m: unknown): void {
+    private async hega(c: Client, m: unknown): Promise<void> {
         const v = validateEditActionRequest(m);
         if (!v.ok) {
             c.send(EDIT_GRID_ACTION_INPUT, { structureId: typeof (m as Record<string, unknown>)?.structureId === "string" ? (m as Record<string, unknown>).structureId as string : "", success: false, reason: v.errors.join("; ") });
@@ -309,6 +310,14 @@ export class TwoPlayerMovementRoom extends Room<{
             reject("invalid_action");
             return;
         }
+        // Floor authority: the canonical post-edit state must be a valid 2×2
+        // floor form. An edit that would remove the last remaining tile is
+        // rejected server-side (a floor cannot be edited to empty; it must
+        // be destroyed instead).
+        if (s.buildType === "floor" && newState.kind === "floor_cone" && classifyFloorForm(newState.tiles) === null) {
+            reject("invalid_form");
+            return;
+        }
         // Write back to the schema.
         if (newState.kind === "wall" || newState.kind === "floor_cone") {
             s.editKind = newState.kind;
@@ -319,6 +328,12 @@ export class TwoPlayerMovementRoom extends Room<{
             s.editKind = "ramp";
             s.editTiles.length = 0;
             s.editRampVariant = newState.variant;
+        }
+        // Floor edits regenerate collision geometry from the canonical edit
+        // state: one quarter-cell cuboid per remaining tile.
+        if (s.buildType === "floor" && newState.kind === "floor_cone") {
+            const pw = await this.pwp;
+            pw.setStructureColliders(req.structureId, generateFloorEditGeometry({ x: s.grid.x, y: s.grid.y, z: s.grid.z }, newState.tiles));
         }
         const result = { structureId: req.structureId, success: true, editState: serializeEditState(newState) };
         this.broadcast(EDIT_GRID_ACTION_INPUT, result);
