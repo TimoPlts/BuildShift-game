@@ -118,6 +118,11 @@ function createAudioWithMock(mockCtx: AudioContextLike): {
   return { audio, mockCtx };
 }
 
+/** Advance the mock context's clock (the real API's currentTime is read-only). */
+function advanceClock(ctx: AudioContextLike, t: number): void {
+  (ctx as unknown as { currentTime: number }).currentTime = t;
+}
+
 describe("ClientAudio", () => {
   let mockCtx: AudioContextLike;
 
@@ -134,6 +139,7 @@ describe("ClientAudio", () => {
       audio.playHitConfirm();
       audio.playBuildPlace();
       audio.playBuildDestroy();
+      audio.playReload();
       audio.playJump();
       audio.playLand(0.5);
       audio.playCountdownTick();
@@ -240,6 +246,60 @@ describe("ClientAudio", () => {
       // Should not throw for out-of-range values
       audio.playLand(-1);
       audio.playLand(2);
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("playReload", () => {
+    it("creates two oscillators for the reload blips", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playReload();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("build sound throttling", () => {
+    it("skips a build place replay inside the min gap", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildPlace();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      // 50 ms later is inside the 120 ms gap.
+      advanceClock(ctx, 0.05);
+      audio.playBuildPlace();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      // 200 ms later is outside the gap.
+      advanceClock(ctx, 0.2);
+      audio.playBuildPlace();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips overlapping build destroy blasts inside the min gap", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildDestroy();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      advanceClock(ctx, 0.05);
+      audio.playBuildDestroy();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      advanceClock(ctx, 0.3);
+      audio.playBuildDestroy();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+
+    it("uses independent throttles for place and destroy", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildPlace();
+      advanceClock(ctx, 0.05);
+      // Destroy is not suppressed by a recent place.
+      audio.playBuildDestroy();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+
+    it("reset clears the throttle so a fresh round can play build sounds", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildDestroy();
+      advanceClock(ctx, 0.05);
+      audio.reset();
+      audio.playBuildDestroy();
       expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
     });
   });
