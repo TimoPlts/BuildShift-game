@@ -228,10 +228,16 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
                 <kbd>F</kbd> edit mode
               </span>
               <span>
-                <kbd>5</kbd>-<kbd>9</kbd> choose edit
+                <kbd>Left click</kbd> select tile
               </span>
               <span>
-                <kbd>Enter</kbd> apply
+                <kbd>Enter</kbd> confirm
+              </span>
+              <span>
+                <kbd>C</kbd> cancel
+              </span>
+              <span>
+                <kbd>Backspace</kbd> reset
               </span>
             </li>
             <li className="control-hints__group">

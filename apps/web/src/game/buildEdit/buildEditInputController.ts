@@ -1,55 +1,49 @@
 /**
- * buildEditInputController — browser input for the build-edit controls.
+ * buildEditInputController — browser input for the piece-edit controls.
  *
  * Owns the *player intent* signals for editing a placed structure (the
- * presentation half of build editing). It is a pure intent source: it reports
- * state and edges but never talks to the network, never validates edit
- * legality, and never creates/edits structures. The {@link BuildEditController}
- * consumes these signals.
+ * presentation half of piece editing). It is a pure intent source: it
+ * reports state and edges but never talks to the network, never validates
+ * edit legality, and never creates/edits structures. The
+ * {@link BuildEditController} consumes these signals.
  *
- * Controls (all latched only while the canvas holds pointer lock, mirroring
- * the building / movement / fire input safety rules):
+ * Controls:
  *
- *  - `F`                toggle build-edit mode on/off
- *  - `5` / `6` / `7` / `8` / `9`   choose door / window / half_top /
- *                                  half_bottom / clear (the number row is
- *                                  free here; 1–4 are build-type + weapon keys)
- *  - `Enter`            apply the chosen edit to the aimed, owned structure
+ *  - `F`          toggle edit mode on/off (latched while pointer-locked)
+ *  - `Enter`      confirm the edit (latched only in edit mode)
+ *  - `C`          cancel the edit (latched only in edit mode)
+ *  - `Backspace`  reset the piece to its default form (latched only in edit
+ *                 mode)
+ *
+ * The crosshair tile selection itself comes from the shared left mouse
+ * button. Its browser state is owned by the centralized {@link InputManager};
+ * this controller adds **no** mouse listeners. The runtime routes the
+ * primary-button press/hold into edit mode via the single
+ * {@link routePrimaryAction} policy and feeds the routed values in through
+ * {@link BuildEditInputController.latchEditSelect}, which derives the press
+ * edge, the held state, and the release edge. Exactly one interaction owns
+ * the button at a time (edit > build > weapon).
  *
  * Releasing pointer lock (or hiding the tab) exits edit mode and drops every
- * latched intent, so a stale key can never produce an edit intent after the
- * player is no longer in the gameplay view.
+ * latched intent, so a stale key or click can never produce an edit intent
+ * after the player is no longer in the gameplay view.
  *
  * Testability: the event targets are injectable via
  * {@link BuildEditInputEnvironment} so unit tests can drive the controller
  * without a real DOM.
  */
-import type { BuildEditType } from "@buildshift/protocol";
 
-/** The key that toggles build-edit mode. */
+/** The key that toggles edit mode. */
 export const EDIT_MODE_TOGGLE_KEY = "KeyF";
 
-/** The key that applies the chosen edit to the targeted structure. */
-export const APPLY_EDIT_KEY = "Enter";
+/** The key that confirms the edit. */
+export const CONFIRM_EDIT_KEY = "Enter";
 
-/** A build-edit choice: an opening edit, or `clear` to remove the opening. */
-export type BuildEditSelection = BuildEditType | "clear";
+/** The key that cancels the edit. */
+export const CANCEL_EDIT_KEY = "KeyC";
 
-/**
- * Maps number-row keys to the build-edit choices the client can select.
- *
- * `5`–`8` select the four opening edits (`door` / `window` / `half_top` /
- * `half_bottom`); `9` clears the structure's opening. The number row is
- * reused (not `1`–`4`, which are the build-type and weapon-switch keys) so
- * edit intent never collides with placement or weapon intent.
- */
-export const EDIT_TYPE_KEYS: Readonly<Record<string, BuildEditSelection>> = {
-  Digit5: "door",
-  Digit6: "window",
-  Digit7: "half_top",
-  Digit8: "half_bottom",
-  Digit9: "clear",
-};
+/** The key that resets the piece to its default form. */
+export const RESET_EDIT_KEY = "Backspace";
 
 /** The minimum keyboard event shape the controller reads. */
 interface KeyboardLikeEvent {
@@ -91,16 +85,31 @@ export function defaultBuildEditInputEnvironment(
 }
 
 /**
- * Owns the build-edit keyboard intent signals.
+ * Owns the piece-edit intent signals (keyboard keys + the routed primary
+ * button).
  */
 export class BuildEditInputController {
   private readonly canvas: HTMLCanvasElement;
   private readonly env: BuildEditInputEnvironment;
   private editModeActive = false;
-  /** Latched edit choice, pending the next frame's poll (or `null`). */
-  private editSelection: BuildEditSelection | null = null;
-  /** Latched apply-press edge, pending the next frame's poll. */
-  private applyPressed = false;
+  /** Latched confirm press, pending the next frame's poll. */
+  private confirmPressed = false;
+  /** Latched cancel press, pending the next frame's poll. */
+  private cancelPressed = false;
+  /** Latched reset press, pending the next frame's poll. */
+  private resetPressed = false;
+  /** Latched primary-button select press edge (routed), pending a poll. */
+  private selectPressed = false;
+  /** Routed primary-button hold while in edit mode (tile painting). */
+  private selectHeld = false;
+  /** Latched primary-button release edge (routed), pending a poll. */
+  private selectReleased = false;
+  /**
+   * The routed hold on the previous frame — used to derive the release
+   * edge. Only tracked while edit mode is active, so a mode toggle never
+   * produces a phantom release.
+   */
+  private prevSelectHeld = false;
   private disposed = false;
 
   public constructor(
@@ -120,37 +129,97 @@ export class BuildEditInputController {
     );
   }
 
-  /** True while build-edit mode is active (the selection preview is presented). */
+  /** True while edit mode is active (the tile grid is presented). */
   public isEditModeActive(): boolean {
     return this.editModeActive;
   }
 
   /**
-   * Returns the latched edit choice and clears it, or `null` when none is
-   * pending. Polled once per render frame — never inside the key handler, so
-   * a press is never consumed before a frame actually runs.
+   * Feeds the routed primary-button state (from the runtime's single
+   * {@link routePrimaryAction} decision) into the edit intents. Called once
+   * per render frame; derives the press edge, the hold, and the release
+   * edge. While pointer lock is released the controller clears every intent
+   * instead, so a stale click can never produce a selection.
    */
-  public consumeEditSelection(): BuildEditSelection | null {
-    const selection = this.editSelection;
-    this.editSelection = null;
-    return selection;
+  public latchEditSelect(pressed: boolean, held: boolean): void {
+    if (this.disposed) {
+      return;
+    }
+    if (!this.isPointerLocked()) {
+      this.clearIntents();
+      return;
+    }
+    if (!this.editModeActive) {
+      // Out of edit mode the primary button belongs to another layer; keep
+      // the edge bookkeeping flat so re-entering never emits a phantom
+      // press/release.
+      this.selectPressed = false;
+      this.selectHeld = false;
+      this.selectReleased = false;
+      this.prevSelectHeld = false;
+      return;
+    }
+    this.selectPressed = this.selectPressed || pressed;
+    this.selectHeld = held;
+    this.selectReleased = this.prevSelectHeld && !held;
+    this.prevSelectHeld = held;
   }
 
   /**
-   * Returns whether an apply press is pending, and clears the latch. Polled
-   * once per render frame by the controller.
+   * Returns the latched confirm press and clears it. Polled once per render
+   * frame by the controller.
    */
-  public consumeApplyPressed(): boolean {
-    const pressed = this.applyPressed;
-    this.applyPressed = false;
+  public consumeConfirmPressed(): boolean {
+    const pressed = this.confirmPressed;
+    this.confirmPressed = false;
+    return pressed;
+  }
+
+  /** Returns the latched cancel press and clears it. */
+  public consumeCancelPressed(): boolean {
+    const pressed = this.cancelPressed;
+    this.cancelPressed = false;
+    return pressed;
+  }
+
+  /** Returns the latched reset press and clears it. */
+  public consumeResetPressed(): boolean {
+    const pressed = this.resetPressed;
+    this.resetPressed = false;
     return pressed;
   }
 
   /**
+   * Returns the latched primary select press edge and clears it. The hold
+   * is read separately via {@link isEditSelectHeld} (it persists across
+   * frames while the button stays down — the drag-paint behaviour).
+   */
+  public consumeEditSelectPressed(): boolean {
+    const pressed = this.selectPressed;
+    this.selectPressed = false;
+    return pressed;
+  }
+
+  /** True while the routed primary button is held in edit mode. */
+  public isEditSelectHeld(): boolean {
+    return this.selectHeld;
+  }
+
+  /**
+   * Returns the latched primary select release edge and clears it (used for
+   * the optional confirm-on-release behaviour).
+   */
+  public consumeEditSelectReleased(): boolean {
+    const released = this.selectReleased;
+    this.selectReleased = false;
+    return released;
+  }
+
+  /**
    * Forces edit mode off and drops every latched intent. Called by the
-   * controller on round reset / rematch / disconnect so a stale edit can
-   * never survive a state transition (the pointer-lock path also clears
-   * intents independently).
+   * controller on round reset / rematch / disconnect / confirm so a stale
+   * intent can never survive a state transition (the pointer-lock path
+   * also clears intents independently).
    */
   public exitEditMode(): void {
     if (this.disposed) {
@@ -200,19 +269,27 @@ export class BuildEditInputController {
 
     if (e.code === EDIT_MODE_TOGGLE_KEY) {
       this.editModeActive = !this.editModeActive;
+      // Entering fresh: reset the hold bookkeeping so a button that was
+      // already held from another layer never reads as a release edge.
+      this.prevSelectHeld = false;
+      this.selectReleased = false;
       return;
     }
-    if (e.code === APPLY_EDIT_KEY) {
-      // The apply edge only latches in edit mode (out of edit mode Enter has
-      // no build meaning and is deliberately ignored).
-      if (this.editModeActive) {
-        this.applyPressed = true;
-      }
+    // The terminal keys only latch in edit mode (out of edit mode they have
+    // no build meaning and are deliberately ignored).
+    if (!this.editModeActive) {
       return;
     }
-    const selection = EDIT_TYPE_KEYS[e.code];
-    if (selection !== undefined && this.editModeActive) {
-      this.editSelection = selection;
+    if (e.code === CONFIRM_EDIT_KEY) {
+      this.confirmPressed = true;
+      return;
+    }
+    if (e.code === CANCEL_EDIT_KEY) {
+      this.cancelPressed = true;
+      return;
+    }
+    if (e.code === RESET_EDIT_KEY) {
+      this.resetPressed = true;
     }
   };
 
@@ -233,12 +310,18 @@ export class BuildEditInputController {
 
   /**
    * Drops every latched intent and exits edit mode. Triggered by pointer
-   * lock release and hidden-tab transitions — so a stale key can never fire
-   * an edit after the player is no longer "in" the game view.
+   * lock release, hidden-tab transitions, and forced exits — so a stale key
+   * or click can never fire an edit after the player is no longer "in" the
+   * game view.
    */
   private clearIntents(): void {
     this.editModeActive = false;
-    this.editSelection = null;
-    this.applyPressed = false;
+    this.confirmPressed = false;
+    this.cancelPressed = false;
+    this.resetPressed = false;
+    this.selectPressed = false;
+    this.selectHeld = false;
+    this.selectReleased = false;
+    this.prevSelectHeld = false;
   }
 }

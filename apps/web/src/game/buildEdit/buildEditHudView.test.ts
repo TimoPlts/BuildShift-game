@@ -1,145 +1,168 @@
 /**
- * Unit tests for {@link buildBuildEditHudView} / {@link buildEditHudChangeKey}
- * — the pure mapping from the build-edit controller's presentation state into
- * the flat {@link BuildEditHudState} the React panel renders from.
+ * Unit tests for the {@link buildBuildEditHudView} /
+ * {@link buildEditHudChangeKey} pure mapping.
+ *
+ * Pinned contracts:
+ *  - the flat HUD state mirrors the controller's presentation values
+ *    (mode, target, pending tile summary, feedback, readiness),
+ *  - the pending tile summary derives open/total from the canonical edit
+ *    state (ramps report their variant instead of tiles),
+ *  - the change key is stable across identical views and distinguishes any
+ *    player-visible change (mode, target, tile count, ramp variant,
+ *    feedback, readiness).
  */
 import { describe, expect, it } from "vitest";
 import {
   buildBuildEditHudView,
   buildEditHudChangeKey,
   type BuildEditHudInput,
-  type BuildEditHudState,
 } from "./buildEditHudView";
 import type { TargetedStructure } from "./structureSelection";
 
-function target(): TargetedStructure {
-  return {
-    structureId: "wall1",
-    buildType: "wall",
-    grid: { x: 2, y: 0, z: -3 },
-    rotation: 0,
-    ownerId: "me",
-    distance: 2.5,
-  };
-}
+const wallTarget: TargetedStructure = {
+  structureId: "wall-1",
+  buildType: "wall",
+  grid: { x: 1, y: 0, z: 2 },
+  rotation: 0,
+  ownerId: "p1",
+  distance: 3.2,
+};
 
 function input(overrides: Partial<BuildEditHudInput> = {}): BuildEditHudInput {
   return {
-    mode: false,
-    target: null,
-    selectedEdit: "door",
-    allowedEdits: [],
+    mode: true,
+    target: wallTarget,
+    pending: {
+      kind: "wall",
+      tiles: [true, true, true, true, false, true, true, true, true],
+    },
     feedback: null,
-    connected: false,
+    connected: true,
     ...overrides,
   };
 }
 
 describe("buildBuildEditHudView", () => {
-  it("defaults to an empty, off snapshot", () => {
+  it("copies the presentation values into the flat view", () => {
     const view = buildBuildEditHudView(input());
-    expect(view.mode).toBe(false);
-    expect(view.target).toBeNull();
-    expect(view.selectedEdit).toBe("door");
-    expect(view.allowedEdits).toEqual([]);
+    expect(view.mode).toBe(true);
+    expect(view.target).toEqual({
+      structureId: "wall-1",
+      buildType: "wall",
+      grid: { x: 1, y: 0, z: 2 },
+    });
+    expect(view.removedTiles).toBe(1);
+    expect(view.totalTiles).toBe(9);
+    expect(view.rampVariant).toBeNull();
     expect(view.feedback).toBeNull();
+    expect(view.applyReady).toBe(true);
+  });
+
+  it("reports an untargeted edit mode with null target and zero summary", () => {
+    const view = buildBuildEditHudView(input({ target: null, pending: null }));
+    expect(view.mode).toBe(true);
+    expect(view.target).toBeNull();
+    expect(view.removedTiles).toBe(0);
+    expect(view.totalTiles).toBe(0);
+    expect(view.rampVariant).toBeNull();
     expect(view.applyReady).toBe(false);
   });
 
-  it("computes applyReady from mode + target + connection", () => {
-    const both = { mode: true, target: target(), connected: true } as const;
-    expect(buildBuildEditHudView(input(both)).applyReady).toBe(true);
-    expect(buildBuildEditHudView(input({ ...both, connected: false })).applyReady).toBe(false);
-    expect(buildBuildEditHudView(input({ ...both, target: null })).applyReady).toBe(false);
-    expect(buildBuildEditHudView(input({ ...both, mode: false })).applyReady).toBe(false);
+  it("counts every open tile on a floor grid", () => {
+    const view = buildBuildEditHudView(
+      input({
+        target: { ...wallTarget, structureId: "floor-1", buildType: "floor" },
+        pending: {
+          kind: "floor_cone",
+          tiles: [false, true, false, false],
+        },
+      }),
+    );
+    expect(view.totalTiles).toBe(4);
+    expect(view.removedTiles).toBe(3);
+    expect(view.rampVariant).toBeNull();
   });
 
-  it("copies the target + allowed edits (cloned, not by reference)", () => {
-    const edits = ["door", "window", "half_top", "half_bottom"] as const;
+  it("reports the ramp variant instead of tiles", () => {
     const view = buildBuildEditHudView(
-      input({ mode: true, target: target(), allowedEdits: edits, selectedEdit: "window" }),
+      input({
+        target: { ...wallTarget, structureId: "ramp-1", buildType: "ramp" },
+        pending: { kind: "ramp", variant: "half_right" },
+      }),
     );
-    expect(view.mode).toBe(true);
-    expect(view.target).toEqual({ structureId: "wall1", buildType: "wall", grid: { x: 2, y: 0, z: -3 } });
-    expect(view.selectedEdit).toBe("window");
-    expect(view.allowedEdits).toEqual(["door", "window", "half_top", "half_bottom"]);
-    // Cloning: mutating the returned array must not touch the input.
-    view.allowedEdits.push("clear" as never);
-    expect(edits).toHaveLength(4);
+    expect(view.totalTiles).toBe(0);
+    expect(view.removedTiles).toBe(0);
+    expect(view.rampVariant).toBe("half_right");
   });
 
-  it("copies the feedback banner verbatim", () => {
+  it("passes the feedback through with kind + message only", () => {
     const view = buildBuildEditHudView(
-      input({ feedback: { kind: "rejected", message: "Not your structure", structureId: "wall1" } }),
+      input({
+        feedback: {
+          kind: "rejected",
+          message: "Not your structure",
+          structureId: "wall-1",
+        },
+      }),
     );
-    expect(view.feedback).toEqual({ kind: "rejected", message: "Not your structure" });
+    expect(view.feedback).toEqual({
+      kind: "rejected",
+      message: "Not your structure",
+    });
+  });
+
+  it("marks the edit unavailable while disconnected or untargeted", () => {
+    expect(buildBuildEditHudView(input({ connected: false })).applyReady).toBe(false);
+    expect(buildBuildEditHudView(input({ mode: false })).applyReady).toBe(false);
+    expect(buildBuildEditHudView(input()).applyReady).toBe(true);
   });
 });
 
 describe("buildEditHudChangeKey", () => {
-  it("is stable for identical presentation state", () => {
-    const a = buildBuildEditHudView(input({ mode: true, target: target() }));
-    const b = buildBuildEditHudView(input({ mode: true, target: target() }));
+  it("is stable for identical views", () => {
+    const a = buildBuildEditHudView(input());
+    const b = buildBuildEditHudView(input());
     expect(buildEditHudChangeKey(a)).toBe(buildEditHudChangeKey(b));
   });
 
-  const base = buildBuildEditHudView(input({ mode: true, target: target() }));
+  it("changes with mode, target, tile summary, ramp variant, feedback, and readiness", () => {
+    const base = buildBuildEditHudView(input());
+    const baseKey = buildEditHudChangeKey(base);
 
-  it("changes when the mode flips", () => {
-    const next = { ...base, mode: false } as BuildEditHudState;
-    expect(buildEditHudChangeKey(next)).not.toBe(buildEditHudChangeKey(base));
-  });
-
-  it("changes when the targeted structure id or grid changes", () => {
-    const otherId = { ...base, target: { ...base.target!, structureId: "wall2" } } as BuildEditHudState;
-    expect(buildEditHudChangeKey(otherId)).not.toBe(buildEditHudChangeKey(base));
-
-    const otherGrid = {
-      ...base,
-      target: { ...base.target!, grid: { x: 2, y: 0, z: -4 } },
-    } as BuildEditHudState;
-    expect(buildEditHudChangeKey(otherGrid)).not.toBe(buildEditHudChangeKey(base));
-  });
-
-  it("changes when the selected edit changes", () => {
-    const next = { ...base, selectedEdit: "window" } as BuildEditHudState;
-    expect(buildEditHudChangeKey(next)).not.toBe(buildEditHudChangeKey(base));
-  });
-
-  it("changes when the allowed-edits list changes", () => {
-    const next = { ...base, allowedEdits: ["door"] } as BuildEditHudState;
-    expect(buildEditHudChangeKey(next)).not.toBe(buildEditHudChangeKey(base));
-  });
-
-  it("changes when feedback appears, and when its kind or message changes", () => {
-    const withFb = {
-      ...base,
-      feedback: { kind: "accepted", message: "Edit applied" },
-    } as BuildEditHudState;
-    expect(buildEditHudChangeKey(withFb)).not.toBe(buildEditHudChangeKey(base));
-
-    const rejected = {
-      ...withFb,
-      feedback: { kind: "rejected", message: "Edit applied" },
-    } as BuildEditHudState;
-    expect(buildEditHudChangeKey(rejected)).not.toBe(buildEditHudChangeKey(withFb));
-
-    const otherMsg = {
-      ...withFb,
-      feedback: { kind: "accepted", message: "Something else" },
-    } as BuildEditHudState;
-    expect(buildEditHudChangeKey(otherMsg)).not.toBe(buildEditHudChangeKey(withFb));
-  });
-
-  it("changes when apply readiness flips", () => {
-    const baseReady = buildBuildEditHudView(
-      input({ mode: true, target: target(), connected: true }),
-    );
-    const baseBlocked = buildBuildEditHudView(
-      input({ mode: true, target: target(), connected: false }),
-    );
-    expect(baseReady.applyReady).toBe(true);
-    expect(baseBlocked.applyReady).toBe(false);
-    expect(buildEditHudChangeKey(baseReady)).not.toBe(buildEditHudChangeKey(baseBlocked));
+    const variants = [
+      buildBuildEditHudView(input({ mode: false })),
+      buildBuildEditHudView(
+        input({
+          target: { ...wallTarget, structureId: "wall-2", grid: { x: 9, y: 1, z: 4 } },
+        }),
+      ),
+      buildBuildEditHudView(
+        input({
+          pending: {
+            kind: "wall",
+            tiles: [true, true, true, true, false, false, true, true, true],
+          },
+        }),
+      ),
+      buildBuildEditHudView(
+        input({
+          target: { ...wallTarget, buildType: "ramp" },
+          pending: { kind: "ramp", variant: "full" },
+        }),
+      ),
+      buildBuildEditHudView(
+        input({
+          target: { ...wallTarget, buildType: "ramp" },
+          pending: { kind: "ramp", variant: "half_left" },
+        }),
+      ),
+      buildBuildEditHudView(
+        input({ feedback: { kind: "accepted", message: "Edit confirmed" } }),
+      ),
+      buildBuildEditHudView(input({ connected: false })),
+    ];
+    for (const variant of variants) {
+      expect(buildEditHudChangeKey(variant)).not.toBe(baseKey);
+    }
   });
 });

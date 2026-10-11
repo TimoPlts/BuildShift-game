@@ -138,11 +138,14 @@ describe("GameCanvas startup", () => {
     expect(text).toContain("select piece");
     expect(text).toContain("rotate");
     expect(text).toContain("place");
-    // Edit group — mirrors BuildEditInputController (F, 5-9, Enter).
+    // Edit group — mirrors BuildEditInputController (F, tile select, Enter,
+    // C, Backspace).
     expect(text).toContain("Edit");
     expect(text).toContain("edit mode");
-    expect(text).toContain("choose edit");
-    expect(text).toContain("apply");
+    expect(text).toContain("select tile");
+    expect(text).toContain("confirm");
+    expect(text).toContain("cancel");
+    expect(text).toContain("reset");
     // System group — pointer-lock release.
     expect(text).toContain("Esc");
   });
