@@ -31,7 +31,11 @@
  *  - terminal actions (confirm / cancel / reset) are only sent when the
  *    player actually changed the piece — the server treats a confirm as an
  *    acknowledgement of an already-committed state, so there is nothing to
- *    send for an untouched piece.
+ *    send for an untouched piece. A `reset` (or `cancel`) is applied to the
+ *    pending state *optimistically and immediately*, so the preview snaps to
+ *    the full/default canonical form before the server round-trip (the fast,
+ *    combat-ready reset); repeated edit → reset → edit cycles therefore
+ *    replicate identically from the same canonical baseline.
  *
  * Authority contract: this controller NEVER edits structures on its own
  * authority. It sends *intents* and consumes the server's results. It does
@@ -468,6 +472,15 @@ export class BuildEditController {
    * piece was actually changed, then exits edit mode for confirm/cancel
    * (reset keeps the mode on so further edits continue). An untouched piece
    * simply exits (confirm/cancel) — there is nothing to send.
+   *
+   * Fast reset: `reset` and `cancel` both resolve to the canonical default
+   * state on the server, so the matching default is applied to the pending
+   * (optimistic) cache *immediately* — the preview reflects the reset to the
+   * full/default form before the server round-trip, so repeated
+   * edit → reset → edit cycles start from an identical canonical baseline.
+   * The server remains authoritative: the intent is still sent, and a
+   * rejection drops the optimistic default (the pending state rolls back to
+   * the last authoritative state) in {@link handleActionResult}.
    */
   private sendTerminal(
     ctx: Pick<BuildEditFrameContext, "connected" | "inRound">,
@@ -486,6 +499,13 @@ export class BuildEditController {
       this.network.send(EDIT_GRID_ACTION_MESSAGE, { structureId: id, action });
       // A terminal action ends the change set for this piece.
       this.touched.delete(id);
+      // Apply the reset-to-default result optimistically now, so the preview
+      // is immediately combat-ready (full/default canonical form) instead of
+      // waiting for the broadcast. `confirm` is a no-op acknowledgement and
+      // keeps the current state, so it is deliberately not applied here.
+      if (action === "reset" || action === "cancel") {
+        this.optimistic.set(id, createDefaultEditState(structure.buildType));
+      }
     }
     if (action === "confirm" || action === "cancel") {
       this.input.exitEditMode();
