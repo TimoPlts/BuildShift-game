@@ -10,6 +10,7 @@
  */
 
 import type { ProtocolValidation } from "./inputs/validatePlayerInputFrame.js";
+import type { StructureEditState } from "./editGrid.js";
 
 // ──── Build type vocabulary ────
 
@@ -149,6 +150,18 @@ export interface StructureState {
    * editing keep compiling unchanged (the field defaults to "no openings").
    */
   openings?: StructureOpening[];
+  /**
+   * The authoritative tile-level edit state for this structure (wall 3×3,
+   * floor/cone 2×2, ramp directional variant), replicated from the server's
+   * `editKind` / `editTiles` / `editRampVariant` fields.
+   *
+   * Absent when the server has not activated an edit grid for this structure
+   * (or an older server does not carry the fields at all) — in that case the
+   * legacy {@link StructureState.editType} / `openings` description remains
+   * the source of truth. Optional so pre-existing construction sites keep
+   * compiling unchanged.
+   */
+  editGrid?: StructureEditState;
 }
 
 /** Plain-data view of a room's authoritative building state. */

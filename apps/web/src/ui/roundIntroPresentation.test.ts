@@ -64,7 +64,7 @@ describe("round-intro: authoritative input lock during COUNTDOWN", () => {
 
   it("locks weapon input during the authoritative COUNTDOWN phase", () => {
     expect(runtime).toContain(
-      "if(this.matchState.matchPhase!==MatchPhase.COUNTDOWN)this.handleWeaponInput()",
+      "if(this.matchState.matchPhase!==MatchPhase.COUNTDOWN)this.handleWeaponInput(route)",
     );
   });
 

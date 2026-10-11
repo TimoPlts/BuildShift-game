@@ -13,7 +13,11 @@
  *    SAME canvas + network client as the building system (no second network
  *    surface), and driven once per render frame from the runtime's EXISTING
  *    sources (camera, aim, feet, the authoritative building mirror, session
- *    id, connection state);
+ *    id, connection state, in-round flag, and the per-frame primary-action
+ *    route);
+ *  - the projected edit-grid preview (`EditPreviewPresentation`) is driven
+ *    from the controller's pending state + the pure `aimEditTile` crosshair
+ *    mapping, and hidden when there is nothing to show;
  *  - the build-edit presentation state is folded into the local HUD view
  *    through the pure `buildBuildEditHudView` mapper (no mirrored gameplay
  *    state invented in the runtime);
@@ -32,14 +36,18 @@ const internal = readFileSync(new URL("./GameRuntimeInternal.ts", import.meta.ur
 const hud = readFileSync(new URL("../ui/hud/GameHud.tsx", import.meta.url), "utf8");
 
 describe("GameRuntime build-edit wiring", () => {
-  it("constructs the build-edit system from the existing canvas + network client", () => {
+  it("constructs the build-edit system + preview from the existing canvas + network client", () => {
     expect(runtime).toContain(
-      "import{createBuildEditSystem,buildBuildEditHudView,type BuildEditSystem}from\"./buildEdit\"",
+      'import{createBuildEditSystem,buildBuildEditHudView,EditPreviewPresentation,aimEditTile,BUILD_EDIT_RANGE,type BuildEditSystem}from"./buildEdit"',
     );
     expect(runtime).toContain("private readonly buildEditSystem:BuildEditSystem;");
     // Same canvas + network client as the building system — no new network surface.
     expect(runtime).toContain(
       "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+    );
+    // The projected edit-grid preview is a presentation-only scene resource.
+    expect(runtime).toContain(
+      "this.editPreview=new EditPreviewPresentation(this.scene);",
     );
     // It is created after the network client exists (the building-system line
     // precedes it, which itself follows `this.networkClient=...`).
@@ -53,25 +61,42 @@ describe("GameRuntime build-edit wiring", () => {
 
   it("drives the build-edit frame from the runtime's existing sources each render frame", () => {
     // The update is called right after the building frame update in the render
-    // loop. Build presentation synchronizes the same authoritative mirror
-    // before edit targeting and HUD emission.
+    // loop, with the same per-frame primary-action route. Build presentation
+    // synchronizes the same authoritative mirror before edit targeting and
+    // HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),false,this.inputManager.isFiring()).buildPlaceHeld);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
+      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
     );
 
-    const fnIdx = runtime.indexOf("private updateBuildEditFrame():void");
+    const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
     expect(fnIdx).toBeGreaterThan(-1);
-    const block = runtime.slice(fnIdx, fnIdx + 500);
+    const block = runtime.slice(fnIdx, fnIdx + 900);
     // Reads only existing runtime sources: camera position, the shared aim
     // direction, the player's feet, the authoritative building mirror, the
-    // session id, and the live connection flag.
+    // session id, the live connection flag, the in-round flag, and the
+    // routed edit-select edges.
     expect(block).toContain("camera.position");
     expect(block).toContain("this.currentAimDirection");
     expect(block).toContain("this.playerController.getFeetPositionInto(this._feetPos)");
     expect(block).toContain("this.buildingSystem.store.getBuildingState()");
     expect(block).toContain("sessionId:this.networkClient.sessionId");
     expect(block).toContain("connected:this.isConnected");
+    expect(block).toContain("inRound");
+    expect(block).toContain("editSelectPressed:route.editSelectPressed,editSelectHeld:route.editSelectHeld");
+  });
+
+  it("drives the projected edit-grid preview from the pending state + pure tile mapping", () => {
+    const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
+    expect(fnIdx).toBeGreaterThan(-1);
+    const block = runtime.slice(fnIdx, fnIdx + 1400);
+    // The preview shows the pending (optimistic/auth) state for the targeted
+    // structure with the crosshair tile / ramp-half highlighted ...
+    expect(block).toContain("this.editPreview.show({");
+    expect(block).toContain("aimEditTile({structure,aimOrigin:camera.position");
+    expect(block).toContain("maxRange:BUILD_EDIT_RANGE");
+    // ... and hides it whenever there is no target or pending state.
+    expect(block).toContain("this.editPreview.hide();");
   });
 
   it("folds the build-edit presentation state into the local HUD view via the pure mapper", () => {
