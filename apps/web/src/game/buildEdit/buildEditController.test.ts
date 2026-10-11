@@ -460,6 +460,141 @@ describe("BuildEditController — terminal actions", () => {
   });
 });
 
+describe("BuildEditController — fast authoritative edit reset (repeat cycles)", () => {
+  it("snaps the pending state to the default immediately, before the result arrives", () => {
+    const building = buildingOf([wall("wall1")]);
+    const s = setup(building);
+    enterEditMode(s, building);
+    s.controller.updateFrame(clickFrame(building)); // select tile 4 (optimistic: open)
+    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
+
+    // Fast reset: the reset is applied optimistically the moment it is sent.
+    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
+    s.controller.updateFrame(frame(building));
+    // No result has arrived yet — the preview already shows the full/default
+    // canonical form (every tile solid).
+    expect(s.controller.getPendingState()).toEqual({
+      kind: "wall",
+      tiles: [true, true, true, true, true, true, true, true, true],
+    });
+    // The reset intent was submitted (authoritative path unchanged).
+    expect(s.network.sent.at(-1)?.payload).toEqual({
+      structureId: "wall1",
+      action: "reset",
+    });
+
+    // The authoritative result converges to the same default state.
+    s.network.emitResult({
+      structureId: "wall1",
+      success: true,
+      editState: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
+    });
+    expect(s.controller.getPendingState()).toEqual({
+      kind: "wall",
+      tiles: [true, true, true, true, true, true, true, true, true],
+    });
+  });
+
+  it("replicates identically across repeated edit → reset → edit cycles", () => {
+    const building = buildingOf([wall("wall1")]);
+    const s = setup(building);
+    enterEditMode(s, building);
+
+    // Cycle 1: edit tile 4.
+    s.controller.updateFrame(clickFrame(building));
+    const cycle1Select = s.network.sent[0]?.payload;
+    const cycle1Pending = s.controller.getPendingState();
+
+    // Reset and let both in-flight actions resolve to the canonical default.
+    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
+    s.controller.updateFrame(frame(building));
+    s.network.emitResult({
+      structureId: "wall1",
+      success: true,
+      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
+    });
+    s.network.emitResult({
+      structureId: "wall1",
+      success: true,
+      editState: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
+    });
+    // Back to the canonical baseline — no tile open.
+    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
+
+    // Cycle 2: the same edit from the reset baseline must replicate exactly.
+    s.controller.updateFrame(clickFrame(building));
+    const cycle2Select = s.network.sent.at(-1)?.payload;
+    const cycle2Pending = s.controller.getPendingState();
+
+    // Identical wire intent and identical pending state for the same edit.
+    expect(cycle2Select).toEqual(cycle1Select);
+    expect(cycle2Select).toEqual({ structureId: "wall1", action: "select", tileIndex: 4 });
+    expect(cycle2Pending).toEqual(cycle1Pending);
+    expect(wallTiles(cycle2Pending)?.[4]).toBe(false);
+  });
+
+  it("snaps a ramp reset to the full variant immediately", () => {
+    const building = buildingOf([ramp("ramp1")]);
+    const s = setup(building);
+    enterEditMode(s, building);
+    const aimAtRightHalf = (overrides: Partial<BuildEditFrameContext> = {}) =>
+      frame(building, {
+        aimOrigin: { x: 5, y: 2, z: 0 },
+        aimDirection: { x: 0, y: 0, z: -1 },
+        ...overrides,
+      });
+    s.controller.updateFrame(aimAtRightHalf({ editSelectPressed: true, editSelectHeld: true }));
+    expect(s.controller.getPendingState()).toEqual({ kind: "ramp", variant: "half_right" });
+
+    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
+    s.controller.updateFrame(aimAtRightHalf());
+    // Fast reset: the preview is immediately the full (canonical) ramp.
+    expect(s.controller.getPendingState()).toEqual({ kind: "ramp", variant: "full" });
+    expect(s.network.sent.at(-1)?.payload).toEqual({ structureId: "ramp1", action: "reset" });
+  });
+
+  it("rolls a rejected fast reset back to the authoritative state (no weakening)", () => {
+    // No static editGrid in the mirror: the authoritative state is driven
+    // purely by the accepted select result below, so the mirror sync cannot
+    // override it.
+    const building = buildingOf([wall("wall1")]);
+    const s = setup(building);
+    enterEditMode(s, building);
+    s.controller.updateFrame(clickFrame(building)); // select tile 4 (optimistic: open)
+    // The server accepts the select: authoritative state now has tile 4 open.
+    s.network.emitResult({
+      structureId: "wall1",
+      success: true,
+      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
+    });
+
+    // Fast reset is applied optimistically (default)...
+    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
+    s.controller.updateFrame(frame(building));
+    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
+
+    // ...but the server rejects it, so the optimistic default is discarded and
+    // the pending state rolls back to the authoritative (tile 4 open) state.
+    s.network.emitResult({ structureId: "wall1", success: false, reason: "invalid_player_state" });
+    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
+    expect(s.controller.getFeedback()?.kind).toBe("rejected");
+  });
+
+  it("sends nothing and changes nothing for an untouched piece on reset", () => {
+    const building = buildingOf([wall("wall1")]);
+    const s = setup(building);
+    enterEditMode(s, building);
+    s.controller.updateFrame(frame(building)); // no edits
+    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
+    s.controller.updateFrame(frame(building));
+    expect(s.network.sent).toHaveLength(0);
+    // The piece was never edited: the pending state is already the default.
+    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
+    // Reset keeps edit mode on (a further edit would continue immediately).
+    expect(s.controller.getMode()).toBe(true);
+  });
+});
+
 describe("BuildEditController — result convergence + feedback", () => {
   it("converges the pending state from the success broadcast and stays silent for tile toggles", () => {
     const building = buildingOf([wall("wall1")]);
