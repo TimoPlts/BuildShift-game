@@ -8,17 +8,22 @@
  *      ray / player position / selected build type (the current
  *      camera/grid target);
  *   2. drives held-primary rapid placement ("turbo building"): when the
- *      routed build-owned primary is held and the player is connected,
- *      submits a placement intent for the (valid) preview, rate-limited to
- *      one request per `PLACEMENT_REQUEST_INTERVAL_MS`.
+ *      routed build-owned primary is held (or just pressed) and the player is
+ *      connected **and in an active round**, submits a placement intent for
+ *      the (valid) preview, rate-limited to one request per
+ *      `PLACEMENT_REQUEST_INTERVAL_MS`. The press edge rides the same
+ *      rate-limited path, so a quick click places exactly once and can
+ *      never double the held stream.
  *
  * The primary button's browser state is owned by the centralized
- * `InputManager`; the runtime hands over the *routed* build-held value
+ * `InputManager`; the runtime hands over the *routed* build values
  * (from `routePrimaryAction`), so the weapon path and the building path
- * never see the same hold as theirs. Placement requests are only *sent*
- * when connected: while disconnected there is no authoritative server to
- * answer them, and the server's validation (overlap / rate / energy)
- * remains the final authority on acceptance.
+ * never see the same press/hold as theirs. Placement requests are only
+ * *sent* when connected and the round is `IN_PROGRESS`: while disconnected
+ * or outside the round there is no authoritative server to accept them
+ * (the server rejects placement outside `IN_PROGRESS`), and the server's
+ * validation (overlap / rate / energy) remains the final authority on
+ * acceptance.
  */
 import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { Vector3 } from "@babylonjs/core/Maths/math.vector";
@@ -59,6 +64,13 @@ const _frameContext = {
  *        `routePrimaryAction` over the centralized `InputManager` state).
  * @param nowMs the monotonic frame clock in ms (defaults to
  *        `performance.now()`); injectable for deterministic tests.
+ * @param inRound whether the match phase is `IN_PROGRESS` (default `true`):
+ *        placement intents are only submitted while the server can accept
+ *        them. The preview/ghost keeps updating regardless, so the HUD stays
+ *        live outside the round.
+ * @param primaryPressed the routed build-owned primary press edge (from
+ *        `routePrimaryAction`); it joins the same rate-limited submission
+ *        path as the hold, so single-click placement is reliable.
  */
 export function updateBuildingFrame(
   building: BuildingFrameDriver,
@@ -68,6 +80,8 @@ export function updateBuildingFrame(
   connected: boolean,
   primaryHeld: boolean,
   nowMs?: number,
+  inRound = true,
+  primaryPressed = false,
 ): void {
   const camPos = camera.position;
   const aimOrigin = _frameContext.aimOrigin;
@@ -87,10 +101,10 @@ export function updateBuildingFrame(
 
   building.controller.updateFrame(_frameContext);
 
-  if (connected) {
+  if (connected && inRound) {
     building.controller.pollHeldPlacement(
       nowMs ?? performance.now(),
-      primaryHeld,
+      primaryHeld || primaryPressed,
     );
   }
 }

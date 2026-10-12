@@ -62,10 +62,16 @@ describe("round-intro: authoritative input lock during COUNTDOWN", () => {
     "utf8",
   );
 
-  it("locks weapon input during the authoritative COUNTDOWN phase", () => {
+  it("locks weapon input outside the authoritative IN_PROGRESS phase", () => {
+    // Overhaul task 12: every weapon action (switch/reload/fire) is gated on
+    // effective weapon mode + MatchPhase.IN_PROGRESS + connected + not
+    // eliminated, so weapon input is locked during COUNTDOWN (and
+    // intermissions) — and the slot/reload latches are drained every frame,
+    // so no stale press can fire on a phase change.
     expect(runtime).toContain(
-      "if(this.matchState.matchPhase!==MatchPhase.COUNTDOWN)this.handleWeaponInput(route)",
+      'const active=this.interactionMode.mode==="weapon"&&this.matchState.matchPhase===MatchPhase.IN_PROGRESS&&this.isConnected',
     );
+    expect(runtime).toContain("if(route.weaponFirePressed&&active){");
   });
 
   it("zeroes movement, fire, and jump in the sim tick during COUNTDOWN", () => {

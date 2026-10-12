@@ -11,10 +11,11 @@
  * What this contract locks down:
  *  - the build-edit system is constructed in the runtime constructor from the
  *    SAME canvas + network client as the building system (no second network
- *    surface), and driven once per render frame from the runtime's EXISTING
- *    sources (camera, aim, feet, the authoritative building mirror, session
- *    id, connection state, in-round flag, and the per-frame primary-action
- *    route);
+ *    surface) and the SAME shared interaction-mode coordinator (overhaul
+ *    task 12 — one owner of the build/edit layer state), and driven once per
+ *    render frame from the runtime's EXISTING sources (camera, aim, feet, the
+ *    authoritative building mirror, session id, connection state, in-round
+ *    flag, and the per-frame primary-action route);
  *  - the projected edit-grid preview (`EditPreviewPresentation`) is driven
  *    from the controller's pending state + the pure `aimEditTile` crosshair
  *    mapping, and hidden when there is nothing to show;
@@ -41,9 +42,10 @@ describe("GameRuntime build-edit wiring", () => {
       'import{createBuildEditSystem,buildBuildEditHudView,EditPreviewPresentation,aimEditTile,BUILD_EDIT_RANGE,type BuildEditSystem}from"./buildEdit"',
     );
     expect(runtime).toContain("private readonly buildEditSystem:BuildEditSystem;");
-    // Same canvas + network client as the building system — no new network surface.
+    // Same canvas + network client as the building system — no new network
+    // surface — plus the shared interaction-mode coordinator.
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
     );
     // The projected edit-grid preview is a presentation-only scene resource.
     expect(runtime).toContain(
@@ -53,10 +55,25 @@ describe("GameRuntime build-edit wiring", () => {
     // precedes it, which itself follows `this.networkClient=...`).
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
     const buildEditIdx = runtime.indexOf(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
     );
     expect(clientIdx).toBeGreaterThan(-1);
     expect(buildEditIdx).toBeGreaterThan(clientIdx);
+  });
+
+  it("shares ONE interaction-mode coordinator between the building and build-edit systems", () => {
+    // A single coordinator instance is constructed on the runtime ...
+    expect(runtime).toContain(
+      "private readonly interactionMode=new InteractionModeCoordinator();",
+    );
+    // ... and the SAME instance is threaded into both systems (no per-system
+    // mode state, no duplicate listeners — the coordinator owns none).
+    expect(runtime).toContain(
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode);",
+    );
+    expect(runtime).toContain(
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
+    );
   });
 
   it("drives the build-edit frame from the runtime's existing sources each render frame", () => {
@@ -66,7 +83,7 @@ describe("GameRuntime build-edit wiring", () => {
     // HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
+      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");

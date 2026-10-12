@@ -508,7 +508,10 @@ export class BuildEditController {
       }
     }
     if (action === "confirm" || action === "cancel") {
-      this.input.exitEditMode();
+      // Commit-exit drops the edit layer AND the build layer beneath it, so
+      // the primary button and the number keys are combat actions
+      // immediately ("confirm then shotgun") — overhaul task 12.
+      this.input.commitEditExit();
     }
   }
 

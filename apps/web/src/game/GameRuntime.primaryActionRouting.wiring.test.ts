@@ -5,16 +5,24 @@
  * fire state — one listener, one routing decision, no per-consumer mouse
  * state.
  *
- *  - the route is computed ONCE per render frame (before the connected /
- *    disconnected branches), with the fire edge only *consumed* when the
- *    player is connected and in an active round (the `IN_PROGRESS` gate —
- *    the "hold fire through the countdown" behaviour is preserved because
- *    the held state is always read, only the edge is dropped);
- *  - the weapon fires from the routed `weaponFirePressed` /
- *    `weaponFireHeld` (the held read persists into the fixed sim tick via
- *    the `frameRoute` field);
- *  - the building frame receives the routed `buildPlaceHeld` (turbo
- *    building) from the same decision;
+ * Centralized mode ownership (overhaul task 12):
+ *
+ *  - the build/edit layer flags live in ONE shared
+ *    `InteractionModeCoordinator`; the route reads the coordinator's
+ *    effective modes (`isBuildActive` / `isEditActive`), so build and edit
+ *    can never both own the primary;
+ *  - the fire edge is consumed EVERY frame (the latch can never survive a
+ *    phase/mode transition) and gated on connected + `IN_PROGRESS` — the
+ *    "hold fire through the countdown" behaviour is preserved because the
+ *    HELD state is always read (the mouse button state persists in the
+ *    `InputManager`), only stale edges are dropped;
+ *  - `handleWeaponInput` runs unconditionally each frame so the weapon
+ *    slot/reload latches are drained no matter the phase, while the actions
+ *    themselves are gated on effective weapon mode + `IN_PROGRESS` +
+ *    connected + not eliminated (matching the server's authority gates);
+ *  - the building frame receives the routed `buildPlaceHeld` **and**
+ *    `buildPlacePressed` plus the `inRound` gate, so placement intents are
+ *    only submitted while the server can accept them;
  *  - the build-edit frame receives the routed `editSelectPressed` /
  *    `editSelectHeld`.
  */
@@ -28,29 +36,38 @@ describe("GameRuntime primary-action routing", () => {
     expect(runtime).toContain(
       'import{routePrimaryAction,type PrimaryActionRoute}from"./input/primaryActionRouting"',
     );
-    // The route is computed once per frame, at render-frame scope (before the
-    // connected/disconnected branches), with the fire edge gated on
-    // connected + IN_PROGRESS.
+    // The route is computed once per frame at render-frame scope (before the
+    // connected/disconnected branches). The layer flags come from the shared
+    // interaction-mode coordinator (single owner of build/edit state), the
+    // fire edge is consumed unconditionally (no stale edge can survive) and
+    // both the edge and the held read are gated on connected + IN_PROGRESS.
     expect(runtime).toContain(
-      "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS;const route=routePrimaryAction(this.buildingSystem.controller.isBuildModeActive(),this.buildEditSystem.controller.getMode(),this.isConnected&&inRound?this.inputManager.consumeFirePressed():false,this.inputManager.isFiring());this.frameRoute=route;",
+      "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS;const route=routePrimaryAction(this.interactionMode.isBuildActive(),this.interactionMode.isEditActive(),this.inputManager.consumeFirePressed()&&this.isConnected&&inRound,this.inputManager.isFiring()&&this.isConnected&&inRound);this.frameRoute=route;this.handleWeaponInput(route);",
     );
   });
 
-  it("fires the weapon from the routed decision (gated out of the countdown)", () => {
-    // The weapon consumer takes the route; firing is gated out of the
-    // countdown phase (rounds + intermissions fire freely).
-    expect(runtime).toContain(
-      "if(this.matchState.matchPhase!==MatchPhase.COUNTDOWN)this.handleWeaponInput(route);",
-    );
+  it("drains the weapon latches every frame and gates the actions on weapon mode + IN_PROGRESS", () => {
+    // `handleWeaponInput` runs unconditionally each frame (the slot/reload
+    // latches are drained in every phase, so nothing stale can fire on a
+    // phase change) ...
     expect(runtime).toContain("private handleWeaponInput(route:PrimaryActionRoute):void");
-    // The fired shot uses the routed press edge.
-    expect(runtime).toContain("if(route.weaponFirePressed){");
+    // ... while every weapon action is gated on the coordinator's effective
+    // weapon mode, an active round, a live connection, and not being
+    // eliminated (mirrors the server's IN_PROGRESS authority gates).
+    expect(runtime).toContain(
+      'const active=this.interactionMode.mode==="weapon"&&this.matchState.matchPhase===MatchPhase.IN_PROGRESS&&this.isConnected&&!this.predictionOrchestrator.getCombatState().isEliminated',
+    );
+    // The fired shot uses the routed press edge under the same gate.
+    expect(runtime).toContain("if(route.weaponFirePressed&&active){");
   });
 
-  it("routes the held primary into the building frame and the sim tick through the same route", () => {
-    // Building frame: routed build-owned hold (turbo building).
+  it("routes the held AND pressed primary into the building frame with the in-round gate", () => {
+    // Building frame: routed build-owned hold (turbo building) + press edge,
+    // plus the `inRound` flag so placement intents are only submitted while
+    // the server can accept them (the server rejects placement outside
+    // IN_PROGRESS).
     expect(runtime).toContain(
-      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld);",
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);",
     );
     // The fixed sim tick reads the held fire through the stored frame route
     // (same frame's decision — no re-reading of raw input).
@@ -66,19 +83,19 @@ describe("GameRuntime primary-action routing", () => {
     );
   });
 
-  it("suppresses weapon slot switches while build mode is active (no duplicate commands)", () => {
-    // When build mode is on, number keys 1–2 are owned by the building system
-    // (piece selection). The runtime must NOT also send a weapon switch for
-    // the same key press. The gate reads the canonical build-mode state and
-    // discards the weapon slot latch without acting.
+  it("suppresses weapon slot switches outside weapon mode (no duplicate commands)", () => {
+    // Outside weapon mode the number keys 1–2 are owned by another layer
+    // (build piece selection) or have no meaning (edit). The runtime
+    // consumes the slot latch every frame (drained, never stale) but only
+    // acts under the weapon-mode + IN_PROGRESS gate.
     expect(runtime).toContain(
-      "const inBuild=this.buildingSystem.controller.isBuildModeActive()",
+      "if(this.inputManager.consumeWeaponSlot1Pressed()&&active)",
     );
     expect(runtime).toContain(
-      "if(wsi&&!inBuild)",
+      "if(this.inputManager.consumeWeaponSlot2Pressed()&&active)",
     );
     expect(runtime).toContain(
-      "if(wsi2&&!inBuild)",
+      "if(this.inputManager.consumeReloadPressed()&&active)",
     );
   });
 });

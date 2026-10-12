@@ -38,10 +38,13 @@ const buildEditController = readFileSync(
 describe("build-edit authoritative route", () => {
   it("is constructed from the runtime's own NetworkClient (one connection surface)", () => {
     // The building system and the build-edit system are both created from
-    // the SAME canvas + the SAME network client instance.
-    expect(runtime).toContain("this.buildingSystem=createBuildingSystem(canvas,this.networkClient);");
+    // the SAME canvas + the SAME network client instance + the SAME shared
+    // interaction-mode coordinator (overhaul task 12).
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode);",
+    );
+    expect(runtime).toContain(
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
     );
     // The build-edit system is created after the shared client exists.
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
@@ -56,7 +59,9 @@ describe("build-edit authoritative route", () => {
     const factoryIdx = buildEditIndex.indexOf("export function createBuildEditSystem");
     expect(factoryIdx).toBeGreaterThan(-1);
     const block = buildEditIndex.slice(factoryIdx, factoryIdx + 700);
-    expect(block).toContain("new BuildEditInputController(canvas, options?.env)");
+    expect(block).toContain("new BuildEditInputController(");
+    expect(block).toContain("options?.env");
+    expect(block).toContain("options?.interactionMode");
     expect(block).toContain(
       "const controller = new BuildEditController(\n    input,\n    network,",
     );

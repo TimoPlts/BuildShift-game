@@ -24,14 +24,30 @@
  * edge, the held state, and the release edge. Exactly one interaction owns
  * the button at a time (edit > build > weapon).
  *
- * Releasing pointer lock (or hiding the tab) exits edit mode and drops every
- * latched intent, so a stale key or click can never produce an edit intent
- * after the player is no longer in the gameplay view.
+ *  - Releasing pointer lock (or hiding the tab) exits edit mode and drops
+ *    every latched intent, so a stale key or click can never produce an edit
+ *    intent after the player is no longer in the gameplay view.
+ *
+ * Mode ownership (overhaul task 12): when constructed with a shared
+ * `InteractionModeCoordinator`, KeyF toggles the edit layer on the
+ * coordinator (not a private flag) and `isEditModeActive()` reports the
+ * coordinator's effective mode — so build and edit can never be "active" at
+ * once. There are two exit paths with different layer semantics:
+ *   - {@link exitEditMode} clears only the edit layer (round reset / disconnect:
+ *     the player's build context survives), and
+ *   - {@link commitEditExit} clears edit **and** the build layer beneath it
+ *     (confirm / cancel: the primary button and number keys are combat
+ *     actions immediately — "confirm then shotgun").
+ * Without a coordinator both fall back to the local flag (legacy behavior).
+ * This controller's browser listeners are unchanged — the coordinator is a
+ * pure state machine with none of its own.
  *
  * Testability: the event targets are injectable via
  * {@link BuildEditInputEnvironment} so unit tests can drive the controller
  * without a real DOM.
  */
+
+import type { InteractionModeCoordinator } from "../input/interactionMode";
 
 /** The key that toggles edit mode. */
 export const EDIT_MODE_TOGGLE_KEY = "KeyF";
@@ -111,13 +127,16 @@ export class BuildEditInputController {
    */
   private prevSelectHeld = false;
   private disposed = false;
+  private readonly mode: InteractionModeCoordinator | null;
 
   public constructor(
     canvas: HTMLCanvasElement,
     env?: BuildEditInputEnvironment,
+    mode?: InteractionModeCoordinator,
   ) {
     this.canvas = canvas;
     this.env = env ?? defaultBuildEditInputEnvironment(canvas);
+    this.mode = mode ?? null;
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
@@ -129,9 +148,13 @@ export class BuildEditInputController {
     );
   }
 
-  /** True while edit mode is active (the tile grid is presented). */
+  /**
+   * Effective edit-mode state. With a shared coordinator this is the
+   * coordinator's topmost mode (edit is the active layer only when it is on
+   * top). Without a coordinator it is the local flag (legacy behavior).
+   */
   public isEditModeActive(): boolean {
-    return this.editModeActive;
+    return this.mode ? this.mode.isEditActive() : this.editModeActive;
   }
 
   /**
@@ -149,7 +172,7 @@ export class BuildEditInputController {
       this.clearIntents();
       return;
     }
-    if (!this.editModeActive) {
+    if (!this.isEditModeActive()) {
       // Out of edit mode the primary button belongs to another layer; keep
       // the edge bookkeeping flat so re-entering never emits a phantom
       // press/release.
@@ -216,16 +239,40 @@ export class BuildEditInputController {
   }
 
   /**
-   * Forces edit mode off and drops every latched intent. Called by the
-   * controller on round reset / rematch / disconnect / confirm so a stale
-   * intent can never survive a state transition (the pointer-lock path
+   * Clears only the edit layer (the build layer beneath it, if any, is kept)
+   * and drops every latched intent. Called by the controller on round reset /
+   * rematch / disconnect so the player's build context survives while a stale
+   * edit intent can never survive a state transition (the pointer-lock path
    * also clears intents independently).
    */
   public exitEditMode(): void {
     if (this.disposed) {
       return;
     }
-    this.clearIntents();
+    if (this.mode) {
+      this.mode.clearEdit();
+    } else {
+      this.editModeActive = false;
+    }
+    this.clearLatches();
+  }
+
+  /**
+   * Commit-exit from editing (confirm / cancel): clears the edit layer **and
+   * the build layer beneath it**, returning to weapon mode so the primary
+   * button and the number keys are combat actions immediately. Drops every
+   * latched intent.
+   */
+  public commitEditExit(): void {
+    if (this.disposed) {
+      return;
+    }
+    if (this.mode) {
+      this.mode.exitToWeapon();
+    } else {
+      this.editModeActive = false;
+    }
+    this.clearLatches();
   }
 
   /** Removes all listeners and drops every latched intent. */
@@ -268,7 +315,11 @@ export class BuildEditInputController {
     }
 
     if (e.code === EDIT_MODE_TOGGLE_KEY) {
-      this.editModeActive = !this.editModeActive;
+      if (this.mode) {
+        this.mode.toggleEdit();
+      } else {
+        this.editModeActive = !this.editModeActive;
+      }
       // Entering fresh: reset the hold bookkeeping so a button that was
       // already held from another layer never reads as a release edge.
       this.prevSelectHeld = false;
@@ -277,7 +328,7 @@ export class BuildEditInputController {
     }
     // The terminal keys only latch in edit mode (out of edit mode they have
     // no build meaning and are deliberately ignored).
-    if (!this.editModeActive) {
+    if (!this.isEditModeActive()) {
       return;
     }
     if (e.code === CONFIRM_EDIT_KEY) {
@@ -315,7 +366,16 @@ export class BuildEditInputController {
    * game view.
    */
   private clearIntents(): void {
-    this.editModeActive = false;
+    if (this.mode) {
+      this.mode.clearAll();
+    } else {
+      this.editModeActive = false;
+    }
+    this.clearLatches();
+  }
+
+  /** Drops the latched key/select intents (independent of the layer flags). */
+  private clearLatches(): void {
     this.confirmPressed = false;
     this.cancelPressed = false;
     this.resetPressed = false;

@@ -25,6 +25,7 @@
  * state this layer exposes.
  */
 import { BuildingInputController } from "./buildingInputController";
+import type { InteractionModeCoordinator } from "../input/interactionMode";
 import { BuildingStateStore } from "./buildingStateStore";
 import type { BuildingNetworkLike } from "./buildingController";
 import { BuildingController } from "./buildingController";
@@ -112,12 +113,19 @@ export interface BuildingSystem {
  * @param canvas the gameplay canvas (pointer-lock surface for build input).
  * @param network the canonical network client (satisfies
  *        {@link BuildingNetworkLike}: `send` + `onEvent`).
+ * @param interactionMode the shared interaction-mode coordinator (overhaul
+ *        task 12). When provided, build-mode ownership moves to the
+ *        coordinator so build and edit can never be active at once and
+ *        "confirm then shotgun" works; the runtime shares one instance
+ *        with the build-edit system. Without it the input controller keeps
+ *        its own flag (legacy behavior).
  */
 export function createBuildingSystem(
   canvas: HTMLCanvasElement,
   network: BuildingNetworkLike,
+  interactionMode?: InteractionModeCoordinator,
 ): BuildingSystem {
-  const input = new BuildingInputController(canvas);
+  const input = new BuildingInputController(canvas, undefined, interactionMode);
   const store = new BuildingStateStore();
   const controller = new BuildingController(input, store, network);
   return {
