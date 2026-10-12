@@ -48,4 +48,10 @@ export const THIRD_PERSON_CAMERA = {
   minimumCameraHeight: 0.2,
   /** Closest the dolly-in may bring the camera to the orbit pivot, in metres. */
   minimumCameraDistance: 1.2,
+  /**
+   * Gap (metres) maintained between the camera and the nearest build
+   * structure surface when the orbit path is obstructed. Prevents the
+   * camera from rendering exactly on the structure face (Z-fighting).
+   */
+  buildObstructionGap: 0.1,
 } as const;
