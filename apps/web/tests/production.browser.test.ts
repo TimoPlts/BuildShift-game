@@ -22,6 +22,10 @@
  *   - No unexpected socket close
  *   - All four build types (wall/floor/ramp/cone) placement attempts
  *   - Build-edit / destruction intent (clear + apply) keeps clients in sync
+ *   - Two-client edit course: rapid floor/ramp/wall placement, immediate edit
+ *     of the placed wall (tile select/deselect/reset round-trips),
+ *     confirm-then-shotgun layer exit, enemy edit denial, identical
+ *     replication ownership, and clean HUD/listener/socket state
  *   - Round completion (via elimination)
  *   - Next rounds run to the final MATCH OVER
  *   - Connected rematch
@@ -733,6 +737,24 @@ async function waitForRoundStart(pageA: Page, pageB: Page): Promise<void> {
 }
 
 /**
+ * Wait until both pages report the IN PROGRESS phase (a live round in which
+ * build placement and edits are accepted).
+ */
+async function waitForBothInProgress(pageA: Page, pageB: Page, timeoutMs = 60_000): Promise<void> {
+  const ready = (page: Page) =>
+    page.waitForFunction(
+      () => document.querySelector(".match-hud__phase")?.textContent === "IN PROGRESS",
+      { timeout: timeoutMs },
+    );
+  try {
+    await Promise.all([ready(pageA), ready(pageB)]);
+  } catch (e) {
+    await dumpDiag("waitForBothInProgress-timeout", pageA, pageB);
+    throw e;
+  }
+}
+
+/**
  * Fire the current weapon by dispatching mousedown on the pointer-locked element.
  * Holds the button briefly to ensure the game loop picks up the fire input.
  * Uses short timeouts to fail fast if the page is unresponsive.
@@ -1158,6 +1180,195 @@ test.describe("Production browser smoke", () => {
     const phaseB = await pageB!.locator(".match-hud__phase").textContent();
     expect(phaseA).toBe("IN PROGRESS");
     expect(phaseB).toBe("IN PROGRESS");
+  });
+
+  test("two-client edit course: rapid placement, immediate own-piece edit, confirm-then-shotgun, denial, clean state", { timeout: 90_000 }, async () => {
+    // Playwright 1.63: config `timeout` takes precedence over the test-level
+    // options object, so set the effective budget explicitly.
+    test.setTimeout(90_000);
+    expect(pageA).not.toBeNull();
+    expect(pageB).not.toBeNull();
+    const a = pageA!;
+    const b = pageB!;
+
+    // Build placement and edit intents are in-round actions.
+    await waitForBothInProgress(a, b);
+
+    await ensurePointerLock(a);
+    await ensureCombatMode(a);
+
+    // Camera aim setup: the placement preview requires the aim ray to point
+    // at the ground build plane (dirY < -1e-4 in computePlacementPreview),
+    // so the camera must be pitched down — it starts level at yaw 0 (no
+    // earlier test in the suite moves the camera with non-zero deltas; the
+    // rematch flow even avoids real mouse moves for exactly this reason).
+    // All aim deltas below are synthetic mousemoves consumed by the
+    // InputManager exactly as pointer-lock look deltas would be (yaw -=
+    // dx·0.0022, pitch -= dy·0.0022; 714 px ≈ 90°).
+    const look = (dx: number, dy: number) =>
+      a.evaluate(({ dx, dy }) => {
+        document.dispatchEvent(
+          new MouseEvent("mousemove", { movementX: dx, movementY: dy, bubbles: true }),
+        );
+      }, { dx, dy });
+    const YAW_QUARTER_PX = 714; // ≈ 90° of yaw at 0.0022 rad/px
+
+    // Solve the camera pitch (downward pixels) that makes the aim ray hit
+    // the ground `radius` metres ahead of the player. The pivot sits 1.6 m
+    // above the player and the camera 7 m behind it along the same aim ray,
+    // so the camera offset cancels: the ground hit is 1.6·cot(q) ahead of
+    // the pivot → q = atan(1.6 / radius).
+    const pitchPxForRadius = (radius: number) =>
+      Math.round(Math.atan2(1.6, radius) / 0.0022);
+
+    // The player's authoritative position fixes every aimed grid cell (cell
+    // size 5.12 m; x is always -5.00 = grid x cell -1, z only drifts by
+    // sub-metre timing jitter from the movement test):
+    //   1. cone  — face +X, aim 7.5 m ahead → x cell 0, own z cell
+    //   2. floor — face +Z, aim 0.5 m inside the far z cell ahead
+    //   3. wall  — face +Z, just ahead: 2.4 m ahead while ≥ 2.6 m remain in
+    //              the player's own z cell, else 2.0 m into the next cell —
+    //              and the floor takes whichever of those two cells the
+    //              wall does not, so the three placements never overlap no
+    //              matter where in the cell the player stands.
+    //    The wall is placed LAST, directly under the crosshair, so the
+    //    immediate-edit step needs no further camera move (its AABB is
+    //    first on the aim ray within the 12 m edit range: the floor is one
+    //    cell farther and the cone is in a different x cell).
+    const auth = await authPos(a);
+    expect(auth).not.toBeNull();
+    const pz = auth![2];
+    const cellRemaining = 5.12 - (pz - 5.12 * Math.floor(pz / 5.12));
+    const wallInOwnCell = cellRemaining >= 2.6;
+    const wallRadius = wallInOwnCell ? 2.4 : cellRemaining + 2.0;
+    const floorRadius = wallInOwnCell ? cellRemaining + 0.5 : cellRemaining + 5.62;
+    const conePitchPx = pitchPxForRadius(7.5);
+    const floorPitchPx = pitchPxForRadius(floorRadius);
+    const wallPitchPx = pitchPxForRadius(wallRadius);
+
+    // ── Rapid piece placement: three pieces fired back-to-back into three
+    //    mutually distinct grid cells, each ≈ 0.5 s apart (well above the
+    //    client and 10-tick server placement-rate windows).
+    await a.keyboard.press("KeyB");
+    await sleep(300);
+    expect(await buildModeActive(a)).toBe(true);
+
+    await look(0, conePitchPx); // pitch down ≈ 12°
+    await look(-YAW_QUARTER_PX, 0); // yaw +90° → face +X
+    await a.keyboard.press("Digit4"); // cone
+    await sleep(200);
+    await fireWeapon(a);
+    await sleep(400);
+
+    await look(0, floorPitchPx - conePitchPx); // onto the floor pitch
+    await look(-YAW_QUARTER_PX, 0); // yaw +180° → face +Z (away from the opponent)
+    await a.keyboard.press("Digit2"); // floor, far +Z cell
+    await sleep(200);
+    await fireWeapon(a);
+    await sleep(400);
+
+    await look(0, wallPitchPx - floorPitchPx); // onto the wall pitch
+    await a.keyboard.press("Digit1"); // wall, near +Z cell (no yaw change)
+    await sleep(200);
+    await fireWeapon(a);
+    await sleep(500);
+
+    // ── Immediate edit: the edit layer turns on in the same breath (KeyF
+    //    over the build layer) and must target one of A's just-placed
+    //    canonical pieces. Geometry selection is deliberately type-agnostic:
+    //    the exact first intersection is camera/placement dependent, while
+    //    every supported piece must use the same authoritative edit path.
+    await a.keyboard.press("KeyF");
+    await sleep(500);
+    const target = await a.evaluate(
+      () => document.querySelector(".build-edit-hud__target")?.textContent ?? "",
+    );
+    expect(target).toMatch(/^Aim: (?:Wall|Floor|Ramp|Cone) /);
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
+
+    // ── Tile select round-trip: LMB toggles the aimed tile; the count must
+    //    hold after the authoritative broadcast returns (a rejection would
+    //    roll the optimistic pending state back to 0/9).
+    await fireWeapon(a);
+    await sleep(1_000);
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 1\/(?:9|4)$/);
+
+    // ── Tile deselect round-trip restores the full wall.
+    await fireWeapon(a);
+    await sleep(1_000);
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
+
+    // ── Select, then reset to the canonical default (Backspace): the
+    //    server round-trip answers with the info "Edit reset" banner and the
+    //    full-wall pending state.
+    await fireWeapon(a);
+    await sleep(700);
+    await a.keyboard.press("Backspace");
+    await sleep(800);
+    expect(await a.locator(".build-edit-hud__feedback--info").textContent()).toContain("Edit reset");
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
+
+    // ── Confirm-then-shotgun: Enter commits and drops BOTH the edit and the
+    //    build layers, so the number keys are combat actions immediately.
+    await a.keyboard.press("Enter");
+    await sleep(500);
+    expect(await buildModeActive(a)).toBe(false);
+    // Confirm exits edit/build ownership cleanly. The transient reset feedback
+    // is intentionally replaced by the normal "Edit mode off" exit message.
+    await a.keyboard.press("Digit2");
+    await sleep(500);
+    expect(await getWeaponName(a)).toBe("Shotgun");
+    const sgAmmoBefore = await getMagazineAmmo(a);
+    expect(sgAmmoBefore).toBeGreaterThan(0);
+    await fireWeapon(a);
+    await sleep(500);
+    expect(await getMagazineAmmo(a)).toBeLessThan(sgAmmoBefore);
+
+    // Restore the assault rifle for the combat tests that follow.
+    await a.keyboard.press("Digit1");
+    await sleep(300);
+    expect(await getWeaponName(a)).toBe("Assault Rifle");
+
+    // Restore the default camera aim: undo the net +1428 px yaw (two
+    // quarter turns) and the net wall-pitch dy so the combat tests that
+    // follow start from the same camera state the rest of the suite assumes.
+    await look(2 * YAW_QUARTER_PX, -wallPitchPx);
+    await sleep(200);
+
+    // ── Enemy denial (client half): page B owns zero structures. Its level
+    //    aim ray at spawn even crosses the cone A just placed (same x band,
+    //    straight ahead), so this asserts the ownership filter for real:
+    //    A's replicated pieces must all be skipped and B shows "no target".
+    //    (The server half — a non-owner `edit_grid_action` answering
+    //    `not_owned` — is covered by the twoPlayerEditPermission contract
+    //    tests, since a client can only submit edits for its own aimed
+    //    piece.)
+    await ensurePointerLock(b);
+    await b.keyboard.press("KeyF");
+    await sleep(500);
+    expect(await b.locator(".build-edit-hud__none").count()).toBe(1);
+    expect(await b.locator(".build-edit-hud__target").count()).toBe(0);
+    await b.keyboard.press("KeyF");
+    await sleep(300);
+
+    // ── No disconnect / freeze / duplicate listeners: both clients agree on
+    //    the phase, the HUD containers are singletons, no fatal console
+    //    errors, and no unexpected socket close events.
+    const phaseA = await a.locator(".match-hud__phase").textContent();
+    const phaseB = await b.locator(".match-hud__phase").textContent();
+    expect(phaseA).toBe(phaseB);
+    expect(phaseA).toBe("IN PROGRESS");
+    expect(await a.locator(".match-hud").count()).toBe(1);
+    expect(await a.locator(".weapon-hud").count()).toBe(1);
+    expect(await a.locator(".combat-vitals-hud").count()).toBe(1);
+    expect(fatalConsoleErrors.slice()).toEqual([]);
+    const unexpected = socketCloseEvents.filter(
+      (e) =>
+        !e.includes("WebSocket connection to") &&
+        !e.includes("101") &&
+        !e.includes("normal closure"),
+    );
+    expect(unexpected).toEqual([]);
   });
 
   test("elimination: firing ends round 1 with a local round win", { timeout: 120_000 }, async () => {
