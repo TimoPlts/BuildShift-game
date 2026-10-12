@@ -137,7 +137,7 @@ describe("GameRuntime build-edit wiring", () => {
 
   it("clears build-edit preview + feedback when the connection drops", () => {
     expect(runtime).toContain(
-      "}else{this.buildEditSystem.clearOnDisconnect();}this.debugHud.state.connectionState",
+      "}else{this.buildEditSystem.clearOnDisconnect();this.buildStructureRenderer.setLocalSessionId(null);}this.debugHud.state.connectionState",
     );
   });
 
