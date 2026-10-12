@@ -31,6 +31,7 @@
  * without a real DOM.
  */
 import type { BuildType, GridRotation } from "@buildshift/protocol";
+import type { InteractionModeCoordinator } from "../input/interactionMode";
 
 /** The key that toggles build mode. */
 export const BUILD_MODE_TOGGLE_KEY = "KeyB";
@@ -93,6 +94,16 @@ export function defaultBuildingInputEnvironment(
 
 /**
  * Owns the build-mode keyboard/mouse intent signals.
+ *
+ * Mode ownership (overhaul task 12): when constructed with a shared
+ * `InteractionModeCoordinator`, KeyB toggles the build layer on the
+ * coordinator (not a private flag) and `isBuildModeActive()` reports the
+ * coordinator's effective mode — so build and edit can never be "active"
+ * at once, and confirming/cancelling an edit (which clears the build layer
+ * too) immediately returns the number keys to the weapon slots. Without a
+ * coordinator the controller keeps its own flag (legacy behavior, used by
+ * standalone unit tests). This controller's browser listeners are
+ * unchanged — the coordinator is a pure state machine with none of its own.
  */
 export class BuildingInputController {
   private readonly canvas: HTMLCanvasElement;
@@ -101,13 +112,16 @@ export class BuildingInputController {
   private selectedBuildType: BuildType = "wall";
   private rotation: GridRotation = 0;
   private disposed = false;
+  private readonly mode: InteractionModeCoordinator | null;
 
   public constructor(
     canvas: HTMLCanvasElement,
     env?: BuildingInputEnvironment,
+    mode?: InteractionModeCoordinator,
   ) {
     this.canvas = canvas;
     this.env = env ?? defaultBuildingInputEnvironment(canvas);
+    this.mode = mode ?? null;
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
@@ -119,9 +133,14 @@ export class BuildingInputController {
     );
   }
 
-  /** True while build mode is active (the placement preview is presented). */
+  /**
+   * Effective build-mode state. With a shared coordinator this is the
+   * coordinator's topmost mode (build is inactive while the edit layer is on
+   * top), so the controller never places while editing. Without a
+   * coordinator it is the local flag (legacy behavior).
+   */
   public isBuildModeActive(): boolean {
-    return this.buildModeActive;
+    return this.mode ? this.mode.isBuildActive() : this.buildModeActive;
   }
 
   /** The currently selected build type (wall / floor / ramp / cone). */
@@ -174,7 +193,11 @@ export class BuildingInputController {
     }
 
     if (e.code === BUILD_MODE_TOGGLE_KEY) {
-      this.buildModeActive = !this.buildModeActive;
+      if (this.mode) {
+        this.mode.toggleBuild();
+      } else {
+        this.buildModeActive = !this.buildModeActive;
+      }
       return;
     }
     const type = BUILD_TYPE_KEYS[e.code];
@@ -212,6 +235,10 @@ export class BuildingInputController {
    * fire a build after the player is no longer "in" the game view.
    */
   private clearIntents(): void {
+    if (this.mode) {
+      this.mode.clearAll();
+      return;
+    }
     this.buildModeActive = false;
   }
 }

@@ -42,6 +42,7 @@ import {
   BuildEditInputController,
   type BuildEditInputEnvironment,
 } from "./buildEditInputController";
+import type { InteractionModeCoordinator } from "../input/interactionMode";
 import type { TargetedStructure } from "./structureSelection";
 
 /**
@@ -72,6 +73,13 @@ export interface CreateBuildEditSystemOptions {
    * selection also confirms the edit (fast single-click commit).
    */
   confirmOnRelease?: boolean;
+  /**
+   * The shared interaction-mode coordinator (overhaul task 12). When
+   * provided, edit-mode ownership moves to the coordinator so build and
+   * edit can never be active at once; the runtime shares one instance with
+   * the building system.
+   */
+  interactionMode?: InteractionModeCoordinator;
 }
 
 /**
@@ -85,7 +93,11 @@ export function createBuildEditSystem(
   network: BuildEditNetworkLike,
   options?: CreateBuildEditSystemOptions,
 ): BuildEditSystem {
-  const input = new BuildEditInputController(canvas, options?.env);
+  const input = new BuildEditInputController(
+    canvas,
+    options?.env,
+    options?.interactionMode,
+  );
   const controller = new BuildEditController(
     input,
     network,
