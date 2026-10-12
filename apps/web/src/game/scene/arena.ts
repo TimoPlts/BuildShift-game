@@ -36,6 +36,11 @@ export const ARENA_PALETTE = {
   groundColor: new Color3(0.1, 0.14, 0.21),
   /** Raised play-field plate above the ground — slightly lighter slate. */
   playFieldColor: new Color3(0.13, 0.18, 0.27),
+  /**
+   * Floor build-grid line color — one step lighter than the play-field
+   * plate so the build lattice reads on the floor.
+   */
+  gridColor: new Color3(0.18, 0.25, 0.36),
   /** Accent color — bright cyan for key arena features. */
   accentColor: new Color3(0.2, 0.78, 1.0),
   /** Ambient / hemisphere light ground-color bounce — deep blue. */
