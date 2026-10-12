@@ -1,22 +1,31 @@
 /**
- * Independent decorative arena geometry module for the BuildShift Box Fight arena.
+ * Independent decorative arena geometry module for the BuildShift Box Fight
+ * 1v1 arena.
  *
- * Adds purely presentational, non-collidable, non-pickable low-poly set
- * pieces to the scene:
- *  - A raised play-field plate (`arena-playfield-plate`) inset from the
- *    boundary, giving the floor an intentional, framed look.
- *  - Four solid perimeter walls (`arena-wall-n/s/e/w`) with bright accent
- *    cap strips (`arena-wall-cap-n/s/e/w`) marking the boundary.
- *  - Four tall corner posts (`arena-post-ne/nw/se/sw`) as corner landmarks.
- *  - Four ground border strips (`arena-border-n/s/e/w`) along the floor edge.
- *  - A center ring (`arena-center-ring`) framing the open build centre.
- *  - A spawn pad (`arena-spawn-pad`) and low start-line bar
- *    (`arena-spawn-bar`) placed from the shared `PLAYER_SPAWN` so the
- *    spawn side reads clearly from across the arena.
+ * The arena is a compact, symmetrical original BuildShift space built at the
+ * validated build scale (the shared `BUILD_GRID` / `BUILD_BOUNDS` lattice):
+ *
+ *  - A raised play-field plate (`arena-playfield-plate`) sized exactly to
+ *    the build-volume span, so the plate edge reads as the build-area
+ *    boundary on the floor.
+ *  - A floor grid (`arena-grid-line-x-{i}` / `arena-grid-line-z-{i}`)
+ *    marking the real build-cell
+ *    boundaries derived from `BUILD_GRID` / `BUILD_BOUNDS` — boundary lines
+ *    that would fall outside the arena shell are omitted — so the floor
+ *    shows where structures actually snap.
+ *  - Four solid, tall perimeter walls (`arena-shell-n/s/e/w`) forming the
+ *    indestructible arena shell, with bright accent cap strips
+ *    (`arena-shell-cap-n/s/e/w`) marking the boundary. The shell is tall
+ *    enough to clear every build layer with margin (several levels of
+ *    vertical clearance).
+ *  - Mirrored spawn markers for the 1v1: a pad (`arena-spawn-pad`) and low
+ *    start-line bar (`arena-spawn-bar`) at the shared `PLAYER_SPAWN`, plus
+ *    their mirror (`arena-spawn-pad-mirror` / `arena-spawn-bar-mirror`) on
+ *    the opposite side.
  *
  * All boundary dimensions are derived from the shared `ARENA_COLLIDERS`
- * ground entry — never duplicated or modified. The spawn marker derives
- * from the shared `PLAYER_SPAWN`.
+ * ground entry and the shared build grid — never duplicated or modified.
+ * The spawn markers derive from the shared `PLAYER_SPAWN`.
  *
  * This module does NOT create or alter any gameplay geometry, spawn
  * positions, collision bodies, or networking state.
@@ -26,89 +35,92 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Scene } from "@babylonjs/core/scene";
-import { ARENA_COLLIDERS, PLAYER_SPAWN } from "@buildshift/game-config";
+import {
+  ARENA_COLLIDERS,
+  BUILD_BOUNDS,
+  BUILD_GRID,
+  PLAYER_SPAWN,
+} from "@buildshift/game-config";
 import { ARENA_PALETTE } from "./arena";
 
 /** Stable id of the ground collider from which we derive the arena boundary. */
 const GROUND_ID = "foundation-ground";
 
-/** Thickness (metres) of each perimeter wall. */
-const WALL_THICKNESS = 0.2;
+/** Thickness (metres) of each shell wall — solid, not a thin sheet. */
+const SHELL_THICKNESS = 0.3;
 
-/** Height (metres) of each perimeter wall above the ground surface. */
-const WALL_HEIGHT = 1.3;
+/**
+ * Vertical clearance (metres) above the top build layer that the shell must
+ * provide — several build levels of clearance plus a visible margin.
+ */
+const SHELL_CLEARANCE = 1.0;
 
 /** Height (metres) of the accent cap strip sitting on top of each wall. */
-const WALL_CAP_HEIGHT = 0.08;
+const SHELL_CAP_HEIGHT = 0.1;
 
-/** Diameter (metres) of each corner post. */
-const POST_DIAMETER = 0.3;
+/** Width (metres) of a floor grid line. */
+const GRID_LINE_WIDTH = 0.12;
 
-/** Height (metres) of each corner post above the ground surface. */
-const POST_HEIGHT = 1.7;
+/** Height (metres) of a floor grid line. */
+const GRID_LINE_HEIGHT = 0.02;
 
-/** Outer diameter (metres) of the center ring. */
-const RING_DIAMETER = 5;
-
-/** Thickness (metres) of the center ring cross-section. */
-const RING_THICKNESS = 0.18;
-
-/**
- * Small vertical offset so the ring sits just above the play-field plate
- * without floating or z-fighting.
- */
-const RING_Y_OFFSET = 0.1;
-
-/** Width (metres) of the ground border strip. */
-const BORDER_WIDTH = 0.15;
-
-/** Height (metres) of the ground border strip. */
-const BORDER_HEIGHT = 0.04;
-
-/** Gap (metres) between the play-field plate edge and the arena boundary. */
-const PLATE_INSET = 0.8;
-
-/** Height (metres) of the play-field plate above the ground surface. */
+/** Width (metres) of the play-field plate inset ring around the plate. */
 const PLATE_HEIGHT = 0.02;
 
-/** Diameter (metres) of the spawn pad. */
-const PAD_DIAMETER = 2.6;
+/** Diameter (metres) of each spawn pad. */
+const PAD_DIAMETER = 2.4;
 
-/** Height (metres) of the spawn pad. */
+/** Height (metres) of each spawn pad. */
 const PAD_HEIGHT = 0.04;
 
-/**
- * Vertical position of the spawn pad centre — the pad base rests on the
- * ground surface (y = 0).
- */
-const PAD_Y = PAD_HEIGHT / 2;
+/** Width (metres) of each low start-line bar. */
+const BAR_WIDTH = 3.2;
 
-/** Width (metres) of the low start-line bar behind the spawn pad. */
-const BAR_WIDTH = 3.6;
+/** Height (metres) of each start-line bar. */
+const BAR_HEIGHT = 0.6;
 
-/** Height (metres) of the start-line bar. */
-const BAR_HEIGHT = 0.7;
-
-/** Depth (metres) of the start-line bar. */
+/** Depth (metres) of each start-line bar. */
 const BAR_DEPTH = 0.12;
 
-/** Distance (metres) behind the spawn point (along +Z) where the bar sits. */
-const BAR_OFFSET = 1.7;
+/**
+ * Distance (metres) behind a spawn point (away from the arena centre) where
+ * that side's start-line bar sits.
+ */
+const BAR_OFFSET = 1.6;
 
 /**
- * Adds decorative, non-interactive arena geometry to the scene:
- *  - A raised play-field plate (arena-playfield-plate) inset from the edge.
- *  - Four thin perimeter walls (arena-wall-n/s/e/w) along the ground boundary.
- *  - Four accent cap strips (arena-wall-cap-n/s/e/w) on top of each wall.
- *  - Four corner posts (arena-post-ne/nw/se/sw) at the wall intersections.
- *  - Four ground border strips (arena-border-n/s/e/w) along the floor edge.
- *  - A center ring (arena-center-ring) using the palette accent color.
- *  - A spawn pad (arena-spawn-pad) and start-line bar (arena-spawn-bar)
- *    positioned from the shared PLAYER_SPAWN.
+ * The world-space positions of the build-cell boundary lines along one axis,
+ * clipped to the arena interior.
+ *
+ * Cell `i` covers `[i*cellSize, (i+1)*cellSize)` in world space (the same
+ * half-open convention `worldToGridPosition` uses), so the boundaries of the
+ * buildable cells `minX..maxX` sit at `i*cellSize` for `i = minX..maxX+1`.
+ * Boundary lines that would fall outside the arena ground are omitted so the
+ * visible grid never runs past the shell.
+ */
+function buildGridLines(halfExtent: number): number[] {
+  const { cellSize } = BUILD_GRID;
+  const lines: number[] = [];
+  for (let i = BUILD_BOUNDS.minX; i <= BUILD_BOUNDS.maxX + 1; i += 1) {
+    const p = i * cellSize;
+    if (Math.abs(p) < halfExtent) {
+      lines.push(p);
+    }
+  }
+  return lines;
+}
+
+/**
+ * Adds decorative, non-interactive 1v1 arena geometry to the scene:
+ *  - A raised play-field plate sized to the build-volume span.
+ *  - Floor grid lines marking the real build-cell boundaries.
+ *  - Four tall perimeter shell walls + accent cap strips (the indestructible
+ *    boundary).
+ *  - Mirrored spawn pads and start-line bars for the two 1v1 spawn sides.
  *
  * All meshes are non-pickable and non-collidable. Dimensions are derived from
- * the shared `ARENA_COLLIDERS` ground entry so they always match the gameplay
- * arena without duplicating or modifying it.
+ * the shared `ARENA_COLLIDERS` ground entry and the shared build grid so they
+ * always match the gameplay arena without duplicating or modifying it.
  */
 export function setupArenaDecorations(scene: Scene): void {
   const ground = ARENA_COLLIDERS.find((c) => c.id === GROUND_ID);
@@ -121,6 +133,19 @@ export function setupArenaDecorations(scene: Scene): void {
   const [gx, , gz] = ground.position;
   const [hx, , hz] = ground.halfExtents;
 
+  // The build volume's world span on each axis (5 cells × 5.12 m = 25.6 m).
+  const buildSpanX =
+    (BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize;
+  const buildSpanZ =
+    (BUILD_BOUNDS.maxZ - BUILD_BOUNDS.minZ + 1) * BUILD_GRID.cellSize;
+
+  // The shell clears every build layer plus a visible margin — several
+  // levels of vertical clearance.
+  const shellHeight =
+    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
+      BUILD_GRID.layerHeight +
+    SHELL_CLEARANCE;
+
   // --- Materials -------------------------------------------------------
 
   // Play-field plate: lighter slate — the intentional competition floor.
@@ -128,21 +153,19 @@ export function setupArenaDecorations(scene: Scene): void {
   plateMaterial.diffuseColor = ARENA_PALETTE.playFieldColor;
   plateMaterial.specularColor = new Color3(0.03, 0.04, 0.06);
 
-  // Perimeter wall: solid dark navy — a clean, readable boundary.
-  const wallMaterial = new StandardMaterial("arena-wall-material", scene);
-  wallMaterial.diffuseColor = ARENA_PALETTE.wallColor;
-  wallMaterial.specularColor = new Color3(0.03, 0.04, 0.05);
+  // Shell: solid dark navy — the indestructible boundary.
+  const shellMaterial = new StandardMaterial("arena-shell-material", scene);
+  shellMaterial.diffuseColor = ARENA_PALETTE.wallColor;
+  shellMaterial.specularColor = new Color3(0.02, 0.03, 0.05);
 
-  // Corner posts: navy body with a subtle accent glow so corners read at a
-  // glance.
-  const postMaterial = new StandardMaterial("arena-post-material", scene);
-  postMaterial.diffuseColor = ARENA_PALETTE.wallColor;
-  postMaterial.emissiveColor = ARENA_PALETTE.accentColor.clone().scale(0.25);
-  postMaterial.specularColor = new Color3(0.1, 0.12, 0.15);
+  // Floor grid: a step lighter than the plate so the build lattice reads on
+  // the floor.
+  const gridMaterial = new StandardMaterial("arena-grid-material", scene);
+  gridMaterial.diffuseColor = ARENA_PALETTE.gridColor;
+  gridMaterial.specularColor = new Color3(0.02, 0.03, 0.05);
 
-  // Accent glow: shared by the wall caps, border strips, center ring, and
-  // spawn markers — one bright cyan material keeps the identity consistent
-  // and the material count low.
+  // Accent glow: shared by the shell caps and spawn markers — one bright
+  // cyan material keeps the identity consistent and the material count low.
   const accentGlowMaterial = new StandardMaterial(
     "arena-accent-glow-material",
     scene,
@@ -153,180 +176,190 @@ export function setupArenaDecorations(scene: Scene): void {
     .scale(0.45);
   accentGlowMaterial.specularColor = new Color3(0.1, 0.12, 0.15);
 
-  // --- Play-field plate ------------------------------------------------
+  // --- Play-field plate (build-area boundary) ---------------------------
 
-  createPlate(
+  createBox(
     scene,
     "arena-playfield-plate",
     plateMaterial,
     new Vector3(gx, PLATE_HEIGHT / 2, gz),
-    hx * 2 - PLATE_INSET * 2,
+    buildSpanX,
     PLATE_HEIGHT,
-    hz * 2 - PLATE_INSET * 2,
+    buildSpanZ,
   );
 
-  // --- Perimeter walls + caps -------------------------------------------
+  // --- Floor grid (real build-cell boundaries) ---------------------------
 
-  // North wall (negative Z edge)
-  createWall(
+  const xLines = buildGridLines(hx);
+  const zLines = buildGridLines(hz);
+  const gridY = PLATE_HEIGHT + GRID_LINE_HEIGHT / 2;
+
+  xLines.forEach((p, i) => {
+    createBox(
+      scene,
+      `arena-grid-line-x-${i}`,
+      gridMaterial,
+      new Vector3(gx, gridY, gz + p),
+      xLines[xLines.length - 1] - xLines[0],
+      GRID_LINE_HEIGHT,
+      GRID_LINE_WIDTH,
+    );
+  });
+
+  zLines.forEach((p, i) => {
+    createBox(
+      scene,
+      `arena-grid-line-z-${i}`,
+      gridMaterial,
+      new Vector3(gx + p, gridY, gz),
+      GRID_LINE_WIDTH,
+      GRID_LINE_HEIGHT,
+      zLines[zLines.length - 1] - zLines[0],
+    );
+  });
+
+  // --- Indestructible shell (4 walls + accent caps) ----------------------
+
+  createBox(
     scene,
-    "arena-wall-n",
-    wallMaterial,
-    new Vector3(gx, WALL_HEIGHT / 2, gz - hz),
+    "arena-shell-n",
+    shellMaterial,
+    new Vector3(gx, shellHeight / 2, gz - hz),
     hx * 2,
-    WALL_HEIGHT,
-    WALL_THICKNESS,
+    shellHeight,
+    SHELL_THICKNESS,
   );
-  createWall(
+  createBox(
     scene,
-    "arena-wall-cap-n",
+    "arena-shell-cap-n",
     accentGlowMaterial,
-    new Vector3(gx, WALL_HEIGHT + WALL_CAP_HEIGHT / 2, gz - hz),
+    new Vector3(gx, shellHeight + SHELL_CAP_HEIGHT / 2, gz - hz),
     hx * 2,
-    WALL_CAP_HEIGHT,
-    WALL_THICKNESS,
+    SHELL_CAP_HEIGHT,
+    SHELL_THICKNESS,
   );
 
-  // South wall (positive Z edge)
-  createWall(
+  createBox(
     scene,
-    "arena-wall-s",
-    wallMaterial,
-    new Vector3(gx, WALL_HEIGHT / 2, gz + hz),
+    "arena-shell-s",
+    shellMaterial,
+    new Vector3(gx, shellHeight / 2, gz + hz),
     hx * 2,
-    WALL_HEIGHT,
-    WALL_THICKNESS,
+    shellHeight,
+    SHELL_THICKNESS,
   );
-  createWall(
+  createBox(
     scene,
-    "arena-wall-cap-s",
+    "arena-shell-cap-s",
     accentGlowMaterial,
-    new Vector3(gx, WALL_HEIGHT + WALL_CAP_HEIGHT / 2, gz + hz),
+    new Vector3(gx, shellHeight + SHELL_CAP_HEIGHT / 2, gz + hz),
     hx * 2,
-    WALL_CAP_HEIGHT,
-    WALL_THICKNESS,
+    SHELL_CAP_HEIGHT,
+    SHELL_THICKNESS,
   );
 
-  // East wall (positive X edge)
-  createWall(
+  createBox(
     scene,
-    "arena-wall-e",
-    wallMaterial,
-    new Vector3(gx + hx, WALL_HEIGHT / 2, gz),
-    WALL_THICKNESS,
-    WALL_HEIGHT,
+    "arena-shell-e",
+    shellMaterial,
+    new Vector3(gx + hx, shellHeight / 2, gz),
+    SHELL_THICKNESS,
+    shellHeight,
     hz * 2,
   );
-  createWall(
+  createBox(
     scene,
-    "arena-wall-cap-e",
+    "arena-shell-cap-e",
     accentGlowMaterial,
-    new Vector3(gx + hx, WALL_HEIGHT + WALL_CAP_HEIGHT / 2, gz),
-    WALL_THICKNESS,
-    WALL_CAP_HEIGHT,
+    new Vector3(gx + hx, shellHeight + SHELL_CAP_HEIGHT / 2, gz),
+    SHELL_THICKNESS,
+    SHELL_CAP_HEIGHT,
     hz * 2,
   );
 
-  // West wall (negative X edge)
-  createWall(
+  createBox(
     scene,
-    "arena-wall-w",
-    wallMaterial,
-    new Vector3(gx - hx, WALL_HEIGHT / 2, gz),
-    WALL_THICKNESS,
-    WALL_HEIGHT,
+    "arena-shell-w",
+    shellMaterial,
+    new Vector3(gx - hx, shellHeight / 2, gz),
+    SHELL_THICKNESS,
+    shellHeight,
     hz * 2,
   );
-  createWall(
+  createBox(
     scene,
-    "arena-wall-cap-w",
+    "arena-shell-cap-w",
     accentGlowMaterial,
-    new Vector3(gx - hx, WALL_HEIGHT + WALL_CAP_HEIGHT / 2, gz),
-    WALL_THICKNESS,
-    WALL_CAP_HEIGHT,
+    new Vector3(gx - hx, shellHeight + SHELL_CAP_HEIGHT / 2, gz),
+    SHELL_THICKNESS,
+    SHELL_CAP_HEIGHT,
     hz * 2,
   );
 
-  // --- Corner posts ----------------------------------------------------
+  // --- Mirrored 1v1 spawn markers ----------------------------------------
 
-  createPost(scene, "arena-post-ne", postMaterial, new Vector3(gx + hx, POST_HEIGHT / 2, gz - hz), POST_DIAMETER, POST_HEIGHT);
-  createPost(scene, "arena-post-nw", postMaterial, new Vector3(gx - hx, POST_HEIGHT / 2, gz - hz), POST_DIAMETER, POST_HEIGHT);
-  createPost(scene, "arena-post-se", postMaterial, new Vector3(gx + hx, POST_HEIGHT / 2, gz + hz), POST_DIAMETER, POST_HEIGHT);
-  createPost(scene, "arena-post-sw", postMaterial, new Vector3(gx - hx, POST_HEIGHT / 2, gz + hz), POST_DIAMETER, POST_HEIGHT);
+  createSpawnMarkers(scene, "arena-spawn-pad", "arena-spawn-bar", gz, {
+    x: PLAYER_SPAWN.x,
+    z: PLAYER_SPAWN.z,
+  });
 
-  // --- Ground border strips --------------------------------------------
+  // The mirror spawn is the shared spawn reflected across the arena centre.
+  createSpawnMarkers(scene, "arena-spawn-pad-mirror", "arena-spawn-bar-mirror", gz, {
+    x: gx * 2 - PLAYER_SPAWN.x,
+    z: gz * 2 - PLAYER_SPAWN.z,
+  });
+}
 
-  createBorder(
-    scene, "arena-border-n", accentGlowMaterial,
-    new Vector3(gx, BORDER_HEIGHT / 2, gz - hz + BORDER_WIDTH / 2),
-    hx * 2, BORDER_HEIGHT, BORDER_WIDTH,
-  );
-  createBorder(
-    scene, "arena-border-s", accentGlowMaterial,
-    new Vector3(gx, BORDER_HEIGHT / 2, gz + hz - BORDER_WIDTH / 2),
-    hx * 2, BORDER_HEIGHT, BORDER_WIDTH,
-  );
-  createBorder(
-    scene, "arena-border-e", accentGlowMaterial,
-    new Vector3(gx + hx - BORDER_WIDTH / 2, BORDER_HEIGHT / 2, gz),
-    BORDER_WIDTH, BORDER_HEIGHT, hz * 2,
-  );
-  createBorder(
-    scene, "arena-border-w", accentGlowMaterial,
-    new Vector3(gx - hx + BORDER_WIDTH / 2, BORDER_HEIGHT / 2, gz),
-    BORDER_WIDTH, BORDER_HEIGHT, hz * 2,
-  );
-
-  // --- Center ring -----------------------------------------------------
-
-  const ring = MeshBuilder.CreateTorus(
-    "arena-center-ring",
-    {
-      diameter: RING_DIAMETER,
-      thickness: RING_THICKNESS,
-      tessellation: 32,
-    },
-    scene,
-  );
-  ring.position = new Vector3(gx, RING_Y_OFFSET, gz);
-  ring.material = accentGlowMaterial;
-  ring.isPickable = false;
-  ring.checkCollisions = false;
-
-  // --- Spawn side markers ----------------------------------------------
-
-  // Flat glowing pad under the spawn point.
+/**
+ * Creates the flat glowing spawn pad and the low start-line bar for one
+ * spawn side, both non-pickable and non-collidable. The bar sits behind the
+ * pad, away from the arena centre, so each side reads as a spawn side from
+ * across the arena.
+ */
+function createSpawnMarkers(
+  scene: Scene,
+  padName: string,
+  barName: string,
+  arenaCz: number,
+  spawn: { x: number; z: number },
+): void {
+  // Flat glowing pad resting on the play-field plate.
   const pad = MeshBuilder.CreateCylinder(
-    "arena-spawn-pad",
+    padName,
     { diameter: PAD_DIAMETER, height: PAD_HEIGHT, tessellation: 24 },
     scene,
   );
-  pad.position = new Vector3(PLAYER_SPAWN.x, PAD_Y, PLAYER_SPAWN.z);
-  pad.material = accentGlowMaterial;
+  pad.position = new Vector3(
+    spawn.x,
+    PLATE_HEIGHT + PAD_HEIGHT / 2,
+    spawn.z,
+  );
+  pad.material = scene.getMaterialByName("arena-accent-glow-material");
   pad.isPickable = false;
   pad.checkCollisions = false;
 
-  // Low start-line bar just behind the pad, marking the spawn side.
+  // Low start-line bar just behind the pad (away from the arena centre).
+  const awayFromCentre = spawn.z >= arenaCz ? 1 : -1;
   const bar = MeshBuilder.CreateBox(
-    "arena-spawn-bar",
+    barName,
     { width: BAR_WIDTH, height: BAR_HEIGHT, depth: BAR_DEPTH },
     scene,
   );
   bar.position = new Vector3(
-    PLAYER_SPAWN.x,
+    spawn.x,
     BAR_HEIGHT / 2,
-    PLAYER_SPAWN.z + BAR_OFFSET,
+    spawn.z + awayFromCentre * BAR_OFFSET,
   );
-  bar.material = accentGlowMaterial;
+  bar.material = scene.getMaterialByName("arena-accent-glow-material");
   bar.isPickable = false;
   bar.checkCollisions = false;
 }
 
 /**
- * Creates the raised play-field plate, marks it non-pickable and
+ * Creates a box-shaped decorative mesh, marked non-pickable and
  * non-collidable.
  */
-function createPlate(
+function createBox(
   scene: Scene,
   name: string,
   material: StandardMaterial,
@@ -335,71 +368,9 @@ function createPlate(
   height: number,
   depth: number,
 ): void {
-  const plate = MeshBuilder.CreateBox(name, { width, height, depth }, scene);
-  plate.position = position;
-  plate.material = material;
-  plate.isPickable = false;
-  plate.checkCollisions = false;
-}
-
-/**
- * Creates a thin box-shaped perimeter wall or cap strip, marks it
- * non-pickable and non-collidable.
- */
-function createWall(
-  scene: Scene,
-  name: string,
-  material: StandardMaterial,
-  position: Vector3,
-  width: number,
-  height: number,
-  depth: number,
-): void {
-  const wall = MeshBuilder.CreateBox(name, { width, height, depth }, scene);
-  wall.position = position;
-  wall.material = material;
-  wall.isPickable = false;
-  wall.checkCollisions = false;
-}
-
-/**
- * Creates a cylindrical corner post, marks it non-pickable and non-collidable.
- */
-function createPost(
-  scene: Scene,
-  name: string,
-  material: StandardMaterial,
-  position: Vector3,
-  diameter: number,
-  height: number,
-): void {
-  const post = MeshBuilder.CreateCylinder(
-    name,
-    { diameter, height, tessellation: 12 },
-    scene,
-  );
-  post.position = position;
-  post.material = material;
-  post.isPickable = false;
-  post.checkCollisions = false;
-}
-
-/**
- * Creates a thin ground-level border strip, marks it non-pickable and
- * non-collidable.
- */
-function createBorder(
-  scene: Scene,
-  name: string,
-  material: StandardMaterial,
-  position: Vector3,
-  width: number,
-  height: number,
-  depth: number,
-): void {
-  const strip = MeshBuilder.CreateBox(name, { width, height, depth }, scene);
-  strip.position = position;
-  strip.material = material;
-  strip.isPickable = false;
-  strip.checkCollisions = false;
+  const mesh = MeshBuilder.CreateBox(name, { width, height, depth }, scene);
+  mesh.position = position;
+  mesh.material = material;
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
 }
