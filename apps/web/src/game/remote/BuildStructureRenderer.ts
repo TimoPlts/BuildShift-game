@@ -251,6 +251,18 @@ const CONFIRM_GLOW = [0.75, 0.6, 0.25] as const;
 /** Emissive boost (RGB) applied while a structure is the aimed build-edit target. */
 const EDIT_TARGET_EMISSIVE_BOOST = [0.18, 0.38, 0.22] as const;
 
+/**
+ * Subtle emissive accent (RGB) for structures owned by the local player.
+ * Applied on top of the base emissive so the owner is distinguishable at a
+ * glance without overwhelming the damage tint or hit-flash readability.
+ */
+const LOCAL_OWNER_ACCENT: readonly [number, number, number] = [0.02, 0.06, 0.02];
+/**
+ * Subtle emissive accent (RGB) for structures owned by a remote player.
+ * Warm-shifted to contrast with the local player's cool-green accent.
+ */
+const REMOTE_OWNER_ACCENT: readonly [number, number, number] = [0.05, 0.02, 0.01];
+
 /** Ghost colour for the half-wall result preview (pre-confirmation). */
 const EDIT_PREVIEW_COLOR = new Color3(0.3, 0.95, 0.6);
 /** Opacity of the half-wall result preview ghost. */
@@ -276,6 +288,10 @@ interface StructureRuntime {
   baseDiffuse: Color3;
   /** True when the material/mesh needs one more tick after a state change. */
   dirty: boolean;
+  /** The authoritative session ID of the player who placed this structure. */
+  ownerId: string;
+  /** Whether the structure belongs to the local player (drives the ownership accent). */
+  isLocalOwner: boolean;
 }
 
 /**
@@ -326,6 +342,13 @@ export class BuildStructureRenderer {
   private editPreviewMaterial: StandardMaterial | null = null;
   /** The structure the half-wall result preview is shown for (self-cleanup). */
   private editPreviewStructureId: string | null = null;
+
+  /**
+   * The local player's session ID. Structures owned by this session receive
+   * the local-owner accent; all others receive the remote-owner accent.
+   * Set by the GameRuntime when the connection is established.
+   */
+  private localSessionId: string | null = null;
 
   private structures = new Map<string, StructureRuntime>();
 
@@ -644,6 +667,26 @@ export class BuildStructureRenderer {
   }
 
   /**
+   * Set the local player's session ID so structures can be tinted with an
+   * ownership accent. Structures whose `ownerId` matches this session get
+   * the local-owner accent; all others get the remote-owner accent.
+   *
+   * When the session ID changes (reconnect), the accent is recomputed for
+   * every live structure and the materials are marked dirty so the next
+   * tick applies the new accent. Safe to call with `null` (clears all
+   * local-owner accents — every structure becomes "remote").
+   */
+  public setLocalSessionId(sessionId: string | null): void {
+    if (this.disposed) return;
+    if (sessionId === this.localSessionId) return;
+    this.localSessionId = sessionId;
+    for (const runtime of this.structures.values()) {
+      runtime.isLocalOwner = sessionId !== null && runtime.ownerId === sessionId;
+      runtime.dirty = true;
+    }
+  }
+
+  /**
    * Update the durability (damage state) of a single structure, tinting
    * its mesh material to visually reflect the damage. Triggers a hit flash
    * when durability decreases.
@@ -757,6 +800,8 @@ export class BuildStructureRenderer {
       prevDurability: 0,
       baseDiffuse: baseColor.clone(),
       dirty: true,
+      ownerId: structure.ownerId,
+      isLocalOwner: this.localSessionId !== null && structure.ownerId === this.localSessionId,
     };
 
     this.structures.set(structure.structureId, runtime);
@@ -1046,26 +1091,33 @@ export class BuildStructureRenderer {
     const durability = runtime.durability;
     if (!durability) {
       out.copyFrom(SOLID_EMISSIVE);
-      return out;
-    }
-    const maxDur = Math.max(1, durability.maxDurability);
-    const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
-    const damage = 1 - fraction;
-    const tintAmount = Math.pow(damage, 1.5);
-    // Lerp into `out` in place (no allocation).
-    out.copyFrom(SOLID_EMISSIVE);
-    out.r += (DAMAGED_EMISSIVE.r - SOLID_EMISSIVE.r) * tintAmount;
-    out.g += (DAMAGED_EMISSIVE.g - SOLID_EMISSIVE.g) * tintAmount;
-    out.b += (DAMAGED_EMISSIVE.b - SOLID_EMISSIVE.b) * tintAmount;
+    } else {
+      const maxDur = Math.max(1, durability.maxDurability);
+      const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
+      const damage = 1 - fraction;
+      const tintAmount = Math.pow(damage, 1.5);
+      // Lerp into `out` in place (no allocation).
+      out.copyFrom(SOLID_EMISSIVE);
+      out.r += (DAMAGED_EMISSIVE.r - SOLID_EMISSIVE.r) * tintAmount;
+      out.g += (DAMAGED_EMISSIVE.g - SOLID_EMISSIVE.g) * tintAmount;
+      out.b += (DAMAGED_EMISSIVE.b - SOLID_EMISSIVE.b) * tintAmount;
 
-    // Warning pulse for nearly-broken structures (deterministic, time-based)
-    if (fraction <= NEARLY_BROKEN_THRESHOLD) {
-      const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
-      const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
-      const w = severity * pulse * WARNING_PULSE_STRENGTH;
-      out.r += w;
-      out.g += w * 0.4;
+      // Warning pulse for nearly-broken structures (deterministic, time-based)
+      if (fraction <= NEARLY_BROKEN_THRESHOLD) {
+        const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
+        const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
+        const w = severity * pulse * WARNING_PULSE_STRENGTH;
+        out.r += w;
+        out.g += w * 0.4;
+      }
     }
+
+    // Ownership accent: subtle constant emissive shift so the player can
+    // distinguish their own builds from the opponent's at a glance.
+    const accent = runtime.isLocalOwner ? LOCAL_OWNER_ACCENT : REMOTE_OWNER_ACCENT;
+    out.r += accent[0];
+    out.g += accent[1];
+    out.b += accent[2];
 
     return out;
   }

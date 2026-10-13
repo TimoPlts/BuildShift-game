@@ -1330,4 +1330,196 @@ describe("BuildStructureRenderer", () => {
       expect(coneMat.diffuseColor.b).toBe(originalConeDiffuse.b);
     });
   });
+
+  // ─── Ownership accent ─────────────────────────────────────────────────
+
+  describe("ownership accent", () => {
+    it("distinguishes local-owner structures from remote-owner structures", () => {
+      const localWall = { ...structure("local", "wall"), ownerId: "local" };
+      const remoteWall = { ...structure("remote", "wall"), ownerId: "remote" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { local: localWall, remote: remoteWall } });
+      advance(300); // construction complete
+
+      const localMat = (scene.getMeshByName("structure-local") as Mesh).material as StandardMaterial;
+      const remoteMat = (scene.getMeshByName("structure-remote") as Mesh).material as StandardMaterial;
+
+      // Local owner: emissive g is boosted by LOCAL_OWNER_ACCENT[1] (0.06).
+      // Remote owner: emissive r is boosted by REMOTE_OWNER_ACCENT[0] (0.05).
+      // SOLID_EMISSIVE = (0.02, 0.02, 0.04).
+      // Local: g = 0.02 + 0.06 = 0.08
+      // Remote: r = 0.02 + 0.05 = 0.07
+      expect(localMat.emissiveColor.g).toBeCloseTo(0.08, 5);
+      expect(remoteMat.emissiveColor.r).toBeCloseTo(0.07, 5);
+
+      // The accents are clearly different channels.
+      expect(localMat.emissiveColor.g).toBeGreaterThan(remoteMat.emissiveColor.g);
+      expect(remoteMat.emissiveColor.r).toBeGreaterThan(localMat.emissiveColor.r);
+    });
+
+    it("is stable across frames (no per-frame drift or pulse)", () => {
+      const localWall = { ...structure("local", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { local: localWall } });
+      advance(300); // construction complete
+
+      const mat = (scene.getMeshByName("structure-local") as Mesh).material as StandardMaterial;
+      const r0 = mat.emissiveColor.r;
+      const g0 = mat.emissiveColor.g;
+      const b0 = mat.emissiveColor.b;
+
+      for (let i = 0; i < 20; i++) advance(16);
+
+      expect(mat.emissiveColor.r).toBe(r0);
+      expect(mat.emissiveColor.g).toBe(g0);
+      expect(mat.emissiveColor.b).toBe(b0);
+    });
+
+    it("updates all existing structures when the session ID changes", () => {
+      const wallA = { ...structure("a", "wall"), ownerId: "playerA" };
+      const wallB = { ...structure("b", "wall"), ownerId: "playerB" };
+      renderer.setLocalSessionId("playerA");
+      renderer.syncStructures({ structures: { a: wallA, b: wallB } });
+      advance(300);
+
+      const matA = (scene.getMeshByName("structure-a") as Mesh).material as StandardMaterial;
+      const matB = (scene.getMeshByName("structure-b") as Mesh).material as StandardMaterial;
+
+      // playerA is local → accent g; playerB is remote → accent r.
+      expect(matA.emissiveColor.g).toBeGreaterThan(matB.emissiveColor.g);
+      expect(matB.emissiveColor.r).toBeGreaterThan(matA.emissiveColor.r);
+
+      // Switch local session to playerB.
+      renderer.setLocalSessionId("playerB");
+      advance(16);
+
+      const matA2 = (scene.getMeshByName("structure-a") as Mesh).material as StandardMaterial;
+      const matB2 = (scene.getMeshByName("structure-b") as Mesh).material as StandardMaterial;
+
+      // Now playerB is local → accent g; playerA is remote → accent r.
+      expect(matB2.emissiveColor.g).toBeGreaterThan(matA2.emissiveColor.g);
+      expect(matA2.emissiveColor.r).toBeGreaterThan(matB2.emissiveColor.r);
+    });
+
+    it("clears the local accent when the session ID is set to null (disconnect)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const localEmissiveG = mat.emissiveColor.g;
+      expect(localEmissiveG).toBeCloseTo(0.08, 5); // local accent active
+
+      renderer.setLocalSessionId(null);
+      advance(16);
+
+      const remoteMat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // Now remote accent: g = 0.02 + 0.02 = 0.04
+      expect(remoteMat.emissiveColor.g).toBeCloseTo(0.04, 5);
+    });
+
+    it("is absent before setLocalSessionId is called (all structures get remote accent)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "someowner" };
+      // Do NOT call setLocalSessionId.
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // Remote accent: r = 0.02 + 0.05 = 0.07
+      expect(mat.emissiveColor.r).toBeCloseTo(0.07, 5);
+    });
+
+    it("composes correctly with the damage tint (accent + damage tint are additive)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const healthyG = mat.emissiveColor.g;
+
+      // Heavy damage: tint shifts diffuse toward DAMAGED_COLOR, emissive shifts toward DAMAGED_EMISSIVE.
+      renderer.updateStructureDurability("wall", durability(20, 200));
+      advance(200); // past hit-flash
+
+      const damagedMat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // The damaged emissive r is dominated by the DAMAGED_EMISSIVE shift,
+      // but the local accent still adds to g.
+      expect(damagedMat.emissiveColor.g).toBeGreaterThan(healthyG - 0.01); // accent persists
+    });
+
+    it("lifecycle: accent is removed when the structure is destroyed", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      // Destroy the structure.
+      renderer.syncStructures({ structures: {} });
+      advance(300); // destruction animation completes
+
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("performance: 50 structures with mixed ownership have stable materials across frames", () => {
+      const structures: Record<string, StructureState> = {};
+      for (let i = 0; i < 50; i++) {
+        structures[`s-${i}`] = {
+          ...structure(`s-${i}`, "wall", "", { x: i % 10, y: 0, z: Math.floor(i / 10) }),
+          ownerId: i % 2 === 0 ? "playerA" : "playerB",
+        };
+      }
+      renderer.setLocalSessionId("playerA");
+      renderer.syncStructures({ structures });
+      advance(300); // construction complete
+
+      // Sample emissive values for a spread of structures.
+      const samples: Array<{ name: string; r: number; g: number; b: number }> = [];
+      for (const i of [0, 1, 10, 11, 25, 49]) {
+        const mat = (scene.getMeshByName(`structure-s-${i}`) as Mesh).material as StandardMaterial;
+        samples.push({ name: `structure-s-${i}`, r: mat.emissiveColor.r, g: mat.emissiveColor.g, b: mat.emissiveColor.b });
+      }
+
+      // Advance 30 frames.
+      for (let f = 0; f < 30; f++) advance(16);
+
+      // All materials must be bit-stable (no drift).
+      for (const s of samples) {
+        const mat = (scene.getMeshByName(s.name) as Mesh).material as StandardMaterial;
+        expect(mat.emissiveColor.r).toBe(s.r);
+        expect(mat.emissiveColor.g).toBe(s.g);
+        expect(mat.emissiveColor.b).toBe(s.b);
+      }
+
+      // Verify ownership distinction is preserved:
+      // even indices (playerA = local) have higher g than odd indices (playerB = remote).
+      const localMat = (scene.getMeshByName("structure-s-0") as Mesh).material as StandardMaterial;
+      const remoteMat = (scene.getMeshByName("structure-s-1") as Mesh).material as StandardMaterial;
+      expect(localMat.emissiveColor.g).toBeGreaterThan(remoteMat.emissiveColor.g);
+    });
+
+    it("setLocalSessionId is a no-op after dispose", () => {
+      renderer.dispose();
+      expect(() => renderer.setLocalSessionId("local")).not.toThrow();
+    });
+
+    it("setLocalSessionId with the same value does not re-mark structures dirty", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const r0 = mat.emissiveColor.r;
+      const g0 = mat.emissiveColor.g;
+
+      // Setting the same session ID again should be a no-op.
+      renderer.setLocalSessionId("local");
+      advance(16);
+
+      expect(mat.emissiveColor.r).toBe(r0);
+      expect(mat.emissiveColor.g).toBe(g0);
+    });
+  });
 });
