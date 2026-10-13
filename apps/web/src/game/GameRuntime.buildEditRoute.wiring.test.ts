@@ -41,10 +41,10 @@ describe("build-edit authoritative route", () => {
     // the SAME canvas + the SAME network client instance + the SAME shared
     // interaction-mode coordinator (overhaul task 12).
     expect(runtime).toContain(
-      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode);",
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics);",
     );
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
     );
     // The build-edit system is created after the shared client exists.
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");

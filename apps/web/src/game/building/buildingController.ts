@@ -53,6 +53,7 @@ import {
   type Vec3Like,
 } from "./placementPreview";
 import { parseStructureRejectedEvent } from "./buildingStateStore";
+import type { BuildLatencyMetrics } from "./buildLatencyMetrics";
 
 /**
  * The narrow network surface the controller needs. {@link NetworkClient}
@@ -101,6 +102,7 @@ export class BuildingController {
   private readonly input: BuildingInputController;
   private readonly store: BuildingStateStore;
   private readonly network: BuildingNetworkLike;
+  private readonly latency: BuildLatencyMetrics | null;
   private readonly unsubscribePlaced: () => void;
   private readonly unsubscribeRejected: () => void;
   /**
@@ -116,15 +118,24 @@ export class BuildingController {
   private lastPlacementRequestMs = Number.NEGATIVE_INFINITY;
   private preview: PlacementPreview = ABSENT_PREVIEW;
   private disposed = false;
+  /**
+   * Set of placement sequences that have been accepted (via the
+   * `structure_placed` event) but not yet resolved by a frame that sees
+   * the structure in the mirror. Used to defer the
+   * `acceptToReplicatedMeshMs` measurement to the next frame.
+   */
+  private readonly pendingMeshSequences = new Set<number>();
 
   public constructor(
     input: BuildingInputController,
     store: BuildingStateStore,
     network: BuildingNetworkLike,
+    latency?: BuildLatencyMetrics,
   ) {
     this.input = input;
     this.store = store;
     this.network = network;
+    this.latency = latency ?? null;
     this.unsubscribePlaced = network.onEvent(
       BUILD_EVENTS.STRUCTURE_PLACED,
       (payload) => this.handleStructurePlaced(payload),
@@ -200,6 +211,7 @@ export class BuildingController {
       rotation: this.input.getRotation(),
       occupied: this.store.getOccupiedStructures(),
     });
+    this.resolvePendingMeshes();
     return this.preview;
   }
 
@@ -272,6 +284,7 @@ export class BuildingController {
     this.nextSequence += 1;
     this.store.addPending(intent);
     this.network.send(BUILD_EVENTS.PLACEMENT_REQUEST, intent);
+    this.latency?.recordPlacementSent(intent.sequence);
     return intent;
   }
 
@@ -296,6 +309,9 @@ export class BuildingController {
     const event = payload as StructurePlacedEvent | null;
     if (event?.structure?.structureId !== undefined) {
       this.store.confirmPlacement(event);
+      const seq = event.structure.createdSequence;
+      this.latency?.recordPlacementAccepted(seq);
+      this.pendingMeshSequences.add(seq);
     }
   }
 
@@ -306,6 +322,7 @@ export class BuildingController {
     const parsed = parseStructureRejectedEvent(payload);
     if (parsed !== null) {
       this.store.rejectPlacement(parsed);
+      this.latency?.recordPlacementRejected(parsed.sequence);
     }
   }
 
@@ -318,6 +335,8 @@ export class BuildingController {
    */
   public clearPending(): void {
     this.store.clearPending();
+    this.latency?.clearInFlight();
+    this.pendingMeshSequences.clear();
   }
 
   /**
@@ -331,6 +350,8 @@ export class BuildingController {
     this.lastPlacementRequestMs = Number.NEGATIVE_INFINITY;
     this.store.reset();
     this.preview = ABSENT_PREVIEW;
+    this.latency?.reset();
+    this.pendingMeshSequences.clear();
   }
 
   /** Unsubscribes from server events. Safe to call multiple times. */
@@ -342,5 +363,34 @@ export class BuildingController {
     this.unsubscribePlaced();
     this.unsubscribeRejected();
     this.preview = ABSENT_PREVIEW;
+    this.pendingMeshSequences.clear();
+  }
+
+  /**
+   * Resolves any pending `acceptToReplicatedMeshMs` measurements: for each
+   * sequence in {@link pendingMeshSequences}, if the structure is now in the
+   * authoritative mirror, records the mesh timestamp and drops the entry.
+   * Called once per frame from {@link updateFrame}.
+   */
+  private resolvePendingMeshes(): void {
+    if (this.latency === null || this.pendingMeshSequences.size === 0) {
+      return;
+    }
+    const mirror = this.store.getAuthoritativeStructures();
+    for (const seq of this.pendingMeshSequences) {
+      // The structure is in the mirror if any structure has this
+      // `createdSequence`.
+      let found = false;
+      for (const s of mirror.values()) {
+        if (s.createdSequence === seq) {
+          found = true;
+          break;
+        }
+      }
+      if (found) {
+        this.latency.resolvePlacementMesh(seq);
+        this.pendingMeshSequences.delete(seq);
+      }
+    }
   }
 }

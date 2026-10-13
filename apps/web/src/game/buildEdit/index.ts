@@ -44,6 +44,7 @@ import {
 } from "./buildEditInputController";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
 import type { TargetedStructure } from "./structureSelection";
+import type { BuildLatencyMetrics } from "../building/buildLatencyMetrics";
 
 /**
  * The wired build-edit system: the input controller + orchestrator plus a
@@ -80,6 +81,12 @@ export interface CreateBuildEditSystemOptions {
    * the building system.
    */
   interactionMode?: InteractionModeCoordinator;
+  /**
+   * Optional latency metrics tracker for the build-edit system. When
+   * provided, the controller records send/result timestamps for the
+   * developer diagnostics overlay.
+   */
+  latency?: BuildLatencyMetrics;
 }
 
 /**
@@ -102,9 +109,10 @@ export function createBuildEditSystem(
     input,
     network,
     options?.now,
-    options?.confirmOnRelease !== undefined
-      ? { confirmOnRelease: options.confirmOnRelease }
-      : undefined,
+    {
+      confirmOnRelease: options?.confirmOnRelease,
+      latency: options?.latency,
+    },
   );
 
   return {
