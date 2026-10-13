@@ -58,6 +58,17 @@ export class ThirdPersonCameraController {
    * unlike the pitch nudge which rotates the view.
    */
   private transientVerticalOffset = 0;
+  /**
+   * Crouch camera dip (world-Y, metres) — the orbit pivot is lowered by this
+   * amount while the local player is crouched. The runtime owns the smoothing
+   * (it eases the dip toward `THIRD_PERSON_CAMERA.crouchDip` when crouched and
+   * back to 0 when standing) and feeds the smoothed value each frame, so the
+   * camera lowers smoothly with the crouched body. Unlike the transient
+   * vertical nudge this is a sustained posture offset, but it is applied the
+   * same way (to BOTH the pivot/look target and the camera position) so the
+   * aim direction is never changed.
+   */
+  private crouchDip = 0;
   private disposed = false;
 
   public constructor(scene: Scene) {
@@ -164,6 +175,24 @@ export class ThirdPersonCameraController {
   }
 
   /**
+   * Sets the crouch camera dip for the next {@link update}, in metres
+   * (positive = lower the orbit pivot). Applied to both the look target and
+   * the camera position, so the aim direction is untouched. Defaults to `0`
+   * (no dip). The runtime feeds the smoothed dip each frame.
+   */
+  public setCrouchDip(dipMeters: number): void {
+    if (this.disposed) {
+      return;
+    }
+    this.crouchDip = dipMeters;
+  }
+
+  /** The current crouch dip (for inspection / tests). */
+  public getCrouchDip(): number {
+    return this.crouchDip;
+  }
+
+  /**
    * Repositions the camera behind and above the player for the current
    * yaw/pitch. `feetPosition` is the player's ground anchor.
    *
@@ -198,7 +227,11 @@ export class ThirdPersonCameraController {
     // stays a pure translation shared by the pivot (look target) and the
     // camera position — the aim direction is unchanged.
     const pivotX = feetPosition.x + rightX * shoulderOffset;
-    const pivotY = feetPosition.y + targetHeight + this.transientVerticalOffset;
+    const pivotY =
+      feetPosition.y +
+      targetHeight -
+      this.crouchDip +
+      this.transientVerticalOffset;
     const pivotZ = feetPosition.z + rightZ * shoulderOffset;
 
     // Fold in the transient (recoil) nudge without touching aim pitch.

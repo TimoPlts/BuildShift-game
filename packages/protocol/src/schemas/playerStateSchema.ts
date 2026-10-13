@@ -25,6 +25,11 @@
  *  - velocityY     — vertical velocity in m/s (positive = upward). Used for
  *                    jump/fall rendering on remote clients.
  *  - grounded      — true when the character is in contact with the ground.
+ *  - crouch        — true while the player is in the crouched posture
+ *                    (reduced collider / hitbox + reduced move speed). The
+ *                    server sets this from the player's crouch intent and
+ *                    keeps it `true` when the player cannot stand up (the
+ *                    standing collider is obstructed by structure geometry).
  *  - lastProcessedSequence — the highest input sequence the server has
  *                    authoritatively processed for this player; used by the
  *                    owning client for reconciliation (rollback + replay).
@@ -74,6 +79,13 @@ export const PlayerStateSchema = schema(
     velocityY: t.number(),
     /** True when the character is grounded. */
     grounded: t.boolean(),
+    /**
+     * Authoritative crouch flag. `true` while the player is crouched (the
+     * server sets it from the player's crouch intent and keeps it `true`
+     * while the player cannot stand up because the full standing collider
+     * is obstructed). Defaults to `false` (Colyseus boolean default).
+     */
+    crouch: t.boolean(),
     /**
      * Highest input sequence number the server has authoritatively processed
      * for this player. The client uses this to determine which of its

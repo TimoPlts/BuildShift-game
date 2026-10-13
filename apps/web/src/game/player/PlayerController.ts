@@ -245,9 +245,13 @@ export class PlayerController {
   }
 
   /**
-   * The player's presentation root transform node. External presentation
-   * components (e.g. the weapon model) can parent themselves here so they
-   * move and rotate with the player body automatically.
+   * The player's presentation root transform node (the visual body root, at
+   * capsule-centre height). External presentation components (e.g. the weapon
+   * model) parent themselves here so they move and rotate with the player body
+   * automatically AND lower with it when the player crouches (the crouch blend
+   * vertically squashes this node about the feet, see
+   * {@link PlayerPresentation.setCrouchBlend}). Mount positions are expressed
+   * in this node's local space (capsule-centre origin).
    */
   public get presentationRoot(): TransformNode {
     return this._presentation.visualRoot;
