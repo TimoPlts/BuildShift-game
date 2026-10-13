@@ -136,9 +136,11 @@ describe("ClientAudio", () => {
       expect(audio.unlocked).toBe(false);
       // Play calls should be safe no-ops (no crash)
       audio.playFire("assault_rifle");
-      audio.playHitConfirm();
+      audio.playHitConfirm("assault_rifle");
       audio.playBuildPlace();
       audio.playBuildDestroy();
+      audio.playBuildHit("shotgun");
+      audio.playWeaponSwitch();
       audio.playReload();
       audio.playJump();
       audio.playLand(0.5);
@@ -173,7 +175,7 @@ describe("ClientAudio", () => {
       audio.dispose();
       // After dispose, play calls are safe no-ops
       audio.playFire("assault_rifle");
-      audio.playHitConfirm();
+      audio.playHitConfirm("assault_rifle");
     });
 
     it("dispose prevents further playback", () => {
@@ -202,11 +204,72 @@ describe("ClientAudio", () => {
   });
 
   describe("playHitConfirm", () => {
-    it("creates an oscillator for the hit tone", () => {
+    it("creates a single crisp tone for the assault rifle", () => {
       const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
-      audio.playHitConfirm();
-      expect(ctx.createOscillator).toHaveBeenCalled();
+      audio.playHitConfirm("assault_rifle");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
       expect(ctx.createGain).toHaveBeenCalled();
+    });
+
+    it("layers a deeper thud under the tick for the shotgun", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playHitConfirm("shotgun");
+      // Two layers: low thud + short high tick.
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("playBuildHit", () => {
+    it("creates an oscillator for the rifle structure-hit tick", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildHit("assault_rifle");
+      expect(ctx.createOscillator).toHaveBeenCalled();
+    });
+
+    it("creates an oscillator for the shotgun structure-hit clunk", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildHit("shotgun");
+      expect(ctx.createOscillator).toHaveBeenCalled();
+    });
+
+    it("throttles repeated hits so pellet bursts do not stack", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildHit("shotgun");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      // A second pellet 50 ms later is inside the 120 ms gap.
+      advanceClock(ctx, 0.05);
+      audio.playBuildHit("shotgun");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
+      // Outside the gap the next hit plays again.
+      advanceClock(ctx, 0.2);
+      audio.playBuildHit("shotgun");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+
+    it("uses an independent throttle from place and destroy", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildPlace();
+      advanceClock(ctx, 0.05);
+      // A recent place does not suppress the structure-hit tick.
+      audio.playBuildHit("assault_rifle");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+
+    it("reset clears the throttle so a fresh round can play build hits", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playBuildHit("shotgun");
+      advanceClock(ctx, 0.05);
+      audio.reset();
+      audio.playBuildHit("shotgun");
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("playWeaponSwitch", () => {
+    it("creates a short blip oscillator", () => {
+      const { audio, mockCtx: ctx } = createAudioWithMock(mockCtx);
+      audio.playWeaponSwitch();
+      expect(ctx.createOscillator).toHaveBeenCalledTimes(1);
     });
   });
 
