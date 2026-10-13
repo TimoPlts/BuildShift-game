@@ -1,6 +1,13 @@
 /** Shared horizontal movement tuning used by client and server simulation. */
 export const PLAYER_MOVEMENT = {
   moveSpeed: 6,
+  /**
+   * Horizontal move-speed multiplier applied while crouched (0..1).
+   * Shared tuning: the authoritative server and the client prediction both
+   * derive the crouch speed from the same base `moveSpeed`, so predicted and
+   * authoritative crouch trajectories match.
+   */
+  crouchSpeedFactor: 0.55,
 } as const;
 
 /**

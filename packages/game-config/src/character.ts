@@ -38,6 +38,34 @@ export const PLAYER_COLLIDER_TOTAL_HEIGHT =
   2 * PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
 
 /**
+ * The player's *crouched* collider dimensions (metres).
+ *
+ * Crouching shrinks the player's vertical collision volume so the player can
+ * fit under low geometry (e.g. a half-wall's 1.28 m opening) where the full
+ * standing capsule (1.8 m) cannot. The radius is unchanged — only the
+ * height is reduced. Total crouched height is `2 * (halfHeight + radius)` =
+ * 1.2 m.
+ */
+export const PLAYER_CROUCH_COLLIDER = {
+  /** Capsule radius, in metres (same as the standing collider). */
+  radius: 0.35,
+  /**
+   * Capsule half-height, in metres (the cylindrical half-length, excluding
+   * the hemispherical caps). Total crouched height is
+   * `2 * (halfHeight + radius)`.
+   */
+  halfHeight: 0.25,
+} as const;
+
+/** Half the total crouched height (feet to head-top when crouched). */
+export const PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT =
+  PLAYER_CROUCH_COLLIDER.halfHeight + PLAYER_CROUCH_COLLIDER.radius;
+
+/** Total crouched capsule height (feet to head-top when crouched). */
+export const PLAYER_CROUCH_COLLIDER_TOTAL_HEIGHT =
+  2 * PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT;
+
+/**
  * Character-controller tuning. A small non-zero contact offset keeps the
  * capsule from sitting exactly on a collider's face (avoids precision /
  * contact jitter). The snap-to-ground distance is deliberately well below the

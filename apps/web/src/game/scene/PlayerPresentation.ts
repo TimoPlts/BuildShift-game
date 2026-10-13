@@ -53,7 +53,7 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { Observer, Scene } from "@babylonjs/core";
-import { TransformNode } from "@babylonjs/core/Meshes/transformNode";import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode";import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
 import {
   DEFAULT_PLAYER_POSE_CONFIG,
   PlayerPoseModel,
@@ -159,6 +159,20 @@ const POSE = {
 /** The spine pivot's rest position (waist height, spine-local parent = visualRoot). */
 const SPINE_BASE_Y = -0.18;
 
+/**
+ * Crouch presentation: the body stays parented to `visualRoot` with its
+ * normal local coordinates, and the crouch blend applies a vertical squash
+ * of `visualRoot` (`scaling.y`, 1 → CROUCH_SCALE) about the feet. CROUCH_SCALE
+ * is derived from the authoritative collider ratio (crouch half-height /
+ * standing half-height) so the presented height matches the hitbox. Because
+ * the squash is anchored at the feet (see {@link setTransform}), the feet stay
+ * planted while the body lowers. At scale 1 (blend 0) the transform is the
+ * identity and every world position — including each joint's local coordinate
+ * — is identical to the standing layout.
+ */
+const CROUCH_SCALE =
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT / PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
+
 export class PlayerPresentation {
   /**
    * Root transform. Its position IS the authoritative capsule-centre
@@ -204,6 +218,13 @@ export class PlayerPresentation {
    */
   private readonly _cameraForward = Vector3.Forward();
   private _lastFrameMs: number | null = null;
+  /**
+   * Current crouch squash of `visualRoot` (1 = standing, CROUCH_SCALE = fully
+   * crouched). Written by {@link setCrouchBlend}; applied to the visual root
+   * by {@link setTransform} (position + scale) so the body lowers about the
+   * feet. At 1 the transform is the identity (the standing layout).
+   */
+  private crouchScale = 1;
   private _componentEnabled = true;
   private _disposed = false;
 
@@ -422,8 +443,14 @@ export class PlayerPresentation {
     this.root.rotation.y = -yaw;
     // The two-player room replicates feet at y=0 on grounded players while
     // this root intentionally stays at that unmodified gameplay transform.
-    // Move only the rendered body into the capsule envelope.
-    this.visualRoot.position.y = PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
+    // Move only the rendered body into the capsule envelope, applying the
+    // crouch squash about the feet: visualRoot is lowered to
+    // `halfHeight * crouchScale` and scaled by `crouchScale`, so the feet
+    // (local y = -halfHeight) stay planted while the body lowers. At
+    // crouchScale 1 this is exactly the standing layout.
+    this.visualRoot.position.y =
+      PLAYER_COLLIDER_HALF_TOTAL_HEIGHT * this.crouchScale;
+    this.visualRoot.scaling.y = this.crouchScale;
     // Display-state kinematics derived from the same canonical stream.
     this._poseModel.sample(position.x, position.y, position.z, this._clock());
   }
@@ -435,6 +462,23 @@ export class PlayerPresentation {
     for (const mesh of this._meshes) {
       mesh.setEnabled(enabled);
     }
+  }
+
+  /**
+   * Dumb applier for the crouch presentation blend in `[0, 1]` (0 = standing,
+   * 1 = fully crouched). The caller (the runtime) is responsible for smoothing;
+   * this only maps the blend to the vertical squash of `visualRoot` about the
+   * feet. At blend 0 the scale is 1 (the identity standing layout). Applied
+   * immediately and again by {@link setTransform} each frame, so it stays in
+   * effect even between position updates.
+   */
+  public setCrouchBlend(blend: number): void {
+    if (this._disposed) return;
+    const t = blend < 0 ? 0 : blend > 1 ? 1 : blend;
+    this.crouchScale = 1 - (1 - CROUCH_SCALE) * t;
+    this.visualRoot.scaling.y = this.crouchScale;
+    this.visualRoot.position.y =
+      PLAYER_COLLIDER_HALF_TOTAL_HEIGHT * this.crouchScale;
   }
 
   /**
