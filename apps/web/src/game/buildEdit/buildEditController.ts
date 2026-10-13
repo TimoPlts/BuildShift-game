@@ -54,6 +54,7 @@ import {
   type StructureState,
 } from "@buildshift/protocol";
 import { BUILD_RANGE } from "@buildshift/game-config";
+import type { BuildLatencyMetrics } from "../building/buildLatencyMetrics";
 import type { BuildEditInputController } from "./buildEditInputController";
 import { aimEditTile, type EditTileAimResult } from "./editTileSelection";
 import {
@@ -172,6 +173,7 @@ export class BuildEditController {
   private readonly network: BuildEditNetworkLike;
   private readonly now: () => number;
   private readonly confirmOnRelease: boolean;
+  private readonly latency: BuildLatencyMetrics | null;
   private readonly unsubscribeResult: () => void;
 
   private disposed = false;
@@ -207,17 +209,24 @@ export class BuildEditController {
    * tile every frame.
    */
   private lastPainted: { structureId: string; key: string } | null = null;
+  /**
+   * Structures with a successful edit result that have been consumed
+   * (unacked reached 0) but whose `acceptToReplicatedMeshMs` has not yet
+   * been resolved. Resolved on the next frame in {@link updateFrame}.
+   */
+  private readonly pendingEditMesh = new Set<string>();
 
   public constructor(
     input: BuildEditInputController,
     network: BuildEditNetworkLike,
     now?: () => number,
-    options?: BuildEditControllerOptions,
+    options?: BuildEditControllerOptions & { latency?: BuildLatencyMetrics },
   ) {
     this.input = input;
     this.network = network;
     this.now = now ?? (() => performance.now());
     this.confirmOnRelease = options?.confirmOnRelease ?? false;
+    this.latency = options?.latency ?? null;
     this.unsubscribeResult = network.onEvent(
       EDIT_GRID_ACTION_MESSAGE,
       (payload) => this.handleActionResult(payload),
@@ -327,6 +336,19 @@ export class BuildEditController {
     //    prune caches for structures that no longer exist).
     if (this.mode) {
       this.syncAuthFromMirror(ctx.building);
+    }
+
+    // 5b. resolve any pending edit mesh latency measurements (the preview
+    //     now shows the authoritative state for these structures).
+    if (this.latency !== null && this.pendingEditMesh.size > 0) {
+      for (const id of this.pendingEditMesh) {
+        if (this.unacked.has(id)) {
+          // Still in flight — defer to a later frame.
+          continue;
+        }
+        this.latency.resolveEditMesh(id);
+        this.pendingEditMesh.delete(id);
+      }
     }
 
     // 6. consume the edit intents.
@@ -465,6 +487,7 @@ export class BuildEditController {
       payload.tileIndex = tileIndex;
     }
     this.network.send(EDIT_GRID_ACTION_MESSAGE, payload);
+    this.latency?.recordEditSent(id);
   }
 
   /**
@@ -567,6 +590,7 @@ export class BuildEditController {
     this.unacked.delete(structureId);
     this.touched.delete(structureId);
     this.lastAction.delete(structureId);
+    this.pendingEditMesh.delete(structureId);
     if (this.lastPainted?.structureId === structureId) {
       this.lastPainted = null;
     }
@@ -602,11 +626,18 @@ export class BuildEditController {
     if (remaining <= 0) {
       this.unacked.delete(id);
       this.optimistic.delete(id); // pending falls back to authoritative
+      if (parsed.success) {
+        // The pending state now shows the authoritative result on the
+        // next frame — resolve the mesh latency measurement then.
+        this.pendingEditMesh.add(id);
+      }
     } else {
       this.unacked.set(id, remaining);
     }
 
     if (parsed.success) {
+      // Record the result for latency measurement (only for local in-flight).
+      this.latency?.recordEditResult(id, true);
       const action = this.lastAction.get(id);
       if (action === "confirm") {
         this.showFeedback({
@@ -631,6 +662,8 @@ export class BuildEditController {
       return;
     }
 
+    // Record rejection for latency measurement.
+    this.latency?.recordEditResult(id, false);
     this.showFeedback({
       kind: "rejected",
       message:
@@ -683,6 +716,8 @@ export class BuildEditController {
     this.unacked.clear();
     this.touched.clear();
     this.lastAction.clear();
+    this.pendingEditMesh.clear();
+    this.latency?.reset();
   }
 
   /**
@@ -705,6 +740,8 @@ export class BuildEditController {
     this.unacked.clear();
     this.touched.clear();
     this.lastAction.clear();
+    this.pendingEditMesh.clear();
+    this.latency?.clearInFlight();
   }
 
   /** Unsubscribes from server events and drops every cache. */
@@ -722,6 +759,7 @@ export class BuildEditController {
     this.unacked.clear();
     this.touched.clear();
     this.lastAction.clear();
+    this.pendingEditMesh.clear();
   }
 }
 

@@ -45,7 +45,7 @@ describe("GameRuntime build-edit wiring", () => {
     // Same canvas + network client as the building system — no new network
     // surface — plus the shared interaction-mode coordinator.
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
     );
     // The projected edit-grid preview is a presentation-only scene resource.
     expect(runtime).toContain(
@@ -55,7 +55,7 @@ describe("GameRuntime build-edit wiring", () => {
     // precedes it, which itself follows `this.networkClient=...`).
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
     const buildEditIdx = runtime.indexOf(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
     );
     expect(clientIdx).toBeGreaterThan(-1);
     expect(buildEditIdx).toBeGreaterThan(clientIdx);
@@ -69,10 +69,10 @@ describe("GameRuntime build-edit wiring", () => {
     // ... and the SAME instance is threaded into both systems (no per-system
     // mode state, no duplicate listeners — the coordinator owns none).
     expect(runtime).toContain(
-      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode);",
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics);",
     );
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
     );
   });
 

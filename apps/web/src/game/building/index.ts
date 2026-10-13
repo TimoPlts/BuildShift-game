@@ -29,6 +29,7 @@ import type { InteractionModeCoordinator } from "../input/interactionMode";
 import { BuildingStateStore } from "./buildingStateStore";
 import type { BuildingNetworkLike } from "./buildingController";
 import { BuildingController } from "./buildingController";
+import type { BuildLatencyMetrics } from "./buildLatencyMetrics";
 
 export {
   BuildingInputController,
@@ -79,6 +80,12 @@ export {
   type BuildingFrameDriver,
 } from "./buildingFrameUpdate";
 
+export {
+  BuildLatencyMetrics,
+  type BuildLatencySample,
+  type BuildLatencyReading,
+} from "./buildLatencyMetrics";
+
 /**
  * The fully-wired client building system, as produced by
  * {@link createBuildingSystem}.
@@ -124,10 +131,11 @@ export function createBuildingSystem(
   canvas: HTMLCanvasElement,
   network: BuildingNetworkLike,
   interactionMode?: InteractionModeCoordinator,
+  latency?: BuildLatencyMetrics,
 ): BuildingSystem {
   const input = new BuildingInputController(canvas, undefined, interactionMode);
   const store = new BuildingStateStore();
-  const controller = new BuildingController(input, store, network);
+  const controller = new BuildingController(input, store, network, latency);
   return {
     input,
     store,
