@@ -9,7 +9,8 @@
  * What this contract locks down:
  *  - the audio component is instantiated and owned by the runtime;
  *  - AR/shotgun fire triggers the audio playFire call;
- *  - the authoritative hit event triggers playHitConfirm only for the local session;
+ *  - the authoritative hit event triggers playHitConfirm with the weapon
+ *    id only for the local session;
  *  - build placement/destroy events trigger the respective audio calls;
  *  - round over triggers win/loss jingle based on local session;
  *  - jump/land transitions trigger the movement audio;
@@ -40,13 +41,37 @@ describe("GameRuntime audio wiring", () => {
     expect(fireIdx).toBeGreaterThan(playShotIdx);
   });
 
-  it("plays hit-confirm audio only for an authoritative hit by the local session", () => {
+  it("plays hit-confirm audio with the weapon type only for an authoritative hit by the local session", () => {
     const idx = runtime.indexOf("onEvent(COMBAT_HIT_EVENT");
     expect(idx).toBeGreaterThan(-1);
     const block = runtime.slice(idx, idx + 500);
     // Gated on the local session being the shooter.
     expect(block).toContain("e.shooterId===sid");
-    expect(block).toContain("this.audio.playHitConfirm()");
+    expect(block).toContain("this.audio.playHitConfirm(e.weaponId)");
+  });
+
+  it("plays the build-hit sound on an authoritative structure hit by the local session", () => {
+    const idx = runtime.indexOf("private handleStructureDamage");
+    expect(idx).toBeGreaterThan(-1);
+    const block = runtime.slice(idx, idx + 500);
+    // Gated on the local session being the source of the damage.
+    expect(block).toContain("e.sourcePlayerId!==sid");
+    // The sound is layered on the same hook as the visual impact.
+    expect(block).toContain("this.combatFeedback.playBuildImpact(this._impactPos,e.sourceWeaponId)");
+    expect(block).toContain("this.audio.playBuildHit(e.sourceWeaponId)");
+  });
+
+  it("plays a switch blip only when a local weapon switch succeeds", () => {
+    const rifleIdx = runtime.indexOf('switchWeapon("assault_rifle")');
+    const shotgunIdx = runtime.indexOf('switchWeapon("shotgun")');
+    expect(rifleIdx).toBeGreaterThan(-1);
+    expect(shotgunIdx).toBeGreaterThan(-1);
+    for (const idx of [rifleIdx, shotgunIdx]) {
+      const block = runtime.slice(idx, idx + 300);
+      // Gated on the controller reporting a successful switch.
+      expect(block).toContain("r.switched&&r.targetWeapon");
+      expect(block).toContain("this.audio.playWeaponSwitch()");
+    }
   });
 
   it("subscribes to build:structure_placed and plays the place sound", () => {
