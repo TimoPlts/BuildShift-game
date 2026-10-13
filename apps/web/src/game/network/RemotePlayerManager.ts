@@ -37,6 +37,8 @@ export interface TimedRemoteState {
   yaw: number;
   velocityY: number;
   grounded: boolean;
+  /** Whether the remote player is crouched (presentation only). */
+  crouch?: boolean;
   /** Local clock timestamp (ms) when this state was received. */
   receivedAtMs: number;
 }
@@ -49,6 +51,8 @@ export interface InterpolatedRemoteState {
   y: number;
   z: number;
   yaw: number;
+  /** Whether the remote player is crouched (drives presentation blend). */
+  crouch: boolean;
 }
 
 /**
@@ -85,6 +89,7 @@ export class RemotePlayerManager {
       yaw: number;
       velocityY: number;
       grounded: boolean;
+      crouch?: boolean;
     },
     receivedAtMs: number,
   ): void {
@@ -95,6 +100,7 @@ export class RemotePlayerManager {
       yaw: state.yaw,
       velocityY: state.velocityY,
       grounded: state.grounded,
+      crouch: state.crouch,
       receivedAtMs,
     });
 
@@ -129,12 +135,12 @@ export class RemotePlayerManager {
 
     if (len === 0) {
       // No data yet: return origin (shouldn't happen in practice).
-      return { x: 0, y: 0, z: 0, yaw: 0 };
+      return { x: 0, y: 0, z: 0, yaw: 0, crouch: false };
     }
 
     if (len === 1) {
       const s = buffer[0];
-      return { x: s.x, y: s.y, z: s.z, yaw: s.yaw };
+      return { x: s.x, y: s.y, z: s.z, yaw: s.yaw, crouch: s.crouch === true };
     }
 
     // Target time: render time minus the interpolation delay.
@@ -161,14 +167,26 @@ export class RemotePlayerManager {
 
     // If both indices point to the same state, no interpolation needed.
     if (lowerIdx === upperIdx) {
-      return { x: lower.x, y: lower.y, z: lower.z, yaw: lower.yaw };
+      return {
+        x: lower.x,
+        y: lower.y,
+        z: lower.z,
+        yaw: lower.yaw,
+        crouch: lower.crouch === true || upper.crouch === true,
+      };
     }
 
     // Compute the interpolation factor.
     const timeSpan = upper.receivedAtMs - lower.receivedAtMs;
     if (timeSpan <= 0) {
       // Degenerate case (duplicate timestamps): return the upper state.
-      return { x: upper.x, y: upper.y, z: upper.z, yaw: upper.yaw };
+      return {
+        x: upper.x,
+        y: upper.y,
+        z: upper.z,
+        yaw: upper.yaw,
+        crouch: lower.crouch === true || upper.crouch === true,
+      };
     }
 
     const t = clamp((targetTime - lower.receivedAtMs) / timeSpan, 0, 1);
@@ -178,6 +196,7 @@ export class RemotePlayerManager {
       y: lerp(lower.y, upper.y, t),
       z: lerp(lower.z, upper.z, t),
       yaw: lerpAngle(lower.yaw, upper.yaw, t),
+      crouch: lower.crouch === true || upper.crouch === true,
     };
   }
 

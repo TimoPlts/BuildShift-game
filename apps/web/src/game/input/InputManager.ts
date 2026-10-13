@@ -2,6 +2,8 @@ import type { LocalMovementInput } from "@buildshift/simulation";
 
 const MOVEMENT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
 const JUMP_CODE = "Space";
+/** Crouch key: held to enter/keep the crouched posture. */
+const CROUCH_CODE = "KeyC";
 
 /** Weapon switch key: key 1 → assault rifle. */
 const WEAPON_SLOT_1_CODE = "Digit1";
@@ -101,6 +103,18 @@ export class InputManager {
     this.movementOut.x = Number(this.heldCodes.has("KeyD")) - Number(this.heldCodes.has("KeyA"));
     this.movementOut.z = Number(this.heldCodes.has("KeyS")) - Number(this.heldCodes.has("KeyW"));
     return this.movementOut;
+  }
+
+  /**
+   * Whether the crouch key (C) is currently held while the pointer is locked.
+   *
+   * Like movement, crouch intent is only active under pointer lock so the
+   * player cannot crouch while interacting with browser UI. The key is tracked
+   * in {@link heldCodes} (cleared on blur / unlock / visibility change via
+   * {@link clearInput}).
+   */
+  public isCrouchHeld(): boolean {
+    return this.heldCodes.has(CROUCH_CODE) && this.pointerLocked;
   }
 
   public consumeLookDelta(): LookDelta {
@@ -216,7 +230,7 @@ export class InputManager {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (MOVEMENT_CODES.has(event.code)) {
+    if (MOVEMENT_CODES.has(event.code) || event.code === CROUCH_CODE) {
       this.heldCodes.add(event.code);
     }
     if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
