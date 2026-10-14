@@ -1017,6 +1017,39 @@ describe("BuildStructureRenderer", () => {
   // ─── Resource management ─────────────────────────────────────────────────
 
   describe("resource management", () => {
+    it("keeps meshes and materials bounded through rapid mixed build churn", () => {
+      const baseMeshes = scene.meshes.length;
+      const baseMaterials = scene.materials.length;
+      const types: StructureState["buildType"][] = ["wall", "floor", "ramp", "cone"];
+
+      // This models repeated accepted placement followed by authoritative
+      // removal/reset. It deliberately uses fresh IDs and grids every pass so
+      // a renderer that leaves stale meshes, materials, or observers behind
+      // cannot hide behind an idempotent update path.
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const structures: Record<string, StructureState> = {};
+        for (const [index, buildType] of types.entries()) {
+          const id = `${buildType}-${cycle}`;
+          structures[id] = structure(id, buildType, "", {
+            x: cycle * types.length + index,
+            y: 0,
+            z: cycle % 3,
+          });
+        }
+        renderer.syncStructures({ structures });
+        advance(250);
+        expect(scene.meshes.filter((mesh) => mesh.name.startsWith("structure-")).length).toBe(4);
+
+        renderer.syncStructures({ structures: {} });
+        advance(300);
+        expect(scene.meshes.filter((mesh) => mesh.name.startsWith("structure-")).length).toBe(0);
+        expect(scene.materials.filter((material) => material.name.startsWith("structure-material-")).length).toBe(0);
+      }
+
+      expect(scene.meshes.length).toBe(baseMeshes);
+      expect(scene.materials.length).toBe(baseMaterials);
+    });
+
     it("does not leak meshes on repeated create/destroy cycles", () => {
       for (let i = 0; i < 10; i++) {
         const id = `wall-${i}`;
