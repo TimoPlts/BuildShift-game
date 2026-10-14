@@ -13,6 +13,7 @@ import {
   BUILD_RANGE,
   BUILD_RATE,
   getStructureConfig,
+  isValidPlacementRotation,
   ENERGY,
   getStructureDurability,
   structureCuboids,
@@ -62,7 +63,9 @@ export async function handleBuildPlacement(
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "unknown_build_type" });
     return;
   }
-  if (cfg.rotationCount === 1 && it.rotation !== 0) {
+  // Canonical rotation rule shared with the client preview: an integer in
+  // [0, rotationCount) — rotation-invariant kinds place only with 0.
+  if (!isValidPlacementRotation(it.buildType, it.rotation)) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
     return;
   }

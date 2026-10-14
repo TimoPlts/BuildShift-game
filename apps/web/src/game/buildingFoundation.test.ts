@@ -85,8 +85,13 @@ describe("placementPreview", () => {
     expect(computePlacementPreview(mi({ aimDirection: { x: 1, y: 0, z: 0 } })).reason).toBe("no_candidate");
   });
   it("out_of_range", () => {
-    // aimOrigin x=30 → snapped grid x=5 → anchor x≈25.6 → distance ≈25.6 > 12
-    expect(computePlacementPreview(mi({ aimOrigin: { x: 30, y: 5, z: 0 } })).reason).toBe("out_of_range");
+    // In-bounds anchor (grid x=2 → anchor x≈10.24) with the player at x=-20:
+    // distance ≈30 > 12.
+    expect(computePlacementPreview(mi({ aimOrigin: { x: 12, y: 5, z: 0 }, playerPosition: { x: -20, y: 0, z: 0 } })).reason).toBe("out_of_range");
+  });
+  it("out_of_bounds outside the shared build volume", () => {
+    // aimOrigin x=30 → snapped grid x=5, beyond BUILD_BOUNDS.maxX=2.
+    expect(computePlacementPreview(mi({ aimOrigin: { x: 30, y: 5, z: 0 } })).reason).toBe("out_of_bounds");
   });
   it("overlap", () => {
     expect(computePlacementPreview(mi({ occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");
@@ -119,14 +124,12 @@ describe("placementPreview", () => {
     }));
     expect(computePlacementPreview(mi({ occupied })).valid).toBe(true);
   });
-  it("invalid_rotation for wall with non-default rotation", () => {
-    // wall has rotationCount=4; the preview checks `rotation % rotationCount !== 0`.
-    // rotation=1 → 1 % 4 = 1 ≠ 0 → invalid_rotation.
-    expect(computePlacementPreview(mi({ buildType: "wall", rotation: 1 })).reason).toBe("invalid_rotation");
-  });
-  it("valid rotation for wall at default facing", () => {
-    // rotation=0 → 0 % 4 = 0 → passes rotation check → valid.
-    expect(computePlacementPreview(mi({ buildType: "wall", rotation: 0 })).valid).toBe(true);
+  it("wall is valid at every quarter-turn rotation (rotationCount 4)", () => {
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const p = computePlacementPreview(mi({ buildType: "wall", rotation }));
+      expect(p.valid).toBe(true);
+      expect(p.rotation).toBe(rotation);
+    }
   });
   it("ABSENT_PREVIEW frozen", () => {
     expect(ABSENT_PREVIEW.present).toBe(false);

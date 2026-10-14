@@ -10,20 +10,27 @@
  *   Camera aim ray
  *      → intersect the ground build plane
  *      → snap to the logical build grid
- *      → validate rotation / range / occupancy
+ *      → normalize the selected rotation for the build type
+ *      → validate rotation / build bounds / range / occupancy
  *
  * The server performs the final validation and is the only authority on
  * build existence. A "valid" preview here means "probably valid" (green
  * ghost); an "invalid" preview means "locally invalid" (red ghost). Both are
  * presentation state — nothing in this module is authoritative.
  */
-import { BUILD_RANGE, getStructureConfig } from "@buildshift/game-config";
+import {
+  BUILD_RANGE,
+  isValidPlacementRotation,
+  isWithinBuildBounds,
+  normalizePlacementRotation,
+  structureFootprintCells,
+} from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
   GridRotation,
 } from "@buildshift/protocol";
-import { footprintCells, worldToGridPosition, gridToWorldAnchor } from "./gridSnap";
+import { worldToGridPosition, gridToWorldAnchor } from "./gridSnap";
 
 /**
  * Why a placement preview is (locally) invalid. `null` means the preview is
@@ -36,6 +43,8 @@ export type PlacementInvalidReason =
   | "out_of_range"
   /** The requested rotation is not meaningful for the selected build type. */
   | "invalid_rotation"
+  /** Part of the footprint lies outside the shared `BUILD_BOUNDS` build volume. */
+  | "out_of_bounds"
   /** The candidate footprint overlaps an existing (authoritative or pending) structure. */
   | "overlap";
 
@@ -50,6 +59,8 @@ export interface Vec3Like {
 export interface OccupiedStructure {
   buildType: BuildType;
   grid: GridPosition;
+  /** Placement rotation (a rotated ramp occupies cells along Z); default 0. */
+  rotation?: GridRotation;
 }
 
 /** Everything the preview calculation needs for one frame. */
@@ -62,7 +73,11 @@ export interface PlacementPreviewInput {
   playerPosition: Vec3Like;
   /** The selected build type. */
   buildType: BuildType;
-  /** The selected cardinal rotation (0–3). */
+  /**
+   * The player's selected cardinal rotation (0–3). The preview normalizes it
+   * for `buildType` with the shared `normalizePlacementRotation` rule, so a
+   * rotation selected for a previous piece never invalidates this one.
+   */
   rotation: GridRotation;
   /** All structures currently occupying grid cells (authoritative + pending). */
   occupied: readonly OccupiedStructure[];
@@ -82,7 +97,7 @@ export interface PlacementPreview {
   reason: PlacementInvalidReason | null;
   /** The grid cell the structure would anchor to, or `null` without a candidate. */
   grid: GridPosition | null;
-  /** The rotation the preview would be placed with. */
+  /** The canonical rotation the placement would be requested with. */
   rotation: GridRotation;
   /** The world-space base centre of the anchor cell (for rendering), or `null`. */
   anchorWorld: Vec3Like | null;
@@ -124,9 +139,9 @@ function candidateOverlapsOccupied(
   candidate: OccupiedStructure,
   occupied: readonly OccupiedStructure[],
 ): boolean {
-  const candidateCells = footprintCells(candidate.buildType, candidate.grid);
+  const candidateCells = structureFootprintCells(candidate.buildType, candidate.grid, candidate.rotation ?? 0);
   for (const other of occupied) {
-    const otherCells = footprintCells(other.buildType, other.grid);
+    const otherCells = structureFootprintCells(other.buildType, other.grid, other.rotation ?? 0);
     for (const cell of otherCells) {
       for (const candidateCell of candidateCells) {
         if (
@@ -147,7 +162,8 @@ function candidateOverlapsOccupied(
  *
  * Pure function: reads the shared `BUILD_GRID` / `BUILD_RANGE` values and the
  * structure footprints, never mutates its inputs, never touches the network.
- * The validation order is fixed (candidate → rotation → range → occupancy)
+ * The validation order is fixed (candidate → rotation → bounds → range →
+ * occupancy)
  * so the same inputs always produce the same `reason`.
  */
 export function computePlacementPreview(
@@ -158,9 +174,11 @@ export function computePlacementPreview(
     aimDirection,
     playerPosition,
     buildType,
-    rotation,
     occupied,
   } = input;
+  // Canonical rotation for this piece (shared with the server): rotatable
+  // kinds keep the selected quarter turn, rotation-invariant kinds use 0.
+  const rotation = normalizePlacementRotation(buildType, input.rotation) as GridRotation;
 
   // ── Candidate: intersect the aim ray with the ground build plane ──
   // The ground build plane is the X/Z plane at y = groundY (the base of the
@@ -195,14 +213,24 @@ export function computePlacementPreview(
   const grid = worldToGridPosition(hitX, 0, hitZ);
   const anchorWorld = gridToWorldAnchor(grid);
 
-  // ── Rotation validity: only rotations the structure supports ──
-  const config = getStructureConfig(buildType);
-  const rotationCount = config?.rotationCount ?? 4;
-  if (rotation % rotationCount !== 0) {
+  // ── Rotation validity: the shared canonical rule the server enforces ──
+  if (!isValidPlacementRotation(buildType, rotation)) {
     return {
       present: true,
       valid: false,
       reason: "invalid_rotation",
+      grid,
+      rotation,
+      anchorWorld,
+    };
+  }
+
+  // ── Build bounds: the shared build volume the server enforces ──
+  if (!isWithinBuildBounds(buildType, grid, rotation)) {
+    return {
+      present: true,
+      valid: false,
+      reason: "out_of_bounds",
       grid,
       rotation,
       anchorWorld,
@@ -226,7 +254,7 @@ export function computePlacementPreview(
   }
 
   // ── Occupancy: the candidate footprint must be free ──
-  const candidate = { buildType, grid };
+  const candidate = { buildType, grid, rotation };
   if (candidateOverlapsOccupied(candidate, occupied)) {
     return {
         present: true,

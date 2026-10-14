@@ -213,3 +213,69 @@ export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
 export function getStructureConfig(buildType: string): StructureConfig | undefined {
   return (STRUCTURES as Record<string, StructureConfig>)[buildType];
 }
+
+// ───────────────────────── Canonical placement rules ─────────────────────────
+//
+// Shared by the client placement preview and the authoritative server
+// placement validator, so the two cannot disagree about which rotation a
+// placement carries, which cells it occupies, or whether it fits the build
+// volume.
+
+/** A grid cell / anchor in build-cell coordinates. */
+export interface BuildCell {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The canonical rotation a placement of `buildType` carries when the player
+ * has the quarter turn `selectedRotation` (0–3) selected: the selection taken
+ * modulo the kind's {@link StructureConfig.rotationCount}. Rotatable kinds
+ * (`rotationCount` 4: wall, ramp) keep the selected quarter turn;
+ * rotation-invariant kinds (`rotationCount` 1: floor, cone) always place with
+ * rotation 0, whatever was selected for a previous piece.
+ */
+export function normalizePlacementRotation(buildType: string, selectedRotation: number): number {
+  const count = getStructureConfig(buildType)?.rotationCount ?? 1;
+  return ((selectedRotation % count) + count) % count;
+}
+
+/**
+ * Whether `rotation` is a canonical placement rotation for `buildType`: an
+ * integer in `[0, rotationCount)`. The server rejects any other rotation.
+ */
+export function isValidPlacementRotation(buildType: string, rotation: number): boolean {
+  const cfg = getStructureConfig(buildType);
+  return cfg !== undefined && Number.isInteger(rotation) && rotation >= 0 && rotation < cfg.rotationCount;
+}
+
+/**
+ * Footprint extents in cells after rotation: rotations 1 and 3 swap the X/Z
+ * extents (a ramp then runs along Z), 0 and 2 keep them.
+ */
+export function rotatedFootprintExtents(cfg: StructureConfig, rotation: number): { xs: number; ys: number; zs: number } {
+  const [w, h, d] = cfg.footprint;
+  return rotation === 1 || rotation === 3 ? { xs: d, ys: h, zs: w } : { xs: w, ys: h, zs: d };
+}
+
+/**
+ * Every grid cell occupied by a `buildType` placed at anchor `grid` with
+ * `rotation`: the anchor plus the next cells along the positive axes.
+ * Unknown kinds occupy just the anchor cell.
+ */
+export function structureFootprintCells(buildType: string, grid: BuildCell, rotation: number): BuildCell[] {
+  const cfg = getStructureConfig(buildType);
+  const { xs, ys, zs } = cfg ? rotatedFootprintExtents(cfg, rotation) : { xs: 1, ys: 1, zs: 1 };
+  const cells: BuildCell[] = [];
+  for (let a = 0; a < xs; a++) for (let b = 0; b < ys; b++) for (let c = 0; c < zs; c++) cells.push({ x: grid.x + a, y: grid.y + b, z: grid.z + c });
+  return cells;
+}
+
+/** Whether every cell of the placement lies inside {@link BUILD_BOUNDS}. */
+export function isWithinBuildBounds(buildType: string, grid: BuildCell, rotation: number): boolean {
+  return structureFootprintCells(buildType, grid, rotation).every((c) =>
+    c.x >= BUILD_BOUNDS.minX && c.x <= BUILD_BOUNDS.maxX &&
+    c.z >= BUILD_BOUNDS.minZ && c.z <= BUILD_BOUNDS.maxZ &&
+    c.y >= BUILD_BOUNDS.minLayer && c.y <= BUILD_BOUNDS.maxLayer);
+}

@@ -1,5 +1,5 @@
 import { schema, t } from "@colyseus/schema";
-import { BUILD_GRID, BUILD_BOUNDS, type StructureConfig } from "@buildshift/game-config";
+import { BUILD_GRID, isWithinBuildBounds, rotatedFootprintExtents, structureFootprintCells, type StructureConfig } from "@buildshift/game-config";
 
 /**
  * Server-side authoritative building state (Colyseus wire schema).
@@ -118,31 +118,30 @@ export type BuildingStateSchemaInstance = InstanceType<typeof BuildingStateSchem
 
 /**
  * Axis-aligned footprint extents (in grid cells) for a structure after
- * rotation. Rotations 1 and 3 swap the X/Z extents; 0 and 2 keep them.
+ * rotation — the shared {@link rotatedFootprintExtents} rule.
  */
 export function es(c: StructureConfig, rot: number) {
-  const w = c.footprint[0], d = c.footprint[2];
-  return rot === 1 || rot === 3 ? { xs: d, zs: w } : { xs: w, zs: d };
+  const { xs, zs } = rotatedFootprintExtents(c, rot);
+  return { xs, zs };
 }
 
 /**
  * Whether a structure anchored at grid cell `g` fits within the fixed arena
- * build bounds. Reads the canonical bounds from {@link BUILD_BOUNDS}.
+ * build bounds — the shared {@link isWithinBuildBounds} rule the client
+ * preview also uses.
  */
 export function ib(g: { x: number; y: number; z: number }, c: StructureConfig, rot: number): boolean {
-  const h = c.footprint[1], { xs, zs } = es(c, rot);
-  return g.x >= BUILD_BOUNDS.minX && g.x + xs - 1 <= BUILD_BOUNDS.maxX && g.z >= BUILD_BOUNDS.minZ && g.z + zs - 1 <= BUILD_BOUNDS.maxZ && g.y >= BUILD_BOUNDS.minLayer && g.y + h - 1 <= BUILD_BOUNDS.maxLayer;
+  return isWithinBuildBounds(c.buildType, g, rot);
 }
 
 /**
- * The set of grid-cell keys occupied by a structure anchored at `g`. Used for
- * authoritative overlap checks and for freeing the occupied cells when a
- * structure is destroyed.
+ * The set of grid-cell keys occupied by a structure anchored at `g` (the
+ * shared {@link structureFootprintCells} rule). Used for authoritative
+ * overlap checks and for freeing the occupied cells when a structure is
+ * destroyed.
  */
 export function oc(g: { x: number; y: number; z: number }, c: StructureConfig, rot: number): Set<string> {
-  const s = new Set<string>(), h = c.footprint[1], { xs, zs } = es(c, rot);
-  for (let a = 0; a < xs; a++) for (let b = 0; b < h; b++) for (let d = 0; d < zs; d++) s.add((g.x + a) + "," + (g.y + b) + "," + (g.z + d));
-  return s;
+  return new Set(structureFootprintCells(c.buildType, g, rot).map(cell => cell.x + "," + cell.y + "," + cell.z));
 }
 
 /**

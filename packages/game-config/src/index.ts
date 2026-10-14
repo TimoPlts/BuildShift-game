@@ -98,6 +98,12 @@ export {
   BUILD_STRUCTURE_KEYS,
   STRUCTURES,
   getStructureConfig,
+  normalizePlacementRotation,
+  isValidPlacementRotation,
+  rotatedFootprintExtents,
+  structureFootprintCells,
+  isWithinBuildBounds,
+  type BuildCell,
   type BuildStructureKey,
   type StructureConfig,
 } from "./building.js";

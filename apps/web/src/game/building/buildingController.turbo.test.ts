@@ -338,9 +338,11 @@ describe("turbo building: piece switch", () => {
     expect(fixture.placedRequests()[1].buildType).toBe("floor");
     fixture.confirm(1, 1, "floor");
 
-    // Switch to ramp mid-hold: the next window places a ramp.
+    // Switch to ramp mid-hold: the next window places a ramp (at x=-2: a
+    // rotation-0 ramp spans x=-2..-1, inside the shared build bounds and
+    // clear of the wall at 0 / floor at 1).
     fixture.selectPiece("Digit3");
-    fixture.frame(2 * PLACEMENT_REQUEST_INTERVAL_MS + 120, true, { gridX: 2 });
+    fixture.frame(2 * PLACEMENT_REQUEST_INTERVAL_MS + 120, true, { gridX: -2 });
     expect(fixture.placedRequests()).toHaveLength(3);
     expect(fixture.placedRequests()[2].buildType).toBe("ramp");
 
