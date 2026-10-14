@@ -20,6 +20,7 @@ import { UniversalCamera } from "@babylonjs/core/Cameras/universalCamera";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { StructureEditState } from "@buildshift/protocol";
+import { MAX_STRUCTURE_CUBOIDS, structureCuboids } from "@buildshift/game-config";
 
 import {
   EditPreviewPresentation,
@@ -98,6 +99,28 @@ describe("EditPreviewPresentation", () => {
     nowMs += ms;
     scene.onBeforeRenderObservable.notifyObservers(scene);
   }
+
+  it.each([
+    { buildType: "wall", rotation: 1, state: { kind: "wall", tiles: [true, false, true, true, true, true, true, true, true] } },
+    { buildType: "floor", rotation: 0, state: { kind: "floor_cone", tiles: [true, false, true, true] } },
+    { buildType: "cone", rotation: 0, state: { kind: "floor_cone", tiles: [true, false, true, true] } },
+    { buildType: "ramp", rotation: 1, state: { kind: "ramp", variant: "half_left" } },
+  ] as const)("uses the exact %s shared solid volumes", ({ buildType, rotation, state }) => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    preview = new EditPreviewPresentation(scene);
+    const grid = { x: 1, y: 0, z: 2 };
+    preview.show(baseInput({ buildType, rotation, state: state as StructureEditState, grid }));
+    const expected = structureCuboids({ buildType, grid, rotation, editGrid: state as StructureEditState });
+    const actual = scene.meshes.filter((mesh) => mesh.name.startsWith(`${NAME_PREFIX}solid-`) && mesh.isEnabled()) as Mesh[];
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < actual.length; i++) {
+      actual[i]!.computeWorldMatrix(true);
+      expect(actual[i]!.getAbsolutePosition().x).toBeCloseTo(expected[i]!.center.x, 4);
+      expect(actual[i]!.getAbsolutePosition().y).toBeCloseTo(expected[i]!.center.y, 4);
+      expect(actual[i]!.getAbsolutePosition().z).toBeCloseTo(expected[i]!.center.z, 4);
+    }
+  });
 
   // ── presentation set ──────────────────────────────────────────────────────
 
@@ -269,7 +292,7 @@ describe("EditPreviewPresentation", () => {
     preview = new EditPreviewPresentation(scene);
 
     preview.show(baseInput());
-    expect(previewMeshes(scene)).toHaveLength(15); // wall pool
+    expect(previewMeshes(scene)).toHaveLength(24); // wall grid/selection + 9 shared-geometry solids
 
     preview.show(
       baseInput({
@@ -279,8 +302,8 @@ describe("EditPreviewPresentation", () => {
       }),
     );
 
-    // Floor pool: base + 4 grid lines + 4 tiles + selection.
-    expect(previewMeshes(scene)).toHaveLength(10);
+    // Floor pool: grid/selection plus 4 shared-geometry solids.
+    expect(previewMeshes(scene)).toHaveLength(14);
     // Wall-only tiles are gone.
     expect(meshByName(scene, `${NAME_PREFIX}tile-5`)).toBeNull();
     // The removed floor quadrant is open.
@@ -297,7 +320,8 @@ describe("EditPreviewPresentation", () => {
 
     const rampW = 2 * CELL; // two-cell-long ramp
 
-    // half_left: left half present → span 0.5 centred at −w/4, high end mid.
+    // half_left: full length, only the climber's LEFT half of the width
+    // (piece-local +Z when climbing +X), full one-layer height.
     preview.show(
       baseInput({
         buildType: "ramp",
@@ -308,19 +332,23 @@ describe("EditPreviewPresentation", () => {
     );
 
     const result = meshByName(scene, `${NAME_PREFIX}ramp-result`) as Mesh;
-    expect(result.scaling.x).toBeCloseTo(0.5, 4);
-    expect(result.position.x).toBeCloseTo(-rampW / 4, 4);
-    expect(result.position.y).toBeCloseTo((LAYER * 0.6) / 2, 4);
+    expect(result.scaling.x).toBeCloseTo(1, 4);
+    expect(result.scaling.z * CELL * 0.9).toBeCloseTo(CELL / 2, 4);
+    expect(result.position.x).toBeCloseTo(0, 4);
+    expect(result.position.z).toBeCloseTo(CELL / 4, 4);
+    expect(result.position.y).toBeCloseTo(LAYER / 2, 4);
 
-    // Selection highlight on the other half.
+    // Selection highlight on the other (right) half of the width.
     const select = meshByName(scene, `${NAME_PREFIX}ramp-select`) as Mesh;
     expect(select.isEnabled()).toBe(true);
-    expect(select.scaling.x).toBeCloseTo(0.5, 4);
-    expect(select.position.x).toBeCloseTo(rampW / 4, 4);
+    expect(select.scaling.x).toBeCloseTo(1, 4);
+    expect(select.position.z).toBeCloseTo(-CELL / 4, 4);
 
-    // High-end marker at the cut edge (mid-piece); no turn marker.
+    // High-end marker at the high end, over the kept half; no turn marker.
     const marker = meshByName(scene, `${NAME_PREFIX}ramp-highend`) as Mesh;
-    expect(marker.position.x).toBeCloseTo(0, 4);
+    expect(marker.position.x).toBeCloseTo(rampW / 2 - 0.175, 3);
+    expect(marker.position.z).toBeCloseTo(CELL / 4, 4);
+    expect(marker.position.y).toBeCloseTo(LAYER, 4);
     expect(meshByName(scene, `${NAME_PREFIX}ramp-turn`)!.isEnabled()).toBe(false);
 
     // turn_right: full span, high end at +X, 90° segment toward +Z.
@@ -353,8 +381,11 @@ describe("EditPreviewPresentation", () => {
       }),
     );
 
-    // Cone pool: base + 2 grid lines + 4 corner tiles + selection.
-    expect(previewMeshes(scene)).toHaveLength(8);
+    // Cone pool: base, grid, tiles, selection, plus one pooled solid per
+    // possible shared-geometry cuboid; exactly the canonical ones are shown.
+    expect(previewMeshes(scene)).toHaveLength(8 + MAX_STRUCTURE_CUBOIDS.cone);
+    const shown = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}solid-`) && m.isEnabled());
+    expect(shown).toHaveLength(structureCuboids({ buildType: "cone", grid: { x: 0, y: 0, z: 0 }, rotation: 0, editGrid: { kind: "floor_cone", tiles: [true, true, true, false] } }).length);
     const gridLines = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}grid-`));
     expect(gridLines).toHaveLength(2);
     expect(meshByName(scene, `${NAME_PREFIX}tile-3`)!.isEnabled()).toBe(false);
@@ -407,7 +438,7 @@ describe("EditPreviewPresentation", () => {
     preview = new EditPreviewPresentation(scene);
 
     preview.show(baseInput({ selectedTile: 4 }));
-    expect(previewMeshes(scene)).toHaveLength(15);
+    expect(previewMeshes(scene)).toHaveLength(24);
     expect(previewMaterials(scene)).toHaveLength(5);
 
     preview.dispose();
@@ -425,7 +456,7 @@ describe("EditPreviewPresentation", () => {
     preview.show(baseInput());
     const resultMat = materialByName(scene, `${NAME_PREFIX}result`) as StandardMaterial;
     const selectMat = materialByName(scene, `${NAME_PREFIX}select`) as StandardMaterial;
-    expect(previewMeshes(scene)).toHaveLength(15); // wall pool before any build-type switch
+    expect(previewMeshes(scene)).toHaveLength(24); // wall pool before any build-type switch
 
     const validAlphas: number[] = [];
     for (let i = 0; i < 25; i++) {
@@ -520,10 +551,15 @@ describe("editTileLayout / editRampLayout", () => {
     expect(full.markerX).toBeCloseTo(rampW / 2 - 0.175, 3);
     expect(full.turnZ).toBeNull();
 
+    // Halves split the WIDTH: full length, left (+Z) / right (−Z) half.
     const halfLeft = editRampLayout("half_left");
-    expect(halfLeft.resultLength).toBeCloseTo(rampW / 2, 4);
-    expect(halfLeft.resultCenter[0]).toBeCloseTo(-rampW / 4, 4);
-    expect(halfLeft.markerX).toBeCloseTo(0, 4);
+    expect(halfLeft.resultLength).toBeCloseTo(rampW, 4);
+    expect(halfLeft.resultWidth).toBeCloseTo(CELL / 2, 4);
+    expect(halfLeft.resultCenter[2]).toBeCloseTo(CELL / 4, 4);
+    expect(halfLeft.markerX).toBeCloseTo(rampW / 2 - 0.175, 3);
+    const halfRight = editRampLayout("half_right");
+    expect(halfRight.resultLength).toBeCloseTo(rampW, 4);
+    expect(halfRight.resultCenter[2]).toBeCloseTo(-CELL / 4, 4);
 
     const flipped = editRampLayout("flipped");
     expect(flipped.markerX).toBeCloseTo(-rampW / 2 + 0.175, 3);

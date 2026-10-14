@@ -32,7 +32,6 @@ import type {
 import {
   isBuildType,
   isGridRotation,
-  isBuildEditType,
   STRUCTURE_DURABILITY_LIMITS,
   deserializeEditState,
 } from "@buildshift/protocol";
@@ -90,9 +89,8 @@ function expectedEditKind(buildType: StructureState["buildType"]): string | null
  *
  * This is a *superset* read, mirroring the durability parse: entries without
  * the fields (or with `editKind` still empty — no edit grid active) yield
- * `null`, so parsing stays compatible with servers that do not yet replicate
- * the edit grid. Malformed grid data is dropped (the legacy `editType` /
- * `openings` description remains the fallback truth for that structure).
+ * `null`. Malformed grid data is dropped; production visuals never infer
+ * edited geometry from retired string edit fields.
  */
 export function parseStructureEditGrid(
   raw: unknown,
@@ -117,7 +115,11 @@ export function parseStructureEditGrid(
         }
       : {
           kind,
-          tiles: Array.isArray(raw.editTiles) ? raw.editTiles : [],
+          tiles: Array.isArray(raw.editTiles)
+            ? raw.editTiles
+            : raw.editTiles != null && typeof (raw.editTiles as Iterable<unknown>)[Symbol.iterator] === "function"
+              ? Array.from(raw.editTiles as Iterable<unknown>)
+              : [],
         };
   const parsed = deserializeEditState(data, buildType);
   return parsed.ok ? parsed.value : null;
@@ -162,10 +164,6 @@ export function parseStructureState(raw: unknown): StructureState | null {
     return null;
   }
   const grid: GridPosition = { x: gx, y: gy, z: gz };
-  const openings: StructureState["openings"] =
-    raw.editType === "door" ? [{ pattern: "door_top" }] :
-    raw.editType === "window" ? [{ pattern: "window_center" }] :
-    raw.editType === "half_bottom" ? [{ pattern: "half_bottom" }] : [];
   const editGrid = parseStructureEditGrid(raw, raw.buildType as StructureState["buildType"]);
   return {
     structureId,
@@ -174,8 +172,6 @@ export function parseStructureState(raw: unknown): StructureState | null {
     rotation: raw.rotation as GridRotation,
     ownerId,
     createdSequence,
-    ...(raw.editType === "" || isBuildEditType(raw.editType) ? { editType: raw.editType } : {}),
-    ...(typeof raw.editType === "string" ? { openings } : {}),
     ...(editGrid !== null ? { editGrid } : {}),
   };
 }

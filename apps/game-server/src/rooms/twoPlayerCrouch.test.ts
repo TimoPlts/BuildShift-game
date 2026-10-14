@@ -26,13 +26,13 @@ import {
   MAX_HEALTH,
   MAX_SHIELD,
   PLAYER_MOVEMENT,
+  structureCuboids,
 } from "@buildshift/game-config";
-import { EVENTS } from "@buildshift/protocol";
+import { BUILD_EVENTS, EVENTS } from "@buildshift/protocol";
 import {
   TwoPlayerMovementRoom,
   TWO_PLAYER_MOVEMENT_INPUT,
-  WALL_PATTERN_INPUT,
-  WALL_PATTERN_RESULT,
+  EDIT_GRID_ACTION_INPUT,
 } from "./TwoPlayerMovementRoom.js";
 import { StructureStateSchema, StructureGridSchema } from "../state/buildingState.js";
 
@@ -51,12 +51,12 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
   let internal: any;
   let a: Client;
   let b: Client;
-  let handlers: Map<string, (client: Client, message: unknown) => void>;
+  let handlers: Map<string, (client: Client, message: unknown) => Promise<void> | void>;
 
-  const send = (type: string, value: unknown, client: Client = a): void => {
+  const send = (type: string, value: unknown, client: Client = a): Promise<void> | void => {
     const handler = handlers.get(type);
     expect(handler, `registered production route ${type}`).toBeDefined();
-    handler!(client, value);
+    return handler!(client, value);
   };
 
   /** Send a movement input for `client` and advance exactly one tick. */
@@ -205,7 +205,7 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
     expect(player(B).shield).toBe(MAX_SHIELD - ASSAULT_RIFLE.damage);
   });
 
-  it("can perform a wall edit while crouched", () => {
+  it("can perform a wall edit while crouched", async () => {
     move(a, 50, { crouch: true });
     expect(player(A).crouch).toBe(true);
 
@@ -227,11 +227,37 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
     s.rotation = 0;
     internal.bld.structures.set("wall", s);
 
-    send(WALL_PATTERN_INPUT, { structureId: "wall", pattern: "door" });
-    expect(s.editType).toBe("door");
+    await send(EDIT_GRID_ACTION_INPUT, { structureId: "wall", action: "select", tileIndex: 4 });
+    expect(s.editTiles[4]).toBe(false);
     expect(room.broadcast).toHaveBeenCalledWith(
-      WALL_PATTERN_RESULT,
+      EDIT_GRID_ACTION_INPUT,
       expect.objectContaining({ structureId: "wall", success: true }),
     );
+  });
+
+  it("builds while crouched through the canonical placement route", async () => {
+    move(a, 60, { crouch: true });
+    await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
+      sequence: 600, buildType: "wall", grid: { x: -1, y: 0, z: 0 }, rotation: 0,
+    });
+    expect(player(A).crouch).toBe(true);
+    expect([...internal.bld.structures.values()].some((s: any) => s.ownerId === A)).toBe(true);
+  });
+
+  it("crosses a low edited opening crouched and rejects standing until clear", () => {
+    const p = player(A);
+    p.x = 0; p.y = 0; p.z = -1; p.yaw = 0;
+    const wall = structureCuboids({ buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, false, false, false] } });
+    internal.pw.setStructureColliders("opening", wall);
+    for (let sequence = 1; sequence <= 8; sequence++) move(a, sequence, { moveZ: 1 });
+    expect(p.z).toBeLessThan(-0.7);
+    for (let sequence = 9; sequence <= 20; sequence++) move(a, sequence, { moveZ: 1, crouch: true });
+    expect(p.z).toBeGreaterThan(-0.1);
+    move(a, 21, { crouch: false });
+    expect(p.crouch).toBe(true);
+    for (let sequence = 22; sequence <= 40; sequence++) move(a, sequence, { moveZ: 1, crouch: true });
+    move(a, 41, { crouch: false });
+    expect(p.crouch).toBe(false);
   });
 });

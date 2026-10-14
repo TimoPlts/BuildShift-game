@@ -14,6 +14,7 @@ import { Scene } from "@babylonjs/core/scene";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { BuildingState, StructureState, StructureDurabilityState } from "@buildshift/protocol";
+import { structureCuboids } from "@buildshift/game-config";
 import { BuildStructureRenderer } from "./BuildStructureRenderer";
 
 function structure(
@@ -336,83 +337,40 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
-  // ─── Half-wall edit transition ───────────────────────────────────────────
+  // ─── Authoritative edit geometry ──────────────────────────────────────────
 
-  describe("half-wall edit transition", () => {
-    it("transitions from full to half_top smoothly", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300); // construction complete
-
-      const beforeScaleY = (scene.getMeshByName("structure-wall") as Mesh).scaling.y;
-      expect(beforeScaleY).toBeCloseTo(1, 1);
-
-      // Apply half_top edit
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-
-      // Mid-transition: should be between 1 and 0.5
-      advance(100);
-      const midMesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(midMesh.scaling.y).toBeLessThan(1);
-      expect(midMesh.scaling.y).toBeGreaterThan(0.5);
-
-      // After transition (200ms): should be at 0.5
-      advance(150);
-      const endMesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(endMesh.scaling.y).toBeCloseTo(0.5, 1);
-    });
-
-    it("half_top shifts position upward", () => {
+  describe("replicated edit geometry", () => {
+    it("rebuilds wall openings from the grid and restores the exact full mesh", () => {
       const wall = structure("wall", "wall");
       renderer.syncStructures({ structures: { wall } });
       advance(300);
-
-      const beforeY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-      advance(250);
-
-      const afterY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-      expect(afterY).toBeGreaterThan(beforeY);
+      const original = scene.getMeshByName("build-solid-wall-0") as Mesh;
+      expect(original).not.toBeNull();
+      const editGrid = { kind: "wall" as const, tiles: [true, true, true, true, false, true, true, true, true] };
+      renderer.syncStructures({ structures: { wall: { ...wall, editGrid } } });
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(8);
+      expect(scene.getMeshByName("structure-wall")).not.toBeNull();
+      renderer.syncStructures({ structures: { wall: { ...wall, editGrid: { kind: "wall", tiles: Array(9).fill(true) } } } });
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(1);
+      expect(scene.getMeshByName("build-solid-wall-0")).not.toBe(original);
     });
 
-    it("half_bottom shifts position downward", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
+    it.each(["wall", "floor", "cone", "ramp"] as const)("matches the shared %s geometry", (buildType) => {
+      const s = structure("piece", buildType);
+      const editGrid = buildType === "wall" ? { kind: "wall" as const, tiles: [true, false, true, true, true, true, true, true, true] }
+        : buildType === "ramp" ? { kind: "ramp" as const, variant: "half_right" as const }
+        : { kind: "floor_cone" as const, tiles: [true, false, true, true] };
+      const edited = { ...s, editGrid };
+      renderer.syncStructures({ structures: { piece: edited } });
       advance(300);
-
-      const beforeY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_bottom" } },
-      });
-      advance(250);
-
-      const afterY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-      expect(afterY).toBeLessThan(beforeY);
-    });
-
-    it("transitioning back to full wall restores original pose", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300);
-
-      // Edit to half_top
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-      advance(250);
-
-      // Edit back to full
-      renderer.syncStructures({ structures: { wall: { ...wall, editType: "" } } });
-      advance(250);
-
-      const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.scaling.y).toBeCloseTo(1, 1);
+      const expected = structureCuboids({ buildType, grid: s.grid, rotation: s.rotation, editGrid });
+      const parts = scene.meshes.filter((m) => m.name.startsWith("build-solid-piece-")) as Mesh[];
+      expect(parts).toHaveLength(expected.length);
+      for (let i = 0; i < expected.length; i++) {
+        expect(parts[i]!.getAbsolutePosition().x).toBeCloseTo(expected[i]!.center.x, 4);
+        expect(parts[i]!.getAbsolutePosition().y).toBeCloseTo(expected[i]!.center.y, 4);
+        expect(parts[i]!.getAbsolutePosition().z).toBeCloseTo(expected[i]!.center.z, 4);
+      }
     });
   });
 
@@ -764,21 +722,33 @@ describe("BuildStructureRenderer", () => {
       expect(settled.position.x).toBeCloseTo(10.24, 3);
     });
 
-    it("eases the ghost rotation along the shortest arc", () => {
-      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
-      advance(16);
-
-      // rotation 2 → target yaw of π.
-      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 2, true);
-      advance(16);
-
-      const mid = scene.getMeshByName("build-preview") as Mesh;
-      expect(Math.abs(mid.rotation.y)).toBeGreaterThan(0.1);
-      expect(Math.abs(mid.rotation.y)).toBeLessThan(Math.PI);
-
+    it("builds the ghost as the exact canonical solids for each rotation (rebuilt on rotate)", () => {
+      const grid = { x: 0, y: 0, z: 0 };
+      const ghostBoxes = () => {
+        const root = scene.getMeshByName("build-preview") as Mesh;
+        expect(root.rotation.y).toBe(0);
+        return root.getChildMeshes().map((m) => {
+          m.computeWorldMatrix(true);
+          const bb = m.getBoundingInfo().boundingBox;
+          return [bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z, bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z];
+        });
+      };
+      const canonical = (buildType: "ramp" | "cone", rotation: number) => structureCuboids({ buildType, grid, rotation })
+        .map(({ center: c, halfExtents: h }) => [c.x - h.x, c.y - h.y, c.z - h.z, c.x + h.x, c.y + h.y, c.z + h.z]);
+      for (const rotation of [0, 1, 2, 3] as const) {
+        renderer.showPreview("ramp", grid, rotation, true);
+        for (let i = 0; i < 40; i++) advance(16);
+        const boxes = ghostBoxes();
+        const expected = canonical("ramp", rotation);
+        expect(boxes).toHaveLength(expected.length);
+        for (const [i, e] of expected.entries()) for (const [k, v] of e.entries()) expect(boxes[i]![k]).toBeCloseTo(v, 4);
+      }
+      renderer.showPreview("cone", grid, 0, true);
       for (let i = 0; i < 40; i++) advance(16);
-      const settled = scene.getMeshByName("build-preview") as Mesh;
-      expect(Math.abs(settled.rotation.y)).toBeCloseTo(Math.PI, 2);
+      const cone = ghostBoxes();
+      const expectedCone = canonical("cone", 0);
+      expect(cone).toHaveLength(expectedCone.length);
+      for (const [i, e] of expectedCone.entries()) for (const [k, v] of e.entries()) expect(cone[i]![k]).toBeCloseTo(v, 4);
     });
 
     it("shows a low-opacity ground marker on the snapped cell", () => {
@@ -1081,21 +1051,16 @@ describe("BuildStructureRenderer", () => {
   // ─── No-change fast path (performance pass) ─────────────────────────────────
 
   describe("no-change fast path", () => {
-    it("still transitions the edit pose after repeated identical syncs", () => {
+    it("still rebuilds edited geometry after repeated identical syncs", () => {
       const wall = structure("wall", "wall");
       renderer.syncStructures({ structures: { wall } });
       advance(300); // construction complete
       renderer.syncStructures({ structures: { wall } }); // fast path x2
       renderer.syncStructures({ structures: { wall } });
 
-      const half = structure("wall", "wall", "half_top");
+      const half = { ...wall, editGrid: { kind: "wall" as const, tiles: [false, false, false, true, true, true, true, true, true] } };
       renderer.syncStructures({ structures: { wall: half } });
-      advance(50); // mid transition
-
-      const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      // Mid-transition the Y scale is between full (1) and half (0.5).
-      expect(mesh.scaling.y).toBeLessThan(1);
-      expect(mesh.scaling.y).toBeGreaterThan(0.5);
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(6);
     });
 
     it("still moves the mesh after repeated identical syncs", () => {

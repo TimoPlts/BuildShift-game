@@ -13,7 +13,7 @@
  * cover the edited-state collision.
  */
 import { describe, expect, it } from "vitest";
-import { BUILD_GRID } from "@buildshift/game-config";
+import { BUILD_GRID, RAMP_STEPS, structureCuboids } from "@buildshift/game-config";
 import { wallCollisionCuboids, WALL_EDIT_PATTERNS, WALL_PANEL_THICKNESS } from "../state/wallEditPatterns.js";
 import { generateFloorEditGeometry } from "./floorEditGeometry.js";
 import { rampCollisionCuboids } from "./rampCollisionGeometry.js";
@@ -156,74 +156,43 @@ describe("cone collision (reuses floor edit geometry)", () => {
 
 describe("rampCollisionCuboids (collision from canonical ramp edit state)", () => {
   const grid = { x: 0, y: 0, z: 0 };
+  const top = (cuboids: { center: { y: number }; halfExtents: { y: number } }[]) =>
+    Math.max(...cuboids.map((c) => c.center.y + c.halfExtents.y));
 
-  it("generates a single cuboid for the full variant (span = 2 cells)", () => {
+  it("is exactly the shared canonical geometry for every variant and rotation", () => {
+    for (const rotation of [0, 1, 2, 3]) {
+      for (const variant of ["full", "flipped", "half_left", "half_right", "turn_left", "turn_right"] as const) {
+        expect(rampCollisionCuboids(grid, rotation, variant)).toEqual(
+          structureCuboids({ buildType: "ramp", grid, rotation, editGrid: { kind: "ramp", variant } }),
+        );
+      }
+    }
+  });
+
+  it("the full ramp spans two cells and rises one full layer", () => {
     const cuboids = rampCollisionCuboids(grid, 0, "full");
-    expect(cuboids).toHaveLength(1);
-    const c = cuboids[0];
-    // Full ramp spans 2 cells in X (rotation 0).
-    expect(c.halfExtents.x).toBeCloseTo(cs);
-    expect(c.center.x).toBeCloseTo(cs / 2); // midpoint of cells 0 and 1
-    // Height matches the renderer's reduced-height box.
-    expect(c.halfExtents.y).toBeCloseTo(lh * 0.3);
-    expect(c.center.y).toBeCloseTo(lh * 0.3);
-    // Depth is one cell.
-    expect(c.halfExtents.z).toBeCloseTo(cs / 2);
-    expect(c.center.z).toBeCloseTo(0);
+    expect(cuboids).toHaveLength(RAMP_STEPS);
+    expect(Math.min(...cuboids.map((c) => c.center.x - c.halfExtents.x))).toBeCloseTo(-cs / 2);
+    expect(Math.max(...cuboids.map((c) => c.center.x + c.halfExtents.x))).toBeCloseTo(1.5 * cs);
+    expect(top(cuboids)).toBeCloseTo(lh);
   });
 
-  it("generates a half-cell cuboid for half_left (span = 1 cell)", () => {
-    const cuboids = rampCollisionCuboids(grid, 0, "half_left");
-    expect(cuboids).toHaveLength(1);
-    const c = cuboids[0];
-    expect(c.halfExtents.x).toBeCloseTo(cs / 2);
-    // "left" for rotation 0 is the min-X cell (cell 0).
-    expect(c.center.x).toBeCloseTo(0);
-  });
-
-  it("generates a half-cell cuboid for half_right (span = 1 cell, offset)", () => {
-    const cuboids = rampCollisionCuboids(grid, 0, "half_right");
-    expect(cuboids).toHaveLength(1);
-    const c = cuboids[0];
-    expect(c.halfExtents.x).toBeCloseTo(cs / 2);
-    // "right" for rotation 0 is the max-X cell (cell 1).
-    expect(c.center.x).toBeCloseTo(cs);
-  });
-
-  it("swaps the span axis to Z for rotation 1", () => {
-    const cuboids = rampCollisionCuboids(grid, 1, "full");
-    expect(cuboids).toHaveLength(1);
-    const c = cuboids[0];
-    expect(c.halfExtents.z).toBeCloseTo(cs);
-    expect(c.center.z).toBeCloseTo(cs / 2);
-    expect(c.halfExtents.x).toBeCloseTo(cs / 2);
-    expect(c.center.x).toBeCloseTo(0);
-  });
-
-  it("inverts the half offset under 180° rotation (rotation 2)", () => {
-    // "half_left" for rotation 2 is the max-X cell (cell 1), because the
-    // local frame is flipped.
-    const left = rampCollisionCuboids(grid, 2, "half_left");
-    expect(left[0].center.x).toBeCloseTo(cs);
-
-    // "half_right" for rotation 2 is the min-X cell (cell 0).
-    const right = rampCollisionCuboids(grid, 2, "half_right");
-    expect(right[0].center.x).toBeCloseTo(0);
-  });
-
-  it("flipped and turn variants produce the full-span cuboid", () => {
-    for (const variant of ["flipped", "turn_left", "turn_right"] as const) {
+  it("half variants keep the full length and rise but only half the width", () => {
+    for (const variant of ["half_left", "half_right"] as const) {
       const cuboids = rampCollisionCuboids(grid, 0, variant);
-      expect(cuboids).toHaveLength(1);
-      expect(cuboids[0].halfExtents.x).toBeCloseTo(cs);
+      expect(cuboids).toHaveLength(RAMP_STEPS);
+      expect(top(cuboids)).toBeCloseTo(lh);
+      for (const c of cuboids) expect(c.halfExtents.z).toBeCloseTo(cs / 4);
     }
+    // Rotation 0 climbs +X, so the climber's left is +Z.
+    expect(rampCollisionCuboids(grid, 0, "half_left")[0]!.center.z).toBeCloseTo(cs / 4);
+    expect(rampCollisionCuboids(grid, 0, "half_right")[0]!.center.z).toBeCloseTo(-cs / 4);
   });
 
-  it("cuboid height is layerHeight * 0.6 (walkable ramp)", () => {
-    for (const variant of ["full", "half_left", "half_right", "flipped"] as const) {
-      const cuboids = rampCollisionCuboids(grid, 0, variant);
-      expect(cuboids[0].halfExtents.y).toBeCloseTo(lh * 0.3);
-    }
+  it("ramp reset (full variant) generates the full-width, full-height ramp", () => {
+    const cuboids = rampCollisionCuboids(grid, 0, "full");
+    for (const c of cuboids) expect(c.halfExtents.z).toBeCloseTo(cs / 2);
+    expect(top(cuboids)).toBeCloseTo(lh);
   });
 });
 
@@ -248,11 +217,5 @@ describe("reset restores full collider (no openings)", () => {
   it("floor reset (all 4 tiles solid) generates 4 cuboids covering the full cell", () => {
     const geo = generateFloorEditGeometry({ x: 0, y: 0, z: 0 }, [true, true, true, true]);
     expect(geo).toHaveLength(4);
-  });
-
-  it("ramp reset (full variant) generates the full-span cuboid", () => {
-    const cuboids = rampCollisionCuboids({ x: 0, y: 0, z: 0 }, 0, "full");
-    expect(cuboids).toHaveLength(1);
-    expect(cuboids[0].halfExtents.x).toBeCloseTo(cs);
   });
 });

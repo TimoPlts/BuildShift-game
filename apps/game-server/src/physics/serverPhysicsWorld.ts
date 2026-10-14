@@ -342,6 +342,12 @@ export class ServerPhysicsWorld {
     return structure ? structure.body.numColliders() : 0;
   }
 
+  /** The exact cuboids currently installed in Rapier, also used by the
+   * canonical room's deterministic movement pass. */
+  public getStructureCuboids(): Array<{ center: Translation3; halfExtents: HalfExtents3 }> {
+    return [...this.structureCuboids.values()].flat();
+  }
+
   /**
    * Removes a structure's collision body from the physics world.
    * Idempotent and safe to call after {@link dispose}.

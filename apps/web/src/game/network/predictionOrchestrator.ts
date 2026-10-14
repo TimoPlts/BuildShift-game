@@ -33,7 +33,15 @@ import {
   ASSAULT_RIFLE,
   MAX_HEALTH,
   MAX_SHIELD,
+  PLAYER_COLLIDER,
+  PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+  structureCuboids,
+  resolveStructureMovement,
+  clampToPlayableArena,
+  type StructureCuboid,
 } from "@buildshift/game-config";
+import type { BuildingState } from "@buildshift/protocol";
 import type { BufferedInput } from "./inputBatcher";
 
 /**
@@ -124,6 +132,27 @@ export interface FirePredictionResult {
  * Client-side prediction and reconciliation engine for the local player.
  */
 export class PredictionOrchestrator {
+  private structureSolids: StructureCuboid[] = [];
+
+  /** Refresh predicted collision from the same authoritative replicated
+   * structures consumed by the permanent renderer. */
+  public setBuildingState(building: BuildingState): void {
+    this.structureSolids = Object.values(building.structures).flatMap((structure) => structureCuboids({
+      buildType: structure.buildType,
+      grid: structure.grid,
+      rotation: structure.rotation,
+      editGrid: structure.editGrid,
+    }));
+  }
+
+  /** Structure collision, then the authoritative arena boundary — the same
+   * order the server applies to each input. */
+  private collide(previous: FullMovementState, proposed: FullMovementState, crouched: boolean): FullMovementState {
+    return clampToPlayableArena(resolveStructureMovement(
+      previous, proposed, this.structureSolids, PLAYER_COLLIDER.radius,
+      (crouched ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : PLAYER_COLLIDER_HALF_TOTAL_HEIGHT) * 2,
+    ), PLAYER_COLLIDER.radius);
+  }
   private state: FullMovementState = { ...INITIAL_STATE };
   private correctionFrom: { x: number; y: number; z: number } | null = null;
   private correctionRemaining = 0;
@@ -208,14 +237,15 @@ export class PredictionOrchestrator {
       { x: input.moveX, z: input.moveZ },
       this.lastStepYaw,
     );
-    this.state = stepFullMovement(
+    const before = this.state;
+    this.state = this.collide(before, stepFullMovement(
       this.state,
       worldInput,
       { jump: input.jump },
       SIMULATION_TICK_SECONDS,
       hConfig,
       VERTICAL_CONFIG,
-    );
+    ), input.crouch);
     if (this.correctionRemaining > 0) {
       this.correctionRemaining -= 1;
       if (this.correctionRemaining <= 0) {
@@ -326,14 +356,15 @@ export class PredictionOrchestrator {
         { x: entry.input.moveX, z: entry.input.moveZ },
         stepYaw,
       );
-      this.state = stepFullMovement(
+      const before = this.state;
+      this.state = this.collide(before, stepFullMovement(
         this.state,
         worldInput,
         { jump: entry.input.jump },
         SIMULATION_TICK_SECONDS,
         entryCrouch ? CROUCH_HORIZONTAL_CONFIG : HORIZONTAL_CONFIG,
         VERTICAL_CONFIG,
-      );
+      ), entryCrouch);
       stepYaw = entry.input.lookYaw;
     }
     this.lastStepYaw = stepYaw;

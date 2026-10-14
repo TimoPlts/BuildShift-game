@@ -63,8 +63,9 @@ export function getEditTileCount(buildType: string): number | null {
  *
  * - `full`       — the full ramp in its default orientation.
  * - `flipped`    — the full ramp with reversed slope direction.
- * - `half_left`  — only the left half of the ramp is present.
- * - `half_right` — only the right half of the ramp is present.
+ * - `half_left`  — only the left half of the ramp's WIDTH is present (as
+ *                  seen looking up the ramp); it still spans the full length.
+ * - `half_right` — only the right half of the ramp's WIDTH is present.
  * - `turn_left`  — the ramp rises and turns 90° to the left partway.
  * - `turn_right` — the ramp rises and turns 90° to the right partway.
  */
@@ -457,8 +458,10 @@ export interface RampGeometry {
   startHeight: number;
   /** Height at the end (high) end of the ramp, in layers. */
   endHeight: number;
-  /** The fraction of the full 2-cell ramp length that is present (1.0 = full, 0.5 = half). */
+  /** The fraction of the full 2-cell ramp length that is present (always 1.0: every variant spans the full length). */
   spanFraction: number;
+  /** Which part of the ramp's WIDTH is present, as seen looking up the ramp. */
+  width: "full" | "left" | "right";
   /** The turn direction for turn variants. */
   turn: RampTurnDirection;
   /** Whether the ramp slope is in its default direction (`false`) or reversed (`true`). */
@@ -472,27 +475,29 @@ export interface RampGeometry {
  * shape. Both client and server call this to derive identical geometry.
  * The geometry is purely data (no engine imports) and is serializable.
  *
- * - `full`       → start 0, end 1, span 1.0, no turn, not reversed.
- * - `flipped`    → start 0, end 1, span 1.0, no turn, reversed.
- * - `half_left`  → start 0, end 1, span 0.5, no turn, not reversed.
- * - `half_right` → start 0, end 1, span 0.5, no turn, reversed.
- * - `turn_left`  → start 0, end 1, span 1.0, turn left, not reversed.
- * - `turn_right` → start 0, end 1, span 1.0, turn right, not reversed.
+ * - `full`       → start 0, end 1, full span and width, no turn, not reversed.
+ * - `flipped`    → start 0, end 1, full span and width, no turn, reversed.
+ * - `half_left`  → start 0, end 1, full span, LEFT half of the width.
+ * - `half_right` → start 0, end 1, full span, RIGHT half of the width.
+ * - `turn_left`  → start 0, end 1, full span, turn left, not reversed.
+ * - `turn_right` → start 0, end 1, full span, turn right, not reversed.
+ *
+ * The exact solids are `structureCuboids` in `@buildshift/game-config`.
  */
 export function generateRampGeometry(variant: RampVariant): RampGeometry {
   switch (variant) {
     case "full":
-      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "none", reversed: false };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "full", turn: "none", reversed: false };
     case "flipped":
-      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "none", reversed: true };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "full", turn: "none", reversed: true };
     case "half_left":
-      return { startHeight: 0, endHeight: 1, spanFraction: 0.5, turn: "none", reversed: false };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "left", turn: "none", reversed: false };
     case "half_right":
-      return { startHeight: 0, endHeight: 1, spanFraction: 0.5, turn: "none", reversed: true };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "right", turn: "none", reversed: false };
     case "turn_left":
-      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "left", reversed: false };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "full", turn: "left", reversed: false };
     case "turn_right":
-      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, turn: "right", reversed: false };
+      return { startHeight: 0, endHeight: 1, spanFraction: 1.0, width: "full", turn: "right", reversed: false };
   }
 }
 

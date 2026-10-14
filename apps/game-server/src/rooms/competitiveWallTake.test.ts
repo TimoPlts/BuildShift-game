@@ -19,8 +19,7 @@ import { getStructureConfig } from "@buildshift/game-config";
 import {
   TwoPlayerMovementRoom,
   TWO_PLAYER_MOVEMENT_INPUT,
-  WALL_PATTERN_INPUT,
-  WALL_PATTERN_RESULT,
+  EDIT_GRID_ACTION_INPUT,
 } from "./TwoPlayerMovementRoom.js";
 import { StructureStateSchema, StructureGridSchema, oc } from "../state/buildingState.js";
 
@@ -349,9 +348,9 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     const newId = replacement.structureId;
     // Set up edit state so the edit check reaches the ownership gate.
     replacement.currentDurability = replacement.maxDurability;
-    send(WALL_PATTERN_INPUT, { structureId: newId, pattern: "door" }, b);
+    await send(EDIT_GRID_ACTION_INPUT, { structureId: newId, action: "select", tileIndex: 4 }, b);
     expect(b.send).toHaveBeenLastCalledWith(
-      WALL_PATTERN_RESULT,
+      EDIT_GRID_ACTION_INPUT,
       expect.objectContaining({ structureId: newId, success: false, reason: "not_owned" }),
     );
 
@@ -359,13 +358,12 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     replacement.editKind = "wall";
     replacement.editTiles.length = 0;
     for (let i = 0; i < 9; i++) replacement.editTiles.push(true);
-    send(WALL_PATTERN_INPUT, { structureId: newId, pattern: "door" }, a);
+    await send(EDIT_GRID_ACTION_INPUT, { structureId: newId, action: "select", tileIndex: 4 }, a);
     expect(a.send).not.toHaveBeenCalledWith(
-      WALL_PATTERN_RESULT,
+      EDIT_GRID_ACTION_INPUT,
       expect.objectContaining({ success: false }),
     );
-    // The wall pattern was applied.
-    expect(replacement.editType).toBe("door");
+    expect(replacement.editTiles[4]).toBe(false);
   });
 
   it("ownership/edit permission after replacement is preserved through subsequent edits", async () => {
@@ -393,14 +391,14 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     replacement.editKind = "wall";
     replacement.editTiles.length = 0;
     for (let i = 0; i < 9; i++) replacement.editTiles.push(true);
-    send(WALL_PATTERN_INPUT, { structureId: replacement.structureId, pattern: "window" }, b);
-    expect(replacement.editType).toBe("window");
+    await send(EDIT_GRID_ACTION_INPUT, { structureId: replacement.structureId, action: "select", tileIndex: 4 }, b);
+    expect(replacement.editTiles[4]).toBe(false);
     expect(replacement.ownerId).toBe("b"); // ownership unchanged after edit
 
     // A cannot edit it.
-    send(WALL_PATTERN_INPUT, { structureId: replacement.structureId, pattern: "door" }, a);
+    await send(EDIT_GRID_ACTION_INPUT, { structureId: replacement.structureId, action: "select", tileIndex: 7 }, a);
     expect(a.send).toHaveBeenLastCalledWith(
-      WALL_PATTERN_RESULT,
+      EDIT_GRID_ACTION_INPUT,
       expect.objectContaining({ structureId: replacement.structureId, success: false, reason: "not_owned" }),
     );
   });

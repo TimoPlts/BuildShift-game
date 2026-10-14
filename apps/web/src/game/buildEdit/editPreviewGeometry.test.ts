@@ -166,15 +166,17 @@ describe("ramp directional variant mapping", () => {
     expect(geo.ramp!.selectedGeometry).toBeNull();
   });
 
-  it("keeps the half/ramp span semantics: halves span 0.5, turns keep span 1.0", () => {
+  it("keeps the ramp variant semantics: halves split the width (full span), turns keep span 1.0", () => {
     const halfLeft = buildEditPreviewGeometry("ramp", { kind: "ramp", variant: "half_left" }, null, null);
     const halfRight = buildEditPreviewGeometry("ramp", { kind: "ramp", variant: "half_right" }, null, null);
     const turnLeft = buildEditPreviewGeometry("ramp", { kind: "ramp", variant: "turn_left" }, null, null);
     const flipped = buildEditPreviewGeometry("ramp", { kind: "ramp", variant: "flipped" }, null, null);
-    expect(halfLeft.ramp!.geometry.spanFraction).toBe(0.5);
+    expect(halfLeft.ramp!.geometry.spanFraction).toBe(1.0);
+    expect(halfLeft.ramp!.geometry.width).toBe("left");
     expect(halfLeft.ramp!.geometry.reversed).toBe(false);
-    expect(halfRight.ramp!.geometry.spanFraction).toBe(0.5);
-    expect(halfRight.ramp!.geometry.reversed).toBe(true);
+    expect(halfRight.ramp!.geometry.spanFraction).toBe(1.0);
+    expect(halfRight.ramp!.geometry.width).toBe("right");
+    expect(halfRight.ramp!.geometry.reversed).toBe(false);
     expect(turnLeft.ramp!.geometry.spanFraction).toBe(1.0);
     expect(turnLeft.ramp!.geometry.turn).toBe("left");
     expect(flipped.ramp!.geometry.reversed).toBe(true);

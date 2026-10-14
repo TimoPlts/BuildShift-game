@@ -17,8 +17,10 @@ export {
   PLAYER_CHARACTER_CONTROLLER,
   PHYSICS_TIMING,
 } from "./character.js";
-export { ARENA_COLLIDERS, PLAYER_SPAWN } from "./arena.js";
+export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableArena } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
+export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
+export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
 
 export {
   SHOTGUN,

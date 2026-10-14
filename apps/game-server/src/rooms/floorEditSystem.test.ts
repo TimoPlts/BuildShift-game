@@ -116,17 +116,17 @@ describe("authoritative 2×2 floor edit system", () => {
     expect(colliderCount(id)).toBe(3);
     await edit({ structureId: id, action: "reset" });
     expect(floorTiles(id)).toEqual([true, true, true, true]);
-    expect(colliderCount(id)).toBe(4);
+    expect(colliderCount(id)).toBe(1); // full floor coalesces to its exact default slab
 
     await edit({ structureId: id, action: "select", tileIndex: 2 });
     await edit({ structureId: id, action: "cancel" });
     expect(floorTiles(id)).toEqual([true, true, true, true]);
-    expect(colliderCount(id)).toBe(4);
+    expect(colliderCount(id)).toBe(1); // restored full slab
 
     await edit({ structureId: id, action: "select", tileIndex: 3 });
     await edit({ structureId: id, action: "full_reset" });
     expect(floorTiles(id)).toEqual([true, true, true, true]);
-    expect(colliderCount(id)).toBe(4);
+    expect(colliderCount(id)).toBe(1); // full reset restores the default slab
   });
 
   it("deselect restores a removed tile and its geometry", async () => {
@@ -135,7 +135,7 @@ describe("authoritative 2×2 floor edit system", () => {
     expect(colliderCount(id)).toBe(3);
     await edit({ structureId: id, action: "deselect", tileIndex: 0 });
     expect(floorTiles(id)).toEqual([true, true, true, true]);
-    expect(colliderCount(id)).toBe(4);
+    expect(colliderCount(id)).toBe(1); // restored full slab
   });
 
   it("begin re-initializes a modified floor to the full form", async () => {
@@ -145,7 +145,7 @@ describe("authoritative 2×2 floor edit system", () => {
     expect(colliderCount(id)).toBe(2);
     await edit({ structureId: id, action: "begin" });
     expect(floorTiles(id)).toEqual([true, true, true, true]);
-    expect(colliderCount(id)).toBe(4);
+    expect(colliderCount(id)).toBe(1); // begin restores the default slab
   });
 
   it("keeps the diagonal (corner opening) and half forms on the floor", async () => {
@@ -192,7 +192,8 @@ describe("authoritative 2×2 floor edit system", () => {
     );
 
     // No edit was applied; the floor keeps its canonical default (full) form.
-    expect(internal.bld.structures.get(id).editKind).toBeFalsy();
+    expect(internal.bld.structures.get(id).editKind).toBe("floor_cone");
+    expect([...internal.bld.structures.get(id).editTiles]).toEqual([true, true, true, true]);
     expect(colliderCount(id)).toBe(1);
   });
 
@@ -218,7 +219,8 @@ describe("authoritative 2×2 floor edit system", () => {
     );
 
     // No edit was applied; the floor keeps its canonical default (full) form.
-    expect(internal.bld.structures.get(id).editKind).toBeFalsy();
+    expect(internal.bld.structures.get(id).editKind).toBe("floor_cone");
+    expect([...internal.bld.structures.get(id).editTiles]).toEqual([true, true, true, true]);
     expect(colliderCount(id)).toBe(1);
     expect(editResults()).toHaveLength(0);
   });

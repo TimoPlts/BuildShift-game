@@ -527,15 +527,15 @@ describe("contested placement arbitration (authoritative processing order)", () 
     const winner = [...internal.bld.structures.values()][0] as any;
     expect(winner.ownerId).toBe("a");
 
-    // B tries to edit the wall (via wall pattern input).
-    const { WALL_PATTERN_INPUT } = await import("./TwoPlayerMovementRoom.js");
+    // B tries to edit the wall through the canonical grid action.
+    const { EDIT_GRID_ACTION_INPUT } = await import("./TwoPlayerMovementRoom.js");
     winner.editKind = "wall";
     winner.editTiles.length = 0;
     for (let i = 0; i < 9; i++) winner.editTiles.push(true);
     winner.currentDurability = winner.maxDurability;
 
-    const sendWallPattern = handlers.get(WALL_PATTERN_INPUT)!;
-    sendWallPattern(b, { structureId: winner.structureId, pattern: "door" });
+    const sendEdit = handlers.get(EDIT_GRID_ACTION_INPUT)!;
+    await sendEdit(b, { structureId: winner.structureId, action: "select", tileIndex: 4 });
 
     const bCalls = (b.send as ReturnType<typeof vi.fn>).mock.calls;
     const notOwned = bCalls.find(

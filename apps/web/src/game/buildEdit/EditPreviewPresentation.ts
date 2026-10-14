@@ -59,7 +59,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig } from "@buildshift/game-config";
+import { BUILD_GRID, getStructureConfig, structureCuboids, MAX_STRUCTURE_CUBOIDS } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -216,11 +216,12 @@ export function editTileLayout(buildType: BuildType, tileIndex: number): EditTil
  * the centred box that covers the present portion of the two-cell ramp,
  * plus the "high end" marker position and the optional turn marker offset.
  *
- * Convention (mirrors the canonical ramp geometry's directional
- * start/end semantics): the default (non-reversed) ramp rises from the −X
- * end (start, low) toward the +X end (end, high). `reversed` swaps which
- * end is high. `turn_*` variants extend a short 90° segment at the high
- * end (−Z for turn_left, +Z for turn_right, facing the ramp's travel).
+ * Convention (mirrors the canonical ramp geometry): the default
+ * (non-reversed) ramp rises from the −X end (start, low) toward the +X end
+ * (end, high), so piece-local +Z is the climber's LEFT. `flipped` swaps which
+ * end is high. `half_left`/`half_right` keep the full length but only the
+ * left (+Z) / right (−Z) half of the width. `turn_*` variants extend a short
+ * segment at the high end (−Z for turn_left, +Z for turn_right).
  *
  * @throws {Error} when `variant` is not a canonical ramp variant.
  */
@@ -229,7 +230,9 @@ export function editRampLayout(
 ): {
   resultCenter: [number, number, number];
   resultLength: number;
+  resultWidth: number;
   markerX: number;
+  markerZ: number;
   turnZ: number | null;
 } {
   const variants = ["full", "flipped", "half_left", "half_right", "turn_left", "turn_right"];
@@ -237,23 +240,23 @@ export function editRampLayout(
     throw new Error(`editRampLayout: unknown ramp variant: ${String(variant)}`);
   }
   const [w, h, d] = footprintDims("ramp");
-  const rampH = h * 0.6; // matches the structure renderer's ramp visual height
-  const y = rampH / 2;
+  const y = h / 2; // the canonical ramp rises one full layer
+  const high = w / 2 - MARKER_SIZE / 2;
 
   switch (variant) {
     case "full":
-      return { resultCenter: [0, y, 0], resultLength: w, markerX: w / 2 - MARKER_SIZE / 2, turnZ: null };
+      return { resultCenter: [0, y, 0], resultLength: w, resultWidth: d, markerX: high, markerZ: 0, turnZ: null };
     case "flipped":
-      return { resultCenter: [0, y, 0], resultLength: w, markerX: -w / 2 + MARKER_SIZE / 2, turnZ: null };
+      return { resultCenter: [0, y, 0], resultLength: w, resultWidth: d, markerX: -high, markerZ: 0, turnZ: null };
     case "half_left":
-      // Left half of the footprint present; the cut (high) end is mid-piece.
-      return { resultCenter: [-w / 4, y, 0], resultLength: w / 2, markerX: 0, turnZ: null };
+      // Full length; only the climber's left half of the width (+Z).
+      return { resultCenter: [0, y, d / 4], resultLength: w, resultWidth: d / 2, markerX: high, markerZ: d / 4, turnZ: null };
     case "half_right":
-      return { resultCenter: [w / 4, y, 0], resultLength: w / 2, markerX: 0, turnZ: null };
+      return { resultCenter: [0, y, -d / 4], resultLength: w, resultWidth: d / 2, markerX: high, markerZ: -d / 4, turnZ: null };
     case "turn_left":
-      return { resultCenter: [0, y, 0], resultLength: w, markerX: w / 2 - MARKER_SIZE / 2, turnZ: -d / 2 };
+      return { resultCenter: [0, y, 0], resultLength: w, resultWidth: d, markerX: high, markerZ: 0, turnZ: -d / 2 };
     case "turn_right":
-      return { resultCenter: [0, y, 0], resultLength: w, markerX: w / 2 - MARKER_SIZE / 2, turnZ: d / 2 };
+      return { resultCenter: [0, y, 0], resultLength: w, resultWidth: d, markerX: high, markerZ: 0, turnZ: d / 2 };
   }
   // Unreachable: the switch is exhaustive over the canonical variants.
   throw new Error(`editRampLayout: unhandled ramp variant: ${String(variant)}`);
@@ -271,6 +274,7 @@ interface PreviewPool {
   rampSelection: AbstractMesh | null;
   rampMarker: AbstractMesh | null;
   rampTurn: AbstractMesh | null;
+  solids?: AbstractMesh[];
 }
 
 /**
@@ -362,6 +366,7 @@ export class EditPreviewPresentation {
 
     this.applyInvalid(geometry.invalid);
     this.applyGeometry(pool, geometry);
+    this.applyCanonicalSolids(pool, input, geometry);
     this.lastKey = key;
   }
 
@@ -411,6 +416,7 @@ export class EditPreviewPresentation {
     if (this.pool.rampSelection) this.pool.rampSelection.dispose();
     if (this.pool.rampMarker) this.pool.rampMarker.dispose();
     if (this.pool.rampTurn) this.pool.rampTurn.dispose();
+    for (const m of this.pool.solids ?? []) m.dispose();
     this.pool = null;
     this.poolBuildType = null;
   }
@@ -485,13 +491,16 @@ export class EditPreviewPresentation {
       );
       this.pool = { base, grid, tiles, selection, rampResult: null, rampSelection: null, rampMarker: null, rampTurn: null };
     } else if (buildType === "cone") {
+      // Square-pyramid envelope matching the canonical stepped-pyramid cone
+      // (a 4-sided cylinder with its corners on the footprint corners).
       base = MeshBuilder.CreateCylinder(
         `${NAME_PREFIX}base-piece`,
-        { height: h, diameterTop: 0.01, diameterBottom: w, tessellation: 12 },
+        { height: h, diameterTop: 0, diameterBottom: w * Math.SQRT2, tessellation: 4 },
         this.scene,
       );
       base.parent = root;
       base.position.set(0, h / 2, 0);
+      base.rotation.y = Math.PI / 4;
       base.material = this.baseMat;
       this.finalizeMesh(base);
       // 2×2 projected base grid: a ground-level cross.
@@ -513,7 +522,7 @@ export class EditPreviewPresentation {
       this.pool = { base, grid, tiles, selection, rampResult: null, rampSelection: null, rampMarker: null, rampTurn: null };
     } else {
       // ramp
-      const rampH = h * 0.6; // matches the structure renderer's ramp visual height
+      const rampH = h; // the canonical ramp rises one full layer
       base = this.box(`${NAME_PREFIX}base-piece`, w, rampH, d, [0, rampH / 2, 0], this.baseMat);
       // Projected two-half-cell grid: one divider down the mid-line.
       grid.push(this.box(`${NAME_PREFIX}grid-mid`, GRID_LINE, rampH, GRID_LINE, [0, rampH / 2, 0], this.gridMat));
@@ -532,6 +541,49 @@ export class EditPreviewPresentation {
         rampMarker,
         rampTurn,
       };
+    }
+    if (this.pool) {
+      const count = MAX_STRUCTURE_CUBOIDS[buildType];
+      this.pool.solids = Array.from({ length: count }, (_, index) => {
+        const solid = this.box(`${NAME_PREFIX}solid-${index}`, 1, 1, 1, [0, 0, 0], this.resultMat!);
+        solid.setEnabled(false);
+        return solid;
+      });
+      // The original tile/span meshes remain as non-rendering interaction
+      // markers; solid results come from the shared geometry generator.
+      for (const tile of this.pool.tiles) tile.visibility = 0;
+      if (this.pool.rampResult) this.pool.rampResult.visibility = 0;
+    }
+  }
+
+  private applyCanonicalSolids(pool: PreviewPool, input: EditPreviewInput, geometry: EditPreviewGeometry): void {
+    const root = this.root;
+    if (!root || !pool.solids) return;
+    const editGrid = geometry.ramp
+      ? { kind: "ramp" as const, variant: geometry.ramp.variant }
+      : { kind: input.buildType === "wall" ? "wall" as const : "floor_cone" as const,
+          tiles: geometry.tiles.map((tile) => tile.solid) };
+    const cuboids = structureCuboids({
+      buildType: input.buildType,
+      grid: input.grid,
+      rotation: input.rotation,
+      editGrid,
+    });
+    root.computeWorldMatrix(true);
+    const inverse = root.getWorldMatrix().clone().invert();
+    const quarterTurn = input.rotation === 1 || input.rotation === 3;
+    for (let i = 0; i < pool.solids.length; i++) {
+      const mesh = pool.solids[i]!;
+      const cuboid = cuboids[i];
+      mesh.setEnabled(cuboid !== undefined);
+      if (!cuboid) continue;
+      const local = Vector3.TransformCoordinates(new Vector3(cuboid.center.x, cuboid.center.y, cuboid.center.z), inverse);
+      mesh.position.copyFrom(local);
+      mesh.scaling.set(
+        (quarterTurn ? cuboid.halfExtents.z : cuboid.halfExtents.x) * 2,
+        cuboid.halfExtents.y * 2,
+        (quarterTurn ? cuboid.halfExtents.x : cuboid.halfExtents.z) * 2,
+      );
     }
   }
 
@@ -563,14 +615,14 @@ export class EditPreviewPresentation {
     // ── Ramp: result span from the canonical variant geometry.
     const ramp = geometry.ramp;
     const layout = editRampLayout(ramp.variant);
-    const [w, h] = footprintDims("ramp");
-    const rampH = h * 0.6;
+    const [w, h, d] = footprintDims("ramp");
+    const rampH = h;
 
     if (pool.rampResult) {
       pool.rampResult.scaling.set(
         layout.resultLength / w,
         1,
-        1,
+        layout.resultWidth / (d * 0.9),
       );
       pool.rampResult.position.set(layout.resultCenter[0], layout.resultCenter[1], layout.resultCenter[2]);
     }
@@ -579,12 +631,12 @@ export class EditPreviewPresentation {
       pool.rampSelection.setEnabled(showSelection);
       if (showSelection) {
         const selLayout = editRampLayout(ramp.selectedVariant as RampVariant);
-        pool.rampSelection.scaling.set(selLayout.resultLength / w, 1, 1);
+        pool.rampSelection.scaling.set(selLayout.resultLength / w, 1, selLayout.resultWidth / (d * 0.9));
         pool.rampSelection.position.set(selLayout.resultCenter[0], selLayout.resultCenter[1], selLayout.resultCenter[2]);
       }
     }
     if (pool.rampMarker) {
-      pool.rampMarker.position.set(layout.markerX, rampH, 0);
+      pool.rampMarker.position.set(layout.markerX, rampH, layout.markerZ);
     }
     if (pool.rampTurn) {
       const turnZ = layout.turnZ;

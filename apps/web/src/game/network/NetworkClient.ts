@@ -16,7 +16,6 @@ import type {
   BuildingState,
   PlayerNetworkInput,
   StructureDurabilityState,
-  StructureOpeningPattern,
   WeaponId,
 } from "@buildshift/protocol";
 import {
@@ -40,7 +39,6 @@ export const INPUT_MESSAGE_TYPE = "two-player:input";
 export const WEAPON_SWITCH_MESSAGE = "two-player:weapon_switch";
 export const WEAPON_RELOAD_MESSAGE = "two-player:weapon_reload";
 export const WEAPON_STATE_EVENT = "combat:weapon_state";
-export const BUILD_EDIT_MESSAGE = "build:edit_request";
 export const COMBAT_HIT_EVENT = "combat:hit";
 export const COMBAT_ELIMINATED_EVENT = "combat:eliminated";
 
@@ -185,17 +183,6 @@ export class NetworkClient {
    */
   public sendWeaponReload(): boolean {
     return this.send(WEAPON_RELOAD_MESSAGE, {});
-  }
-
-  /**
-   * Send a build-edit intent. Uses "build:edit_request" with
-   * `{ structureId, editPattern }` matching the protocol's `BuildEdit`.
-   */
-  public sendBuildEdit(
-    structureId: string,
-    editPattern: StructureOpeningPattern,
-  ): boolean {
-    return this.send(BUILD_EDIT_MESSAGE, { structureId, editPattern });
   }
 
   /** Send one canonical mutual-rematch vote without leaving the current room. */

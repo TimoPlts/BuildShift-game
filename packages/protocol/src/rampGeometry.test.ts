@@ -76,22 +76,24 @@ describe("generateRampGeometry (directional start/end semantics)", () => {
     expect(g.reversed).toBe(true);
   });
 
-  it("half_left ramp: start 0, end 1, span 0.5, no turn, not reversed", () => {
+  it("half_left ramp: start 0, end 1, full span, LEFT half of the width, not reversed", () => {
     const g = generateRampGeometry("half_left");
     expect(g.startHeight).toBe(0);
     expect(g.endHeight).toBe(1);
-    expect(g.spanFraction).toBe(0.5);
+    expect(g.spanFraction).toBe(1.0);
+    expect(g.width).toBe("left");
     expect(g.turn).toBe("none");
     expect(g.reversed).toBe(false);
   });
 
-  it("half_right ramp: start 0, end 1, span 0.5, no turn, reversed", () => {
+  it("half_right ramp: start 0, end 1, full span, RIGHT half of the width, not reversed", () => {
     const g = generateRampGeometry("half_right");
     expect(g.startHeight).toBe(0);
     expect(g.endHeight).toBe(1);
-    expect(g.spanFraction).toBe(0.5);
+    expect(g.spanFraction).toBe(1.0);
+    expect(g.width).toBe("right");
     expect(g.turn).toBe("none");
-    expect(g.reversed).toBe(true);
+    expect(g.reversed).toBe(false);
   });
 
   it("turn_left ramp: start 0, end 1, span 1.0, turn left, not reversed", () => {
@@ -145,11 +147,15 @@ describe("balance preservation (all variants share the same rise)", () => {
     }
   });
 
-  it("half-span variants (half_left, half_right) have spanFraction 0.5", () => {
-    const halfSpan: RampVariant[] = ["half_left", "half_right"];
-    for (const variant of halfSpan) {
+  it("half variants split the width, never the length (every variant spans 1.0)", () => {
+    const halves: RampVariant[] = ["half_left", "half_right"];
+    for (const variant of halves) {
       const g = generateRampGeometry(variant);
-      expect(g.spanFraction, `variant ${variant}`).toBe(0.5);
+      expect(g.spanFraction, `variant ${variant}`).toBe(1.0);
+      expect(g.width, `variant ${variant}`).not.toBe("full");
+    }
+    for (const variant of ["full", "flipped", "turn_left", "turn_right"] as RampVariant[]) {
+      expect(generateRampGeometry(variant).width).toBe("full");
     }
   });
 });
