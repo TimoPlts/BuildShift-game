@@ -9,11 +9,10 @@ import {
   createDefaultEditState,
 } from "@buildshift/protocol";
 import {
-  BUILD_GRID,
-  BUILD_RANGE,
   BUILD_RATE,
   getStructureConfig,
   isValidPlacementRotation,
+  isWithinPlacementRange,
   ENERGY,
   getStructureDurability,
   structureCuboids,
@@ -77,11 +76,8 @@ export async function handleBuildPlacement(
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
     return;
   }
-  const ax = it.grid.x * BUILD_GRID.cellSize;
-  const ay = it.grid.y * BUILD_GRID.layerHeight;
-  const az = it.grid.z * BUILD_GRID.cellSize;
-  const dx = pl.x - ax, dy = pl.y - ay, dz = pl.z - az;
-  if (Math.sqrt(dx * dx + dy * dy + dz * dz) > BUILD_RANGE.maxPlacementDistance) {
+  // Canonical range rule shared with the client preview (full 3D distance).
+  if (!isWithinPlacementRange(pl, it.grid)) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "out_of_range" });
     return;
   }

@@ -19,8 +19,8 @@
  * presentation state — nothing in this module is authoritative.
  */
 import {
-  BUILD_RANGE,
   isValidPlacementRotation,
+  isWithinPlacementRange,
   isWithinBuildBounds,
   normalizePlacementRotation,
   structureFootprintCells,
@@ -237,12 +237,8 @@ export function computePlacementPreview(
     };
   }
 
-  // ── Range: horizontal distance from the player to the anchor cell ──
-  const dx = anchorWorld.x - playerPosition.x;
-  const dz = anchorWorld.z - playerPosition.z;
-  if (
-    Math.hypot(dx, dz) > BUILD_RANGE.maxPlacementDistance
-  ) {
+  // ── Range: the shared full-3D rule the server enforces ──
+  if (!isWithinPlacementRange(playerPosition, grid)) {
     return {
       present: true,
       valid: false,

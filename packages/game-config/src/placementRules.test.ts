@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILD_BOUNDS,
+  BUILD_RANGE,
   STRUCTURES,
+  isWithinPlacementRange,
+  placementAnchorWorld,
   isValidPlacementRotation,
   isWithinBuildBounds,
   normalizePlacementRotation,
@@ -73,5 +76,23 @@ describe("canonical footprint and build bounds", () => {
     expect(isWithinBuildBounds("ramp", edge, 1)).toBe(true); // runs along Z instead
     expect(isWithinBuildBounds("ramp", { x: 0, y: 0, z: BUILD_BOUNDS.maxZ }, 1)).toBe(false);
     expect(isWithinBuildBounds("ramp", { x: 0, y: 0, z: BUILD_BOUNDS.maxZ }, 0)).toBe(true);
+  });
+});
+
+describe("canonical placement range (full 3D distance)", () => {
+  const max = BUILD_RANGE.maxPlacementDistance;
+  it("measures to the anchor cell's base corner", () => {
+    expect(placementAnchorWorld({ x: 2, y: 1, z: -1 })).toEqual({ x: 10.24, y: 3.84, z: -5.12 });
+  });
+  it("accepts horizontal and vertical offsets up to the limit", () => {
+    expect(isWithinPlacementRange({ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(true); // 10.24 m
+    expect(isWithinPlacementRange({ x: 10.24 - max, y: 0, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(true); // exactly the limit
+    expect(isWithinPlacementRange({ x: 10.24, y: 0, z: 0 }, { x: 2, y: 2, z: 0 })).toBe(true); // 7.68 m straight up
+  });
+  it("rejects an anchor beyond the limit in 3D even when it is within it horizontally", () => {
+    // 10.24 m horizontally (in range on the ground) but 7 m above → 12.40 m.
+    expect(isWithinPlacementRange({ x: 0, y: 7, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(false);
+    expect(isWithinPlacementRange({ x: 0, y: 0, z: 0 }, { x: 2, y: 2, z: 0 })).toBe(false); // 12.83 m
+    expect(isWithinPlacementRange({ x: 10.24 - max - 0.01, y: 0, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(false);
   });
 });

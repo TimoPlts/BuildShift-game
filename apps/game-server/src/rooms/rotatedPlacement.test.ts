@@ -20,6 +20,7 @@ import {
   BUILD_BOUNDS,
   getStructureConfig,
   isWithinBuildBounds,
+  isWithinPlacementRange,
   normalizePlacementRotation,
   structureFootprintCells,
 } from "@buildshift/game-config";
@@ -138,5 +139,27 @@ describe("rotated build placement (shared canonical rotation / bounds rules)", (
         expect(r.energyDelta).toBe(0);
       }
     }
+  });
+
+  describe("placement range (shared full-3D rule)", () => {
+    const anchor = { x: 2, y: 0, z: 0 }; // (10.24, 0, 0)
+    const cases = [
+      { label: "in range horizontally", player: { x: 0, y: 0, z: 0 }, inRange: true },
+      { label: "in range vertically", player: { x: 10.24, y: 7.83, z: 0 }, inRange: true },
+      { label: "high anchor beyond the 3D limit", player: { x: 0, y: 7.83, z: 0 }, inRange: false },
+    ];
+    it.each(cases)("$label: server verdict equals the shared rule; no Energy on rejection", async ({ player, inRange }) => {
+      const p = internal.state.players.get("a")!;
+      Object.assign(p, player);
+      expect(isWithinPlacementRange(player, anchor)).toBe(inRange); // the client preview's verdict
+      const r = await place("wall", anchor, 0);
+      expect(r.structure !== undefined).toBe(inRange);
+      if (inRange) {
+        expect(r.energyDelta).toBe(-getStructureConfig("wall")!.cost);
+      } else {
+        expect(r.rejection?.reason).toBe("out_of_range");
+        expect(r.energyDelta).toBe(0);
+      }
+    });
   });
 });

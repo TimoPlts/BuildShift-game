@@ -279,3 +279,22 @@ export function isWithinBuildBounds(buildType: string, grid: BuildCell, rotation
     c.z >= BUILD_BOUNDS.minZ && c.z <= BUILD_BOUNDS.maxZ &&
     c.y >= BUILD_BOUNDS.minLayer && c.y <= BUILD_BOUNDS.maxLayer);
 }
+
+/**
+ * The world-space point a placement's range is measured to: the anchor
+ * cell's base corner `(x·cellSize, y·layerHeight, z·cellSize)`.
+ */
+export function placementAnchorWorld(grid: BuildCell): BuildCell {
+  return { x: grid.x * BUILD_GRID.cellSize, y: grid.y * BUILD_GRID.layerHeight, z: grid.z * BUILD_GRID.cellSize };
+}
+
+/**
+ * Whether a player at `player` (feet position) may place at anchor `grid`:
+ * the full 3D distance to {@link placementAnchorWorld} is at most
+ * {@link BUILD_RANGE.maxPlacementDistance}. The server rejects anything
+ * farther with `out_of_range`.
+ */
+export function isWithinPlacementRange(player: BuildCell, grid: BuildCell): boolean {
+  const a = placementAnchorWorld(grid);
+  return Math.hypot(player.x - a.x, player.y - a.y, player.z - a.z) <= BUILD_RANGE.maxPlacementDistance;
+}

@@ -103,6 +103,8 @@ export {
   rotatedFootprintExtents,
   structureFootprintCells,
   isWithinBuildBounds,
+  placementAnchorWorld,
+  isWithinPlacementRange,
   type BuildCell,
   type BuildStructureKey,
   type StructureConfig,

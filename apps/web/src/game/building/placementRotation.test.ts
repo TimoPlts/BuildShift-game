@@ -16,6 +16,7 @@ import { BUILD_EVENTS, type BuildType, type GridRotation } from "@buildshift/pro
 import {
   BUILD_BOUNDS,
   BUILD_GRID,
+  isWithinPlacementRange,
   isValidPlacementRotation,
   isWithinBuildBounds,
   normalizePlacementRotation,
@@ -189,6 +190,49 @@ describe("Q/E rotation, turbo and piece switching", () => {
     for (const r of f.sent) expect(isValidPlacementRotation(r.buildType as string, r.rotation as number)).toBe(true);
     // The selection itself is preserved for the next rotatable piece.
     expect(f.input.getRotation()).toBe(1);
+    f.dispose();
+  });
+});
+
+describe("placement preview range (shared full-3D rule)", () => {
+  /** Preview aiming at ground cell (2, 0) — anchor (10.24, 0, 0) — from `player`. */
+  const fromPlayer = (player: { x: number; y: number; z: number }) => computePlacementPreview({
+    aimOrigin: { x: cellCenter(2), y: player.y + 5, z: cellCenter(0) },
+    aimDirection: { x: 0, y: -1, z: 0 },
+    playerPosition: player,
+    buildType: "wall",
+    rotation: 0,
+    occupied: [],
+  });
+
+  it("is valid in range horizontally", () => {
+    expect(fromPlayer({ x: 0, y: 0, z: 0 }).valid).toBe(true); // 10.24 m
+  });
+
+  it("is valid in range vertically (player standing above the anchor)", () => {
+    expect(fromPlayer({ x: 10.24, y: 7.83, z: 0 }).valid).toBe(true); // 7.83 m straight up
+  });
+
+  it("is out_of_range for an anchor beyond the limit in 3D (in range horizontally)", () => {
+    // On a high build at y = 7.83, 10.24 m away horizontally → 12.89 m.
+    const player = { x: 0, y: 7.83, z: 0 };
+    const p = fromPlayer(player);
+    expect(p.valid).toBe(false);
+    expect(p.reason).toBe("out_of_range");
+    expect(isWithinPlacementRange(player, p.grid!)).toBe(false); // the server's verdict
+  });
+
+  it("sends no placement request for a target out of 3D range", () => {
+    const f = createFixture();
+    const elevated = (held: boolean) => updateBuildingFrame(
+      { controller: f.controller },
+      { position: { x: cellCenter(2), y: 12, z: cellCenter(0) } } as unknown as Camera,
+      { x: 0, y: -1, z: 0 } as unknown as Vector3,
+      { x: 0, y: 7.83, z: 0 } as unknown as Vector3,
+      true, held, 10_000,
+    );
+    elevated(true);
+    expect(f.sent).toHaveLength(0);
     f.dispose();
   });
 });
