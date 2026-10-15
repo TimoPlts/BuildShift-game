@@ -276,8 +276,8 @@ function createFixture() {
   };
 }
 
-/** Aim straight down at the centre of ground cell (x, z). */
-const aimCell = (x: number, z: number) => ({ origin: { x: x * 5.12 + 2.56, y: 5, z: z * 5.12 + 2.56 }, dir: { x: 0, y: -1, z: 0 } });
+/** Aim straight down at the centre of build tile (x, z) (tiles are centred on grid × cellSize). */
+const aimCell = (x: number, z: number) => ({ origin: { x: x * 5.12, y: 5, z: z * 5.12 }, dir: { x: 0, y: -1, z: 0 } });
 /** Aim at wall s1 (grid (0,0,-1)) tile `t` along its panel normal. */
 const editAim = (t: number) => ({
   origin: { x: -5.12 / 2 + ((t % 3) + 0.5) * (5.12 / 3), y: 3.84 - (Math.floor(t / 3) + 0.5) * (3.84 / 3), z: 0 },

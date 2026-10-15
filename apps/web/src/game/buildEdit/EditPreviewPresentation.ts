@@ -61,7 +61,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig, structureCuboids, MAX_STRUCTURE_CUBOIDS } from "@buildshift/game-config";
+import { BUILD_GRID, getStructureConfig, structureCuboids, wallEdgeCenter, MAX_STRUCTURE_CUBOIDS } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -372,8 +372,14 @@ export class EditPreviewPresentation {
     );
     this.lastGeometry = geometry;
 
-    // Pose: anchor + cardinal rotation on the root node.
+    // Pose: anchor + cardinal rotation on the root node. Walls are edge
+    // pieces: their tile grid is centred on the tile edge they stand on.
     const world = gridToWorld(input.grid);
+    if (input.buildType === "wall") {
+      const edge = wallEdgeCenter(input.grid, input.rotation);
+      world.x = edge.x;
+      world.z = edge.z;
+    }
     this.root.position.copyFrom(world);
     this.root.rotation.y = rotationToYAxis(input.rotation);
     this.ensureEnabled();

@@ -20,8 +20,28 @@ export interface StructureGeometryInput {
 }
 
 /** Steps in a canonical ramp: 16 × 0.24 m rises (within the 0.34 m step-up)
- * over the two-cell (10.24 m) span, climbing exactly one build layer. */
+ * over ONE build tile (5.12 m, 0.32 m per step), climbing exactly one build
+ * layer. */
 export const RAMP_STEPS = 16;
+
+/** Thickness of each canonical ramp step slab: a thin walking surface, open
+ * underneath (never a solid column down to the ground). Slightly more than
+ * one step rise, so consecutive slabs overlap and the surface has no gaps. */
+export const RAMP_SLAB_THICKNESS = 0.3;
+
+/**
+ * The world-space centre of a wall's edge plane: walls are edge pieces. A
+ * wall anchored at tile `grid` with rotation `r` stands on that tile's edge
+ * r0 = −Z, r1 = +X, r2 = +Z, r3 = −X (the same edge two neighbouring tiles
+ * share — see `structureSlots`).
+ */
+export function wallEdgeCenter(grid: { x: number; y: number; z: number }, rotation: number): { x: number; z: number } {
+  const cs = BUILD_GRID.cellSize;
+  const r = ((rotation % 4) + 4) % 4;
+  const dx = r === 1 ? 0.5 : r === 3 ? -0.5 : 0;
+  const dz = r === 0 ? -0.5 : r === 2 ? 0.5 : 0;
+  return { x: (grid.x + dx) * cs, z: (grid.z + dz) * cs };
+}
 
 /** Stacked levels in a canonical cone: a 16-level stepped pyramid rising one
  * build layer, each level 0.24 m tall and narrower toward the apex. */
@@ -57,6 +77,8 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
     const tiles = editGrid?.kind === "wall" && editGrid.tiles.length === 9
       ? editGrid.tiles : Array<boolean>(9).fill(true);
     const alongX = rotation === 0 || rotation === 2;
+    // Edge piece: the panel stands on the tile edge, not through its middle.
+    const { x, z } = wallEdgeCenter(grid, rotation);
     if (tiles.every(Boolean)) {
       return [alongX
         ? box(x, y + lh / 2, z, cs / 2, lh / 2, cs * 0.075)
@@ -119,9 +141,10 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
     return result;
   }
 
-  // Ramp: RAMP_STEPS step columns along the two-cell axis, climbing one full
-  // layer. Rotations 0/2 run along X, 1/3 along Z; rotations 2/3 descend
-  // toward the axis' positive end, and `flipped` reverses the slope.
+  // Ramp: RAMP_STEPS thin step slabs across ONE tile, climbing one full
+  // layer (open underneath). Rotations 0/2 run along X, 1/3 along Z;
+  // rotations 2/3 descend toward the axis' positive end, and `flipped`
+  // reverses the slope.
   const variant = editGrid?.kind === "ramp" ? editGrid.variant : "full";
   const alongX = rotation === 0 || rotation === 2;
   const reverse = (rotation === 2 || rotation === 3) !== (variant === "flipped");
@@ -132,10 +155,11 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
   const leftSign = alongX ? ascent : -ascent;
   const side = variant === "half_left" ? 1 : variant === "half_right" ? -1 : 0;
   const turn = variant === "turn_left" ? -1 : variant === "turn_right" ? 1 : 0;
-  const stepLength = (2 * cs) / RAMP_STEPS;
+  const stepLength = cs / RAMP_STEPS;
   for (let i = 0; i < RAMP_STEPS; i++) {
     const fromLow = reverse ? RAMP_STEPS - 1 - i : i;
-    const height = lh * (fromLow + 1) / RAMP_STEPS;
+    const top = lh * (fromLow + 1) / RAMP_STEPS;
+    const bottom = Math.max(0, top - RAMP_SLAB_THICKNESS);
     const along = -cs / 2 + (i + 0.5) * stepLength;
     let lateral = 0, halfWidth = cs / 2;
     if (side !== 0) {
@@ -145,9 +169,11 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
       lateral = turn * (i / (RAMP_STEPS - 1)) * cs / 4;
       halfWidth = cs / 4;
     }
+    const cy = y + (top + bottom) / 2;
+    const hy = (top - bottom) / 2;
     result.push(alongX
-      ? box(x + along, y + height / 2, z + lateral, stepLength / 2, height / 2, halfWidth)
-      : box(x + lateral, y + height / 2, z + along, halfWidth, height / 2, stepLength / 2));
+      ? box(x + along, cy, z + lateral, stepLength / 2, hy, halfWidth)
+      : box(x + lateral, cy, z + along, halfWidth, hy, stepLength / 2));
   }
   return result;
 }
@@ -260,4 +286,23 @@ export function resolveStructureMovement<T extends StructureMovementPose>(
     else if (previous.z >= maxZ) out.z = maxZ;
   }
   return out as T;
+}
+
+/**
+ * The world-space bounding box of a structure's canonical (unedited)
+ * geometry — the targeting / camera-obstruction volume, so edge walls and
+ * thin one-tile ramps are bounded where they actually stand.
+ */
+export function structureBounds(input: Omit<StructureGeometryInput, "editGrid">): { min: [number, number, number]; max: [number, number, number] } {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  for (const { center, halfExtents } of structureCuboids(input)) {
+    const c = [center.x, center.y, center.z];
+    const h = [halfExtents.x, halfExtents.y, halfExtents.z];
+    for (let i = 0; i < 3; i++) {
+      min[i] = Math.min(min[i]!, c[i]! - h[i]!);
+      max[i] = Math.max(max[i]!, c[i]! + h[i]!);
+    }
+  }
+  return { min, max };
 }

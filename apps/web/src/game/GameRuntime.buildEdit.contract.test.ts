@@ -84,7 +84,7 @@ describe("GameRuntime build-edit wiring", () => {
     // HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
+      "this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
@@ -96,7 +96,7 @@ describe("GameRuntime build-edit wiring", () => {
     // routed edit-select edges.
     expect(block).toContain("camera.position");
     expect(block).toContain("this.currentAimDirection");
-    expect(block).toContain("this.playerController.getFeetPositionInto(this._feetPos)");
+    expect(block).toContain("const feet=this.buildFeetInto(this._feetPos)");
     expect(block).toContain("this.buildingSystem.store.getBuildingState()");
     expect(block).toContain("sessionId:this.networkClient.sessionId");
     expect(block).toContain("connected:this.isConnected");

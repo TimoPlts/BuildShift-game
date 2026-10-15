@@ -26,7 +26,7 @@ import {
   MAX_HEALTH,
   MAX_SHIELD,
   PLAYER_MOVEMENT,
-  structureCuboids,
+  structureCuboids, wallEdgeCenter,
 } from "@buildshift/game-config";
 import { BUILD_EVENTS, EVENTS } from "@buildshift/protocol";
 import {
@@ -246,14 +246,16 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
 
   it("crosses a low edited opening crouched and rejects standing until clear", () => {
     const p = player(A);
-    p.x = 0; p.y = 0; p.z = -1; p.yaw = 0;
+    // Walls are edge pieces: rotation 0 stands on the tile's −Z edge.
+    const PZ = wallEdgeCenter({ x: 0, y: 0, z: 0 }, 0).z;
+    p.x = 0; p.y = 0; p.z = PZ - 1; p.yaw = 0;
     const wall = structureCuboids({ buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
       editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, false, false, false] } });
     internal.pw.setStructureColliders("opening", wall);
     for (let sequence = 1; sequence <= 8; sequence++) move(a, sequence, { moveZ: 1 });
-    expect(p.z).toBeLessThan(-0.7);
+    expect(p.z).toBeLessThan(PZ - 0.7);
     for (let sequence = 9; sequence <= 20; sequence++) move(a, sequence, { moveZ: 1, crouch: true });
-    expect(p.z).toBeGreaterThan(-0.1);
+    expect(p.z).toBeGreaterThan(PZ - 0.1);
     move(a, 21, { crouch: false });
     expect(p.crouch).toBe(true);
     for (let sequence = 22; sequence <= 40; sequence++) move(a, sequence, { moveZ: 1, crouch: true });

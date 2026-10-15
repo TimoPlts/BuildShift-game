@@ -169,11 +169,11 @@ describe("rampCollisionCuboids (collision from canonical ramp edit state)", () =
     }
   });
 
-  it("the full ramp spans two cells and rises one full layer", () => {
+  it("the full ramp spans exactly one tile and rises one full layer", () => {
     const cuboids = rampCollisionCuboids(grid, 0, "full");
     expect(cuboids).toHaveLength(RAMP_STEPS);
     expect(Math.min(...cuboids.map((c) => c.center.x - c.halfExtents.x))).toBeCloseTo(-cs / 2);
-    expect(Math.max(...cuboids.map((c) => c.center.x + c.halfExtents.x))).toBeCloseTo(1.5 * cs);
+    expect(Math.max(...cuboids.map((c) => c.center.x + c.halfExtents.x))).toBeCloseTo(cs / 2);
     expect(top(cuboids)).toBeCloseTo(lh);
   });
 

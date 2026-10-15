@@ -108,11 +108,11 @@ describe("aimEditTile — wall 3×3 mapping", () => {
   });
 
   it("unrotates the hit into the piece frame for a rotated wall", () => {
-    // Rotation 1 turns the wall's face toward world −X. A ray from the west
-    // hits the face centre → still the centre tile.
+    // Rotation 1 stands on the tile's +X edge (x = 2.56), facing world ±X.
+    // A ray from the west hits the face centre → still the centre tile.
     const aim = aimEditTile({
       structure: wall({ rotation: 1 }),
-      aimOrigin: { x: -10, y: 2, z: -5.12 },
+      aimOrigin: { x: -5, y: 2, z: -5.12 },
       aimDirection: { x: 1, y: 0, z: 0 },
       maxRange: RANGE,
     });
@@ -121,7 +121,7 @@ describe("aimEditTile — wall 3×3 mapping", () => {
     // Top-left of the rotated face (world −Z edge, high) → tile 0.
     const topLeft = aimEditTile({
       structure: wall({ rotation: 1 }),
-      aimOrigin: { x: -10, y: 3.5, z: -7 },
+      aimOrigin: { x: -5, y: 3.5, z: -7 },
       aimDirection: { x: 1, y: 0, z: 0 },
       maxRange: RANGE,
     });

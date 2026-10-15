@@ -59,7 +59,8 @@ class FakeTarget implements InputEventTarget {
 function cellCamX(i: number): number {
   // Aim straight down from y=5 hits the ground at (camX, 0, 0); the cell
   // centre of grid column `i` is `i * cellSize + cellSize / 2`.
-  return i * BUILD_GRID.cellSize + BUILD_GRID.cellSize / 2;
+  // Build tiles are centred on grid × cellSize (the canonical geometry).
+  return i * BUILD_GRID.cellSize;
 }
 
 function createFixture() {

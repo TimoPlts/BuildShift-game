@@ -3,7 +3,7 @@
  *
  * The client preview and the server validator share the canonical placement
  * rules from `@buildshift/game-config` (`normalizePlacementRotation`,
- * `isValidPlacementRotation`, `structureFootprintCells`,
+ * `isValidPlacementRotation`, `structureSlots`,
  * `isWithinBuildBounds`). These tests pin the server half:
  *
  *  - walls and ramps place at every quarter-turn rotation;
@@ -22,7 +22,7 @@ import {
   isWithinBuildBounds,
   isWithinPlacementRange,
   normalizePlacementRotation,
-  structureFootprintCells,
+  structureSlots,
 } from "@buildshift/game-config";
 import { TwoPlayerMovementRoom } from "./TwoPlayerMovementRoom.js";
 
@@ -88,14 +88,14 @@ describe("rotated build placement (shared canonical rotation / bounds rules)", (
     expect(r.energyDelta).toBe(-getStructureConfig("wall")!.cost);
   });
 
-  it.each([0, 1, 2, 3])("ramp places at rotation %i and occupies its rotated footprint", async (rotation) => {
+  it.each([0, 1, 2, 3])("ramp places at rotation %i and occupies exactly its one tile's ramp slot", async (rotation) => {
     const h = home();
     const grid = { x: Math.min(h.x, BUILD_BOUNDS.maxX - 1), y: 0, z: Math.min(h.z, BUILD_BOUNDS.maxZ - 1) };
     const r = await place("ramp", grid, rotation);
     expect(r.rejection).toBeUndefined();
     expect(r.structure?.rotation).toBe(rotation);
-    const cells = structureFootprintCells("ramp", grid, rotation).map(c => `${c.x},${c.y},${c.z}`).sort();
-    expect([...internal.occ].sort()).toEqual(cells);
+    expect([...internal.occ]).toEqual(structureSlots("ramp", grid, rotation));
+    expect(structureSlots("ramp", grid, rotation)).toEqual([`ramp:${grid.x},${grid.y},${grid.z}`]);
   });
 
   it.each(["floor", "cone"])("%s places after a wall/ramp rotation with the normalized rotation", async (type) => {
@@ -121,7 +121,7 @@ describe("rotated build placement (shared canonical rotation / bounds rules)", (
   it("server bounds verdicts equal the shared rule the client preview uses", async () => {
     const h = home();
     const candidates = [
-      { type: "ramp", grid: { x: BUILD_BOUNDS.maxX, y: 0, z: h.z }, rotation: 0 },
+      { type: "ramp", grid: { x: BUILD_BOUNDS.maxX + 1, y: 0, z: h.z }, rotation: 0 },
       { type: "ramp", grid: { x: BUILD_BOUNDS.maxX, y: 0, z: Math.min(h.z, BUILD_BOUNDS.maxZ - 1) }, rotation: 1 },
       { type: "wall", grid: { x: BUILD_BOUNDS.maxX + 1, y: 0, z: h.z }, rotation: 0 },
       { type: "floor", grid: { x: h.x, y: BUILD_BOUNDS.maxLayer + 1, z: h.z }, rotation: 0 },

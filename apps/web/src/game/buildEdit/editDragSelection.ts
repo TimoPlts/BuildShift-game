@@ -8,8 +8,9 @@
  * where `floor(u)` is the tile column and `floor(v)` the tile row of the
  * canonical edit model (`structureCuboids` in `@buildshift/game-config`):
  *
- *  - wall 3×3 — the panel's mid-plane; columns run along the wall's axis in
- *    the canonical order (mirrored for rotations 2/3), row 0 is the top row;
+ *  - wall 3×3 — the panel's mid-plane on its tile edge; columns run along
+ *    the wall's axis in the canonical order (mirrored for rotations 2/3),
+ *    row 0 is the top row;
  *  - floor 2×2 — the slab's mid-plane; column = world X half, row = world Z
  *    half (floors are rotation-invariant);
  *  - cone 2×2 — the horizontal plane at half the pyramid's height, same
@@ -32,7 +33,7 @@
  * pressed decides the drag's meaning for the whole drag (select = mark for
  * removal, or deselect = restore), so revisiting a tile never toggles it back.
  */
-import { BUILD_GRID, structureCuboids } from "@buildshift/game-config";
+import { BUILD_GRID, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
 import type { BuildType, GridPosition, GridRotation } from "@buildshift/protocol";
 import { rayAabbDistance, structureAabb, type Vec3Like } from "./structureSelection";
 
@@ -123,8 +124,11 @@ export function sampleEditSurface(
   if (piece.buildType === "wall") {
     const alongX = piece.rotation === 0 || piece.rotation === 2;
     const forward = piece.rotation === 0 || piece.rotation === 1;
-    // The panel's mid-plane is the wall's thin axis through the anchor.
-    t = alongX ? planeT(origin.z, dir.z, az) : planeT(origin.x, dir.x, ax);
+    // The panel's mid-plane: walls are edge pieces, so the plane is the
+    // tile edge the wall stands on (its columns still run along that edge
+    // from the tile's centre line).
+    const edge = wallEdgeCenter(piece.grid, piece.rotation);
+    t = alongX ? planeT(origin.z, dir.z, edge.z) : planeT(origin.x, dir.x, edge.x);
     const toUv = (tt: number) => {
       const along = alongX ? origin.x + dir.x * tt - ax : origin.z + dir.z * tt - az;
       const height = origin.y + dir.y * tt - ay;

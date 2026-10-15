@@ -39,7 +39,7 @@ describe("gridSnap", () => {
   it("getFootprint all types", () => {
     expect(getFootprint("wall")).toEqual([1, 1, 1]);
     expect(getFootprint("floor")).toEqual([1, 1, 1]);
-    expect(getFootprint("ramp")).toEqual([2, 1, 1]);
+    expect(getFootprint("ramp")).toEqual([1, 1, 1]); // one-tile ramp
     expect(getFootprint("cone")).toEqual([1, 1, 1]);
   });
   it("gridKey", () => {
@@ -50,7 +50,7 @@ describe("gridSnap", () => {
   });
   it("floor/ramp/cone cells", () => {
     expect(footprintCells("floor", { x: 1, y: 0, z: 2 })).toHaveLength(1);
-    expect(footprintCells("ramp", { x: 0, y: 0, z: 0 })).toHaveLength(2);
+    expect(footprintCells("ramp", { x: 0, y: 0, z: 0 })).toHaveLength(1);
     expect(footprintCells("cone", { x: 0, y: 0, z: 0 })).toHaveLength(1);
   });
   it("overlap same anchor", () => {
@@ -107,14 +107,14 @@ describe("placementPreview", () => {
     }));
     expect(p.reason).toBe("overlap");
   });
-  it("floor stacked on a wall reports overlap via the stacked cell", () => {
-    // Candidate aims straight down at grid (0,0,0); the wall below it
-    // occupies (0,0,0) + (0,1,0). A candidate FLOOR at (0,0,0) shares (0,0,0).
+  it("a floor and a wall on the same tile occupy different slots (no overlap)", () => {
+    // Walls are edge pieces: a floor in the wall's tile is a separate slot.
     const p = computePlacementPreview(mi({
       buildType: "floor",
       occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }],
     }));
-    expect(p.reason).toBe("overlap");
+    expect(p.valid).toBe(true);
+    expect(computePlacementPreview(mi({ buildType: "floor", occupied: [{ buildType: "floor", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");
   });
   it("valid with many disjoint occupied structures", () => {
     // 40 floors in a row away from the candidate at (0,0,0).
@@ -124,11 +124,12 @@ describe("placementPreview", () => {
     }));
     expect(computePlacementPreview(mi({ occupied })).valid).toBe(true);
   });
-  it("wall is valid at every quarter-turn rotation (rotationCount 4)", () => {
+  it("wall snaps to the aimed edge whatever rotation is selected", () => {
     for (const rotation of [0, 1, 2, 3] as const) {
-      const p = computePlacementPreview(mi({ buildType: "wall", rotation }));
+      // Aim straight down 2 m toward +X from the tile centre → the +X edge.
+      const p = computePlacementPreview(mi({ buildType: "wall", rotation, aimOrigin: { x: 2, y: 5, z: 0.1 } }));
       expect(p.valid).toBe(true);
-      expect(p.rotation).toBe(rotation);
+      expect(p.rotation).toBe(1);
     }
   });
   it("ABSENT_PREVIEW frozen", () => {

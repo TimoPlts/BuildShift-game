@@ -1,5 +1,5 @@
 import { schema, t } from "@colyseus/schema";
-import { BUILD_GRID, isWithinBuildBounds, rotatedFootprintExtents, structureFootprintCells, type StructureConfig } from "@buildshift/game-config";
+import { BUILD_GRID, isWithinBuildBounds, rotatedFootprintExtents, structureSlots, type StructureConfig } from "@buildshift/game-config";
 
 /**
  * Server-side authoritative building state (Colyseus wire schema).
@@ -135,13 +135,14 @@ export function ib(g: { x: number; y: number; z: number }, c: StructureConfig, r
 }
 
 /**
- * The set of grid-cell keys occupied by a structure anchored at `g` (the
- * shared {@link structureFootprintCells} rule). Used for authoritative
- * overlap checks and for freeing the occupied cells when a structure is
- * destroyed.
+ * The canonical build-slot keys occupied by a structure anchored at `g` (the
+ * shared {@link structureSlots} rule: one floor / ramp / cone slot per tile,
+ * walls on canonical tile edges). Used for authoritative overlap checks
+ * (only the same slot conflicts) and for freeing the slots when a structure
+ * is destroyed or the round resets.
  */
 export function oc(g: { x: number; y: number; z: number }, c: StructureConfig, rot: number): Set<string> {
-  return new Set(structureFootprintCells(c.buildType, g, rot).map(cell => cell.x + "," + cell.y + "," + cell.z));
+  return new Set(structureSlots(c.buildType, g, rot));
 }
 
 /**

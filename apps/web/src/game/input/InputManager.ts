@@ -1,6 +1,36 @@
 import type { LocalMovementInput } from "@buildshift/simulation";
 import { ActionMap, mouseBindingCode, type GameAction } from "./actionBindings";
 
+/**
+ * Pointer-lock look-input guard. A single mousemove whose movement is
+ * physically impossible — at least {@link LOOK_SPIKE_MIN_PX} pixels on one
+ * axis arriving faster than {@link LOOK_SPIKE_MAX_PX_PER_MS} since the previous
+ * look event (14+ full turns per second at the default sensitivity) — is a
+ * corrupt sample, not player motion: browsers emit such spikes under pointer
+ * lock (accelerated-movement spikes, absolute pointing devices / remote
+ * desktops warping the cursor, the lock-acquisition jump). It is dropped and
+ * counted. Real flicks and low-frame-rate batches (large deltas spread over
+ * tens of milliseconds) are always applied in full — no smoothing.
+ */
+export const LOOK_SPIKE_MIN_PX = 300;
+export const LOOK_SPIKE_MAX_PX_PER_MS = 40;
+
+/** Look-input diagnostics (shown in the developer overlay). */
+export interface LookInputStats {
+  /** Look events applied. */
+  events: number;
+  /** Largest single-event |movement| applied (pixels). */
+  maxEventPx: number;
+  /** Corrupt single-event spikes dropped. */
+  rejectedSpikes: number;
+  /** Largest dropped spike (pixels), 0 when none. */
+  maxRejectedPx: number;
+  /** Pointer-lock acquisitions. */
+  lockAcquisitions: number;
+  /** Whether the browser granted raw (unadjusted) pointer-lock movement. */
+  unadjustedMovement: boolean;
+}
+
 /** Accumulated pointer-lock mouse movement in pixels since the last frame. */
 export interface LookDelta {
   x: number;
@@ -62,6 +92,15 @@ export class InputManager {
   private weaponSlot1Pressed = false;
   private weaponSlot2Pressed = false;
   private reloadPressed = false;
+  private lastLookEventMs: number | null = null;
+  private readonly lookStats: LookInputStats = {
+    events: 0,
+    maxEventPx: 0,
+    rejectedSpikes: 0,
+    maxRejectedPx: 0,
+    lockAcquisitions: 0,
+    unadjustedMovement: false,
+  };
 
   /** The shared gameplay action map (also handed to the build/edit inputs). */
   public readonly actions: ActionMap;
@@ -120,6 +159,11 @@ export class InputManager {
    */
   public isCrouchHeld(): boolean {
     return this.isActionHeld("crouch") && this.pointerLocked;
+  }
+
+  /** Look-input diagnostics (a snapshot copy). */
+  public getLookStats(): LookInputStats {
+    return { ...this.lookStats };
   }
 
   public consumeLookDelta(): LookDelta {
@@ -209,13 +253,29 @@ export class InputManager {
   private readonly requestPointerLock = (): void => {
     if (this.disposed || this.pointerLocked) return;
     if (typeof this.canvas.requestPointerLock !== "function") return;
+    // Prefer raw, unaccelerated relative movement (no OS acceleration path,
+    // no absolute-position warping); fall back to the default lock where the
+    // option is unsupported.
+    const plain = (): void => {
+      try {
+        const request = this.canvas.requestPointerLock();
+        if (request && typeof (request as Promise<void>).catch === "function") {
+          (request as Promise<void>).catch(() => undefined);
+        }
+      } catch {
+        // Older engines: nothing to do.
+      }
+    };
     try {
-      const request = this.canvas.requestPointerLock();
-      if (request && typeof (request as Promise<void>).catch === "function") {
-        (request as Promise<void>).catch(() => undefined);
+      const request = (this.canvas.requestPointerLock as (options?: { unadjustedMovement?: boolean }) => unknown)({ unadjustedMovement: true });
+      if (request && typeof (request as Promise<void>).then === "function") {
+        (request as Promise<void>).then(
+          () => { this.lookStats.unadjustedMovement = true; },
+          () => { if (!this.disposed && !this.pointerLocked) plain(); },
+        );
       }
     } catch {
-      // Older engines: nothing to do.
+      plain();
     }
   };
 
@@ -253,8 +313,21 @@ export class InputManager {
 
   private readonly handleMouseMove = (event: MouseEvent): void => {
     if (!this.pointerLocked) return;
-    this.lookDelta.x += event.movementX;
-    this.lookDelta.y += event.movementY;
+    const dx = Number.isFinite(event.movementX) ? event.movementX : 0;
+    const dy = Number.isFinite(event.movementY) ? event.movementY : 0;
+    const size = Math.max(Math.abs(dx), Math.abs(dy));
+    const now = typeof event.timeStamp === "number" && event.timeStamp > 0 ? event.timeStamp : null;
+    const elapsed = now !== null && this.lastLookEventMs !== null ? now - this.lastLookEventMs : null;
+    if (now !== null) this.lastLookEventMs = now;
+    if (size >= LOOK_SPIKE_MIN_PX && elapsed !== null && size / Math.max(elapsed, 1) > LOOK_SPIKE_MAX_PX_PER_MS) {
+      this.lookStats.rejectedSpikes += 1;
+      this.lookStats.maxRejectedPx = Math.max(this.lookStats.maxRejectedPx, size);
+      return;
+    }
+    this.lookStats.events += 1;
+    if (size > this.lookStats.maxEventPx) this.lookStats.maxEventPx = size;
+    this.lookDelta.x += dx;
+    this.lookDelta.y += dy;
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
@@ -269,7 +342,14 @@ export class InputManager {
   };
 
   private readonly handlePointerLockChange = (): void => {
+    const wasLocked = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.canvas;
+    if (this.pointerLocked && !wasLocked) {
+      this.lookStats.lockAcquisitions += 1;
+      // The first locked event is timed against the lock itself, so a
+      // lock-acquisition jump is judged by the same physical-rate rule.
+      this.lastLookEventMs = typeof performance !== "undefined" ? performance.now() : null;
+    }
     if (!this.pointerLocked) {
       this.clearInput();
     }

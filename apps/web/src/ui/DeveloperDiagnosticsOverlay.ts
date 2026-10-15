@@ -67,6 +67,7 @@ export interface DeveloperDiagnosticsState {
   mSnapGapMax: number | null;
   mPending: number | null;
   mCorrHz: number | null;
+  look: string | null;
   mCorrMax: number | null;
 }
 
@@ -111,6 +112,7 @@ export class DeveloperDiagnosticsOverlay {
     mSnapGapMax: null,
     mPending: null,
     mCorrHz: null,
+    look: null,
     mCorrMax: null,
   };
 
@@ -194,6 +196,10 @@ export class DeveloperDiagnosticsOverlay {
     this.state.mPending = m ? m.pendingInputs : null;
     this.state.mCorrHz = m ? m.correctionsPerSec : null;
     this.state.mCorrMax = m ? m.correctionMaxMeters : null;
+    const l = snapshot.look ?? null;
+    this.state.look = l
+      ? `ev ${l.events} max ${l.maxEventPx}px spikes ${l.rejectedSpikes}${l.rejectedSpikes > 0 ? ` (max ${l.maxRejectedPx}px)` : ""} locks ${l.lockAcquisitions} raw ${l.unadjustedMovement ? "on" : "off"}`
+      : null;
   }
 
   public dispose(): void {
@@ -273,6 +279,9 @@ export class DeveloperDiagnosticsOverlay {
       lines.push(`Mov:   frame ${s.mFrameAvg.toFixed(1)}ms (max ${s.mFrameMax!.toFixed(1)})  sim ${s.mSimHz.toFixed(1)}Hz`);
       lines.push(`Net:   snap ${s.mSnapHz.toFixed(1)}Hz (gap ${s.mSnapGapMax.toFixed(0)}ms)  pend ${s.mPending}`);
       lines.push(`CorrHz:${s.mCorrHz.toFixed(1)}Hz (max ${s.mCorrMax.toFixed(4)}m)`);
+    }
+    if (s.look !== null) {
+      lines.push(`Look:  ${s.look}`);
     }
 
     overlay.textContent = lines.join("\n");

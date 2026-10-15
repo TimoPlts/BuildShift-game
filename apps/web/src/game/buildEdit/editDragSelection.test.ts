@@ -81,13 +81,15 @@ describe("sampleEditSurface agrees with the canonical edit geometry", () => {
     }
   });
 
-  it("wall aimed from above (entering its cell volume, not the panel): the aim still lands on a tile", () => {
+  it("wall aimed steeply from above onto its top lands on a top-row tile", () => {
     const piece = { buildType: "wall" as const, grid: { x: 0, y: 0, z: 0 }, rotation: 0 as const };
-    // Steeply down onto the wall cell's top, 1.5 m in front of the panel: the
-    // panel plane is only reached below ground.
+    // Steeply down onto the top of the −Z-edge panel (z = −2.56), entering
+    // its top face just on the +Z side of the panel's mid-plane.
     const dir = { x: 0, y: -0.94, z: -0.34 };
     const n = Math.hypot(dir.x, dir.y, dir.z);
-    const sample = sampleEditSurface(piece, { x: 1.2, y: 8, z: 3.9 }, { x: dir.x / n, y: dir.y / n, z: dir.z / n }, RANGE) as EditSurfaceSample;
+    const zAtTop = -2.4;
+    const origin = { x: 1.2, y: 8, z: zAtTop + (8 - 3.84) * (0.34 / 0.94) };
+    const sample = sampleEditSurface(piece, origin, { x: dir.x / n, y: dir.y / n, z: dir.z / n }, RANGE) as EditSurfaceSample;
     expect(sample).not.toBeNull();
     expect(sample.inside).toBe(true);
     expect(sampleTile(sample, { cols: 3, rows: 3 })).toBe(2); // top row, +X column

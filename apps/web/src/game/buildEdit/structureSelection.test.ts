@@ -62,7 +62,9 @@ describe("selectTargetStructure", () => {
     });
     expect(target).not.toBeNull();
     expect(target?.structureId).toBe("wall1");
-    expect(target?.distance).toBeCloseTo(2.56, 5);
+    // Walls are edge pieces: rotation 0 stands on the tile's −Z edge (z = −7.68),
+    // so the panel's near face is 7.68 − 0.384 away.
+    expect(target?.distance).toBeCloseTo(7.68 - 0.384, 5);
   });
 
   it("skips structures owned by other players", () => {
@@ -132,7 +134,7 @@ describe("selectTargetStructure", () => {
       maxRange: RANGE,
       building: building([
         structure("cone1", "cone", { x: 0, y: 0, z: -1 }, "me"),
-        structure("wall1", "wall", { x: 0, y: 0, z: -2 }, "me"),
+        structure("wall1", "wall", { x: 0, y: 0, z: -2 }, "me", 2), // +Z edge of tile z = −2 (z = −7.68)
       ]),
       ownerId: "me",
       isEligible: (s) => s.buildType !== "cone",
@@ -141,11 +143,10 @@ describe("selectTargetStructure", () => {
   });
 
   it("selects an owned floor (a valid edit target) on the aim ray", () => {
-    // Floor at grid (0,0,-1): footprint [1,1,1], layerHeight ≈ 3.84 → AABB
-    // ctr=(0, 1.92, -5.12), he=(2.56, 1.92, 2.56) → y ∈ [0,3.84], z ∈ [-7.68,-2.56].
-    // A ray at y=0.75, z=0 going -Z intersects the y slab [0,3.84] → hit.
+    // Floor at grid (0,0,-1): its canonical slab spans y ∈ [0, 0.15],
+    // z ∈ [-7.68, -2.56]; a ray at slab height going -Z hits it.
     const target = selectTargetStructure({
-      aimOrigin: { x: 0, y: 0.75, z: 0 },
+      aimOrigin: { x: 0, y: 0.1, z: 0 },
       aimDirection: FORWARD,
       maxRange: RANGE,
       building: building([structure("floor1", "floor", { x: 0, y: 0, z: -1 }, "me")]),

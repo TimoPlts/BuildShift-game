@@ -23,6 +23,12 @@ import {
 } from "./TwoPlayerMovementRoom.js";
 import { StructureStateSchema, StructureGridSchema, oc } from "../state/buildingState.js";
 
+/**
+ * Walls are edge pieces; rotation 3 stands on tile (0,0,0)'s −X edge
+ * (x = −2.56), square in the shooter's +X line of fire at z = 0.
+ */
+const WALL_EDGE = 3;
+
 describe("competitive wall-take and replacement (canonical authoritative path)", () => {
   let room: TwoPlayerMovementRoom;
   let internal: any;
@@ -59,11 +65,11 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     const g = new StructureGridSchema();
     g.x = gx; g.y = gy; g.z = gz;
     s.grid = g;
-    s.rotation = 0;
+    s.rotation = WALL_EDGE;
     internal.bld.structures.set(id, s);
     // Register the occupancy cells.
     const cfg = getStructureConfig("wall")!;
-    for (const cell of oc({ x: gx, y: gy, z: gz }, cfg, 0)) internal.occ.add(cell);
+    for (const cell of oc({ x: gx, y: gy, z: gz }, cfg, WALL_EDGE)) internal.occ.add(cell);
     return s;
   };
 
@@ -103,7 +109,7 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
   it("frees occupancy cells when a wall is destroyed by fire", () => {
     makeWall("w1", "b", 0, 0, 0);
     const cfg = getStructureConfig("wall")!;
-    const cells = oc({ x: 0, y: 0, z: 0 }, cfg, 0);
+    const cells = oc({ x: 0, y: 0, z: 0 }, cfg, WALL_EDGE);
     // Confirm the cell is occupied before destruction.
     for (const cell of cells) expect(internal.occ.has(cell)).toBe(true);
 
@@ -140,12 +146,12 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // A's placement (processed first).
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 500, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 500, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // B's placement (processed second — should be rejected).
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 501, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 501, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     // Exactly one structure now exists at cell (0,0,0).
@@ -184,12 +190,12 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // B's request processed first.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 600, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 600, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     // A's request processed second.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 601, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 601, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // B won the race.
@@ -219,14 +225,14 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // First packet — accepted.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 700, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 700, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // Second packet (duplicate/retry of the same logical action).
     // The occupancy check catches this because the first placement already
     // occupies the cell.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 700, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 700, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // Exactly one structure exists.
@@ -253,7 +259,7 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // First placement.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 800, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 800, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     expect(internal.state.players.get("a")!.energy).toBe(ea - wallCost);
 
@@ -262,7 +268,7 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // Second identical packet — past rate limit, but the cell is still occupied.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 800, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 800, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // Still exactly one structure.
@@ -293,13 +299,13 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // Three rapid-fire attempts (A, B, A again) on the same cell.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 900, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 900, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 901, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 901, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 902, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 902, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // Exactly one structure at the cell.
@@ -313,7 +319,7 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // Occupancy has exactly one entry for this cell.
     const cfg = getStructureConfig("wall")!;
-    const cells = oc({ x: 0, y: 0, z: 0 }, cfg, 0);
+    const cells = oc({ x: 0, y: 0, z: 0 }, cfg, WALL_EDGE);
     for (const cell of cells) {
       // The cell key appears in occ exactly once (it's a Set).
       expect(internal.occ.has(cell)).toBe(true);
@@ -333,10 +339,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // A wins the race.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1000, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1000, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1001, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1001, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     const replacement = [...internal.bld.structures.values()].find(
@@ -376,10 +382,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // B wins the race.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1100, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1100, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1101, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1101, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     const replacement = [...internal.bld.structures.values()].find(
@@ -418,10 +424,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // A wins, B loses.
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1200, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1200, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1201, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1201, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     expect(internal.state.players.get("a")!.energy).toBe(ea - wallCost);
@@ -441,10 +447,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
 
     // Send the same packet twice (rate-limited second time).
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1300, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1300, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1300, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1300, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
 
     // Energy charged exactly once.
@@ -466,10 +472,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     clearRateLimits();
 
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1400, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1400, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1401, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1401, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     const placedEvents = broadcastCalls.filter(
@@ -493,10 +499,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     clearRateLimits();
 
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1500, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1500, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, a);
     await send(BUILD_EVENTS.PLACEMENT_REQUEST, {
-      sequence: 1501, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+      sequence: 1501, buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: WALL_EDGE,
     }, b);
 
     // B received the targeted rejection.

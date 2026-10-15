@@ -28,7 +28,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import {
   ARENA_COLLIDERS, BUILD_GRID, BUILD_BOUNDS, BUILD_RANGE, VERTICAL_MOVEMENT,
-  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, getStructureConfig, structureCuboids, type GeometryEditState,
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, getStructureConfig, structureCuboids, structureSlots, wallEdgeCenter, type GeometryEditState,
 } from "@buildshift/game-config";
 import { createServer, startServer, shutdownServer } from "../../../game-server/src/server.ts";
 import { TwoPlayerMovementRoom } from "../../../game-server/src/rooms/TwoPlayerMovementRoom.ts";
@@ -162,7 +162,7 @@ function auditServer(room: AnyRoom): ServerAudit {
     if (!cfg) { violations.push(`structure ${key} unknown type ${s.buildType}`); continue; }
     for (const cell of oc(s.grid, cfg, s.rotation)) {
       const prev = expectedOcc.get(cell);
-      if (prev) violations.push(`cell ${cell} occupied by both ${prev} and ${key}`);
+      if (prev) violations.push(`slot ${cell} occupied by both ${prev} and ${key}`);
       expectedOcc.set(cell, key);
     }
     const want = geometryOf(s);
@@ -178,8 +178,8 @@ function auditServer(room: AnyRoom): ServerAudit {
     }
   }
   const occ: Set<string> = room.occ;
-  for (const cell of occ) if (!expectedOcc.has(cell)) violations.push(`stale occupied cell ${cell}`);
-  for (const cell of expectedOcc.keys()) if (!occ.has(cell)) violations.push(`missing occupied cell ${cell}`);
+  for (const cell of occ) if (!expectedOcc.has(cell)) violations.push(`stale occupied slot ${cell}`);
+  for (const cell of expectedOcc.keys()) if (!occ.has(cell)) violations.push(`missing occupied slot ${cell}`);
   const pw = room.pw;
   const registryIds: string[] = pw ? [...pw.structureCuboids.keys()] : [];
   const bodyIds: string[] = pw ? [...pw.structures.keys()] : [];
@@ -501,14 +501,20 @@ const inRange = (room: AnyRoom, p: Player, g: Grid, margin = 0.6) => {
   const s = room.state.players.get(p.sid), a = anchor(g);
   return Math.hypot(s.x - a.x, s.y - a.y, s.z - a.z) <= BUILD_RANGE.maxPlacementDistance - margin;
 };
+/**
+ * The tiles ("x,y,z") a piece physically touches: its own tile, plus — for a
+ * wall, which stands on a tile edge — the neighbouring tile across that edge.
+ * Used for the harness's reserved lanes (occupancy itself is per slot).
+ */
+function tilesOf(buildType: string, g: Grid, rotation: number): string[] {
+  const own = `${g.x},${g.y},${g.z}`;
+  if (buildType !== "wall") return [own];
+  const [dx, dz] = ([[0, -1], [1, 0], [0, 1], [-1, 0]] as const)[rotation & 3]!;
+  return [own, `${g.x + dx},${g.y},${g.z + dz}`];
+}
 function freeFor(room: AnyRoom, buildType: string, g: Grid, rotation: number) {
-  const cfg = getStructureConfig(buildType)!;
-  for (const cell of oc(g, cfg, rotation)) {
-    const [x, y, z] = cell.split(",").map(Number) as [number, number, number];
-    if (x < BUILD_BOUNDS.minX || x > BUILD_BOUNDS.maxX || z < BUILD_BOUNDS.minZ || z > BUILD_BOUNDS.maxZ || y < BUILD_BOUNDS.minLayer || y > BUILD_BOUNDS.maxLayer) return false;
-    if (room.occ.has(cell)) return false;
-  }
-  return true;
+  if (g.x < BUILD_BOUNDS.minX || g.x > BUILD_BOUNDS.maxX || g.z < BUILD_BOUNDS.minZ || g.z > BUILD_BOUNDS.maxZ || g.y < BUILD_BOUNDS.minLayer || g.y > BUILD_BOUNDS.maxLayer) return false;
+  return structureSlots(buildType, g, rotation).every(slot => !room.occ.has(slot));
 }
 const cellOf = (x: number, z: number) => ({ x: Math.round(x / CS), z: Math.round(z / CS) });
 
@@ -524,15 +530,17 @@ function corridor(room: AnyRoom, A: Player, B: Player) {
 
 /**
  * Movement: cross the cone (W), then come back over it (crouched S) straight
- * onto a ramp that continues up to a next-layer floor, walk off the floor's
- * far edge (drop), and step back under it.
+ * onto a one-tile ramp that reaches a next-layer floor, continue onto an
+ * adjacent air floor, walk off its far edge (drop), and step back under it.
  */
 async function movementPhase(room: AnyRoom, p: Player) {
   const s = p.sign;
-  for (const cell of [`${s},0,-1`, `${s},0,0`, `${s},0,1`, `${s},1,2`]) {
-    if (room.occ.has(cell)) {
-      const owner = [...room.bld.structures.values()].find((st: any) => [...oc(st.grid, getStructureConfig(st.buildType)!, st.rotation)].includes(cell));
-      fail(`${p.name} movement lane cell ${cell} already occupied by ${owner?.buildType} ${owner?.structureId} @${JSON.stringify(owner?.grid)} r${owner?.rotation}`);
+  const lanePieces: [string, Grid, number][] = [["cone", { x: s, y: 0, z: -1 }, 0], ["ramp", { x: s, y: 0, z: 0 }, 1], ["floor", { x: s, y: 1, z: 1 }, 0], ["floor", { x: s, y: 1, z: 2 }, 0]];
+  for (const [type, g, rot] of lanePieces) {
+    for (const slot of structureSlots(type, g, rot)) {
+      if (!room.occ.has(slot)) continue;
+      const owner = [...room.bld.structures.values()].find((st: any) => [...oc(st.grid, getStructureConfig(st.buildType)!, st.rotation)].includes(slot));
+      fail(`${p.name} movement lane slot ${slot} already occupied by ${owner?.buildType} ${owner?.structureId} @${JSON.stringify(owner?.grid)} r${owner?.rotation}`);
     }
   }
   await setLook(p, 0, 0);
@@ -543,8 +551,8 @@ async function movementPhase(room: AnyRoom, p: Player) {
   check(cone.accepted, `${p.name} movement cone placement rejected (${cone.reason})`);
   let ramp: { accepted: boolean; reason: string | null } = { accepted: false, reason: "not placed" };
   const over = await trackMaxY(room, p, async () => {
-    // Onto the cone's first steps (clear of the ramp footprint), then place
-    // the ramp (rotation 1 rises toward +Z) where the cone's +Z side ends.
+    // Onto the cone's first steps (clear of the ramp tile), then place the
+    // one-tile ramp (rotation 1 rises toward +Z) on the tile after the cone.
     await holdUntil(room, p, "KeyW", "p.z <= -3.0", {});
     ramp = await place(room, p, "ramp", { x: s, y: 0, z: 0 }, 1);
     await holdUntil(room, p, "KeyW", "p.z <= -10.4", {}, { jumpEveryMs: 900 });
@@ -557,8 +565,12 @@ async function movementPhase(room: AnyRoom, p: Player) {
   x();
   check(back.maxY >= 3.5, `${p.name} crouched cone return peak ${back.maxY.toFixed(2)} < 3.5`);
   await settle(room, p);
-  const floor = await place(room, p, "floor", { x: s, y: 1, z: 2 }, 0);
-  check(floor.accepted, `${p.name} next-layer floor placement rejected (${floor.reason})`);
+  // The floor at the ramp's top (the next tile, next layer), then an adjacent air floor.
+  for (const z of [1, 2]) {
+    const floor = await place(room, p, "floor", { x: s, y: 1, z }, 0);
+    check(floor.accepted, `${p.name} next-layer floor (z ${z}) placement rejected (${floor.reason})`);
+    await sleep(340);
+  }
   const climb = await trackMaxY(room, p, () => holdUntil(room, p, "KeyS", "p.z >= 10.3", {}));
   await settle(room, p);
   const top = { y: room.state.players.get(p.sid).y as number };
@@ -595,7 +607,7 @@ async function buildBurst(room: AnyRoom, p: Player, reserved: Set<string>, targe
     if (mine.length >= target) break;
     const g = candidates.find(g => {
       if (!inRange(room, p, g) || !freeFor(room, item.type, g, item.rot)) return false;
-      const cells = [...oc(g, getStructureConfig(item.type)!, item.rot)];
+      const cells = tilesOf(item.type, g, item.rot);
       if (cells.some(c => reserved.has(c))) return false;
       if (g.y === 0 && cells.some(c => c === `${own.x},0,${own.z}`)) return false; // never box the builder in at ground level
       return true;
@@ -639,14 +651,15 @@ async function realInputBuild(room: AnyRoom, p: Player) {
   // From beyond the floor's far edge (z ≈ 13.4) look diagonally back into the
   // outer build column (A: +X/−Z, B: −X/−Z): the aimed cells are (±2, 0, 1..2),
   // clear of both movement lanes and of the line between the players.
-  await setLook(p, p.sign * Math.PI / 4, -0.25);
+  // A shallow pitch: placement targets the layer plane along the aim ray, so
+  // a steep look would land in the builder's own lane tile.
+  await setLook(p, p.sign * Math.PI / 4, -0.12);
   await p.page.keyboard.press("KeyQ"); // dedicated wall bind enters building
   await sleep(250);
   check(await buildModeOn(p), `${p.name} build mode did not activate`);
   await mouse(p, true);
-  // Wall/floor/cone binds + rotations while the primary stays held (a ramp's
-  // 2-cell footprint would reach back into the movement lane; ramps are
-  // exercised by the burst and movement). Rotate right/left net to zero.
+  // Wall/floor/cone binds + rotations while the primary stays held (ramps
+  // are exercised by the burst and movement). Rotate right/left net to zero.
   const keys = ["KeyF", "KeyR", "KeyQ", "KeyZ", "KeyX", "KeyF", "KeyQ", "KeyR", "KeyZ", "KeyX"];
   for (const [i, k] of keys.entries()) {
     await p.page.keyboard.press(k);
@@ -663,7 +676,7 @@ async function realInputBuild(room: AnyRoom, p: Player) {
   // Enter confirms the reset; G leaves the edit layer if it is still active.
   const editsBefore = edits.filter(e => e.sid === p.sid && e.ok).length;
   await p.page.keyboard.press("KeyQ");
-  await setLook(p, p.sign * Math.PI / 4, -0.22);
+  await setLook(p, p.sign * Math.PI / 4, -0.1);
   const targeted = () => p.page.evaluate(() => document.querySelector(".build-edit-hud__target") !== null);
   let noTarget = 0;
   for (let i = 0; i < 4; i++) {
@@ -697,12 +710,15 @@ async function destructionCycles(room: AnyRoom, A: Player, B: Player, cycles: nu
   const a = room.state.players.get(A.sid), b = room.state.players.get(B.sid);
   const zc = cellOf(0, (a.z + b.z) / 2).z;
   const grid = { x: 0, y: 0, z: zc };
+  // Rotation 1 stands on the tile's +X edge (canonical edge wall), between the lanes.
+  const wallSlot = structureSlots("wall", grid, 1)[0]!;
+  const wallX = wallEdgeCenter(grid, 1).x;
   const results: unknown[] = [];
   let current: string | undefined;
   {
     const first = await place(room, A, "wall", grid, 1);
     if (first.accepted) current = first.id;
-    else for (const [k, s] of room.bld.structures) if (s.grid.x === 0 && s.grid.y === 0 && s.grid.z === zc) current = k;
+    else for (const [k, s] of room.bld.structures) if (structureSlots(s.buildType, s.grid, s.rotation).includes(wallSlot)) current = k;
   }
   for (let c = 0; c < cycles; c++) {
     if (room.roundTicks / 30 < 22) { log(`destruction: stopping after ${c} cycles (${(room.roundTicks / 30).toFixed(0)}s of round left)`); break; }
@@ -719,7 +735,7 @@ async function destructionCycles(room: AnyRoom, A: Player, B: Player, cycles: nu
     await equip(room, shooter, weapon as "assault_rifle" | "shotgun");
     const me = room.state.players.get(shooter.sid);
     // Aim high on the wall face (y 3.2) so rays that pass the wall clear the opponent.
-    await aimAt(room, shooter, { x: me.x > 0 ? 0.4 : -0.4, y: 3.2, z: grid.z * CS + (me.z - grid.z * CS) * 0.5 });
+    await aimAt(room, shooter, { x: wallX + (me.x > wallX ? 0.4 : -0.4), y: 3.2, z: grid.z * CS + (me.z - grid.z * CS) * 0.5 });
     const d0 = room.bld.structures.get(current)?.currentDurability;
     const fireStart = performance.now();
     await mouse(shooter, true);
@@ -749,8 +765,8 @@ async function destructionCycles(room: AnyRoom, A: Player, B: Player, cycles: nu
     if (room.bld.structures.has(current)) break;
     counters.destructionCycles++;
     // Contested immediate replacement: both clients request the freed cell at once.
-    const occFreed = !room.occ.has(`0,0,${zc}`);
-    check(occFreed, `cycle ${c}: occupied cell not freed after destruction`);
+    const occFreed = !room.occ.has(wallSlot);
+    check(occFreed, `cycle ${c}: wall slot ${wallSlot} not freed after destruction`);
     await sleep(340);
     const eA0 = room.state.players.get(A.sid).energy, eB0 = room.state.players.get(B.sid).energy;
     const [ra, rb] = await Promise.all([place(room, A, "wall", grid, 1), place(room, B, "wall", grid, 1)]);

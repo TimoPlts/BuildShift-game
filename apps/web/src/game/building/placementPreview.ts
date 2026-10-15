@@ -9,9 +9,9 @@
  *
  *   Camera aim ray
  *      → intersect the ground build plane
- *      → snap to the logical build grid
- *      → normalize the selected rotation for the build type
- *      → validate rotation / build bounds / range / occupancy
+ *      → the build plane of the player's layer → the tile containing the hit
+ *      → normalize the selected rotation (walls: snap to the aimed edge)
+ *      → validate rotation / build bounds / range / slot occupancy
  *
  * The server performs the final validation and is the only authority on
  * build existence. A "valid" preview here means "probably valid" (green
@@ -19,18 +19,30 @@
  * presentation state — nothing in this module is authoritative.
  */
 import {
+  BUILD_GRID,
+  buildCellAt,
+  structureSlots,
+  wallEdgeRotation,
   isValidPlacementRotation,
   isWithinPlacementRange,
   isWithinBuildBounds,
   normalizePlacementRotation,
-  structureFootprintCells,
 } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
   GridRotation,
 } from "@buildshift/protocol";
-import { worldToGridPosition, gridToWorldAnchor } from "./gridSnap";
+import { gridToWorldAnchor } from "./gridSnap";
+
+/**
+ * The build layer a player standing at feet height `y` builds on: the layer
+ * whose base is at or just below the feet (a small tolerance keeps a player
+ * standing on a floor slab — 0.15 m above the layer base — on that layer).
+ */
+export function buildLayerAt(y: number): number {
+  return Math.max(0, Math.floor((y + 0.25) / BUILD_GRID.layerHeight));
+}
 
 /**
  * Why a placement preview is (locally) invalid. `null` means the preview is
@@ -125,32 +137,20 @@ export const ABSENT_PREVIEW: Readonly<PlacementPreview> = Object.freeze({
 });
 
 /**
- * Per-frame occupancy test: `true` when `candidate`'s footprint shares at
- * least one grid cell with any occupied structure.
- *
- * Semantically identical to
- * `occupied.some((other) => footprintsOverlap(candidate, other))` — cells
- * are compared by exact (x, y, z) equality, which `gridKey` encodes
- * injectively — but without the per-structure `Set` / key-string churn:
- * the candidate's cells are enumerated once, then every occupied
- * structure's cells are compared numerically.
+ * Per-frame occupancy test: `true` when `candidate` needs a canonical build
+ * slot (shared `structureSlots` rule) that an occupied structure already
+ * holds. Different slots of one tile — a ramp, its four edge walls, a floor —
+ * never conflict; only the same slot does.
  */
 function candidateOverlapsOccupied(
   candidate: OccupiedStructure,
   occupied: readonly OccupiedStructure[],
 ): boolean {
-  const candidateCells = structureFootprintCells(candidate.buildType, candidate.grid, candidate.rotation ?? 0);
+  const candidateSlots = structureSlots(candidate.buildType, candidate.grid, candidate.rotation ?? 0);
   for (const other of occupied) {
-    const otherCells = structureFootprintCells(other.buildType, other.grid, other.rotation ?? 0);
-    for (const cell of otherCells) {
-      for (const candidateCell of candidateCells) {
-        if (
-          candidateCell.x === cell.x &&
-          candidateCell.y === cell.y &&
-          candidateCell.z === cell.z
-        ) {
-          return true;
-        }
+    for (const slot of structureSlots(other.buildType, other.grid, other.rotation ?? 0)) {
+      if (candidateSlots.includes(slot)) {
+        return true;
       }
     }
   }
@@ -178,12 +178,16 @@ export function computePlacementPreview(
   } = input;
   // Canonical rotation for this piece (shared with the server): rotatable
   // kinds keep the selected quarter turn, rotation-invariant kinds use 0.
-  const rotation = normalizePlacementRotation(buildType, input.rotation) as GridRotation;
+  // (Walls instead snap to the aimed tile edge, below.)
+  let rotation = normalizePlacementRotation(buildType, input.rotation) as GridRotation;
 
-  // ── Candidate: intersect the aim ray with the ground build plane ──
-  // The ground build plane is the X/Z plane at y = groundY (the base of the
-  // ground layer). A ray hits it at t = (groundY - origin.y) / dir.y, which
-  // is positive exactly when the ray points downward enough.
+  // ── Candidate: intersect the aim ray with the build plane of the layer the
+  //    player stands on (the base of that layer: ground, or the top of a
+  //    ramp / the floor the player is on), so floors at the top of a ramp
+  //    and floors in the air are targetable. The ray hits the plane at
+  //    t = (planeY − origin.y) / dir.y, positive when it points down enough.
+  const layer = buildLayerAt(playerPosition.y);
+  const planeY = layer * BUILD_GRID.layerHeight;
   const dirY = aimDirection.y;
   if (!Number.isFinite(dirY) || dirY >= -MIN_AIM_DOWNGRADE) {
     return {
@@ -196,7 +200,7 @@ export function computePlacementPreview(
     };
   }
 
-  const t = (-aimOrigin.y) / dirY; // groundY is 0 by the shared config
+  const t = (planeY - aimOrigin.y) / dirY;
   if (!Number.isFinite(t) || t < 0) {
     return {
       present: true,
@@ -210,7 +214,12 @@ export function computePlacementPreview(
 
   const hitX = aimOrigin.x + aimDirection.x * t;
   const hitZ = aimOrigin.z + aimDirection.z * t;
-  const grid = worldToGridPosition(hitX, 0, hitZ);
+  // The tile whose canonical geometry contains the hit point.
+  const grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
+  if (buildType === "wall") {
+    // Walls are edge pieces: snap to the aimed tile's nearest edge.
+    rotation = wallEdgeRotation(grid, hitX, hitZ) as GridRotation;
+  }
   const anchorWorld = gridToWorldAnchor(grid);
 
   // ── Rotation validity: the shared canonical rule the server enforces ──

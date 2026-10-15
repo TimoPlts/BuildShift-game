@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { CONE_LEVELS, MAX_STRUCTURE_CUBOIDS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, type StructureCuboid } from "./editGeometry.js";
+import { CONE_LEVELS, MAX_STRUCTURE_CUBOIDS, RAMP_SLAB_THICKNESS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, wallEdgeCenter, type StructureCuboid } from "./editGeometry.js";
 import { BUILD_GRID } from "./building.js";
 
 const grid = { x: 0, y: 0, z: 0 };
 const forward = { x: 0, y: 0, z: 1 };
+/** Walls are edge pieces: rotation 0 stands on the tile's −Z edge, rotation 1 on its +X edge. */
+const PZ = wallEdgeCenter(grid, 0).z;
+const PX = wallEdgeCenter(grid, 1).x;
 
 describe("canonical structure geometry", () => {
   it("passes shots through wall windows and doors but blocks solid tiles", () => {
@@ -34,10 +37,10 @@ describe("canonical structure geometry", () => {
   it("lets a crouched player cross a low opening while a standing player is blocked", () => {
     const opening = structureCuboids({ buildType: "wall", grid, rotation: 0,
       editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, false, false, false] } });
-    const previous = { x: 0, y: 0, z: -1, velocityY: 0, grounded: true };
-    const next = { ...previous, z: 0 };
-    expect(resolveStructureMovement(previous, next, opening, 0.35, 1.2).z).toBe(0);
-    expect(resolveStructureMovement(previous, next, opening, 0.35, 1.8).z).toBeLessThan(-0.7);
+    const previous = { x: 0, y: 0, z: PZ - 1, velocityY: 0, grounded: true };
+    const next = { ...previous, z: PZ };
+    expect(resolveStructureMovement(previous, next, opening, 0.35, 1.2).z).toBe(PZ);
+    expect(resolveStructureMovement(previous, next, opening, 0.35, 1.8).z).toBeLessThan(PZ - 0.7);
   });
 
   it("uses the canonical edited cuboids for full-wall, doorway, edge, and reset traversal", () => {
@@ -52,34 +55,48 @@ describe("canonical structure geometry", () => {
       editGrid: { kind: "wall", tiles: Array(9).fill(true) } });
     const cross = (x: number, height: number, solids = doorway) =>
       resolveStructureMovement(
-        { x, y: 0, z: -1, velocityY: 0, grounded: true },
-        { x, y: 0, z: 0, velocityY: 0, grounded: true },
+        { x, y: 0, z: PZ - 1, velocityY: 0, grounded: true },
+        { x, y: 0, z: PZ, velocityY: 0, grounded: true },
         solids,
         0.35,
         height,
       );
 
-    expect(cross(0, 1.2, full).z).toBeLessThan(-0.7);
-    expect(cross(0, 1.2).z).toBe(0);
-    expect(cross(0, 1.8).z).toBeLessThan(-0.7);
-    expect(cross(-1.5, 1.2).z).toBeLessThan(-0.7);
-    expect(cross(1.5, 1.2).z).toBeLessThan(-0.7);
-    expect(cross(0, 1.2, reset).z).toBeLessThan(-0.7);
+    expect(cross(0, 1.2, full).z).toBeLessThan(PZ - 0.7);
+    expect(cross(0, 1.2).z).toBe(PZ);
+    expect(cross(0, 1.8).z).toBeLessThan(PZ - 0.7);
+    expect(cross(-1.5, 1.2).z).toBeLessThan(PZ - 0.7);
+    expect(cross(1.5, 1.2).z).toBeLessThan(PZ - 0.7);
+    expect(cross(0, 1.2, reset).z).toBeLessThan(PZ - 0.7);
   });
 
   it("rotates the same doorway traversal and side blockers with the wall", () => {
     const doorway = structureCuboids({ buildType: "wall", grid, rotation: 1,
       editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, true, false, true] } });
     const cross = (z: number) => resolveStructureMovement(
-      { x: -1, y: 0, z, velocityY: 0, grounded: true },
-      { x: 0, y: 0, z, velocityY: 0, grounded: true },
+      { x: PX - 1, y: 0, z, velocityY: 0, grounded: true },
+      { x: PX, y: 0, z, velocityY: 0, grounded: true },
       doorway,
       0.35,
       1.2,
     );
-    expect(cross(0).x).toBe(0);
-    expect(cross(-1.5).x).toBeLessThan(-0.7);
-    expect(cross(1.5).x).toBeLessThan(-0.7);
+    expect(cross(0).x).toBe(PX);
+    expect(cross(-1.5).x).toBeLessThan(PX - 0.7);
+    expect(cross(1.5).x).toBeLessThan(PX - 0.7);
+  });
+
+  it("walls are edge pieces: each rotation stands on its own tile edge, and neighbours share edges", () => {
+    const span = (rotation: number, g = grid) => {
+      const [c] = structureCuboids({ buildType: "wall", grid: g, rotation });
+      return { x: [c!.center.x - c!.halfExtents.x, c!.center.x + c!.halfExtents.x], z: [c!.center.z - c!.halfExtents.z, c!.center.z + c!.halfExtents.z] };
+    };
+    expect(span(0).z.map((v) => +v.toFixed(3))).toEqual([-2.944, -2.176]); // −Z edge (z = −2.56)
+    expect(span(2).z.map((v) => +v.toFixed(3))).toEqual([2.176, 2.944]); // +Z edge
+    expect(span(1).x.map((v) => +v.toFixed(3))).toEqual([2.176, 2.944]); // +X edge
+    expect(span(3).x.map((v) => +v.toFixed(3))).toEqual([-2.944, -2.176]); // −X edge
+    // The +Z edge of tile (0,0) is the −Z edge of tile (0,1): same physical panel.
+    expect(span(2)).toEqual(span(0, { x: 0, y: 0, z: 1 }));
+    expect(span(1)).toEqual(span(3, { x: 1, y: 0, z: 0 }));
   });
 
   it("supports a player over a solid elevated floor quadrant and lets them fall through a removed one", () => {
@@ -127,14 +144,45 @@ function rampFrame(rotation: number, flipped: boolean) {
   const up = alongX ? { x: s, z: 0 } : { x: 0, z: s };
   // Game handedness: facing +X the left is +Z; facing +Z the left is −X.
   const left = { x: -up.z, z: up.x };
-  // Footprint: anchor cell and the next cell along the positive axis.
-  const center = alongX ? { x: cs / 2, z: 0 } : { x: 0, z: cs / 2 };
+  // Footprint: exactly the anchor tile.
+  const center = { x: 0, z: 0 };
   return { up, left, center };
 }
 
-describe("canonical ramp: one full layer, width halves", () => {
+describe("canonical ramp: one tile, one full layer, thin, width halves", () => {
   const grid = { x: 0, y: 0, z: 0 };
   const top = (cuboids: StructureCuboid[]) => Math.max(...cuboids.map((c) => c.center.y + c.halfExtents.y));
+
+  it.each([0, 1, 2, 3])("rotation %i occupies exactly one tile with thin step slabs (open underneath)", (rotation) => {
+    const ramp = structureCuboids({ buildType: "ramp", grid, rotation });
+    for (const c of ramp) {
+      for (const axis of ["x", "z"] as const) {
+        expect(c.center[axis] - c.halfExtents[axis]).toBeGreaterThanOrEqual(-cs / 2 - 1e-9);
+        expect(c.center[axis] + c.halfExtents[axis]).toBeLessThanOrEqual(cs / 2 + 1e-9);
+      }
+      expect(c.halfExtents.y * 2).toBeLessThanOrEqual(RAMP_SLAB_THICKNESS + 1e-9); // a slab, not a column
+    }
+    // Consecutive slabs overlap vertically: a closed walking surface.
+    const tops = ramp.map((c) => [c.center.y - c.halfExtents.y, c.center.y + c.halfExtents.y] as const).sort((a, b) => a[1] - b[1]);
+    for (let i = 1; i < tops.length; i++) expect(tops[i]![0]).toBeLessThanOrEqual(tops[i - 1]![1] + 1e-9);
+  });
+
+  it.each([0, 1, 2, 3])("rotation %i: a standing player walks straight under the high half; at the low end they step onto it", (rotation) => {
+    const { up, left } = rampFrame(rotation, false);
+    const ramp = structureCuboids({ buildType: "ramp", grid, rotation });
+    const across = (along: number) => {
+      const start = { x: up.x * along - left.x * (cs / 2 + 1), z: up.z * along - left.z * (cs / 2 + 1) };
+      const path = walk(start, left, 40, ramp);
+      const end = path.at(-1)!;
+      return { travelled: (end.x - start.x) * left.x + (end.z - start.z) * left.z, maxY: Math.max(...path.map((p) => p.y)) };
+    };
+    const under = across(cs / 2 - 0.6);
+    expect(under.travelled).toBeGreaterThan(cs + 1.5); // open underneath: straight through
+    expect(under.maxY).toBe(0); // ... at ground level
+    const low = across(-cs / 2 + 0.6);
+    expect(low.maxY).toBeGreaterThan(0); // the low steps are a walking surface
+    expect(low.maxY).toBeLessThan(1); // (not a wall)
+  });
 
   it.each([0, 1, 2, 3])("rotation %i rises exactly one layer in steps within the 0.34 m step-up", (rotation) => {
     const ramp = structureCuboids({ buildType: "ramp", grid, rotation });
@@ -149,15 +197,15 @@ describe("canonical ramp: one full layer, width halves", () => {
     const { up, center } = rampFrame(rotation, false);
     const ramp = structureCuboids({ buildType: "ramp", grid, rotation });
     // The next-layer floor sits in the cell beyond the ramp's high end.
-    const floorGrid = { x: Math.round((center.x + up.x * 1.5 * cs) / cs), y: 1, z: Math.round((center.z + up.z * 1.5 * cs) / cs) };
+    const floorGrid = { x: Math.round((center.x + up.x * cs) / cs), y: 1, z: Math.round((center.z + up.z * cs) / cs) };
     const floor = structureCuboids({ buildType: "floor", grid: floorGrid, rotation: 0 });
     const floorTop = lh + 0.15;
-    const start = { x: center.x - up.x * (cs + 1), z: center.z - up.z * (cs + 1) };
-    const path = walk(start, up, 75, [...ramp, ...floor]);
+    const start = { x: center.x - up.x * (cs / 2 + 1), z: center.z - up.z * (cs / 2 + 1) };
+    const path = walk(start, up, 50, [...ramp, ...floor]);
     const end = path.at(-1)!;
     expect(end.y).toBeCloseTo(floorTop, 6);
-    // On the floor: past the ramp's high end, over the floor footprint.
-    expect((end.x - center.x) * up.x + (end.z - center.z) * up.z).toBeGreaterThan(cs);
+    // On the floor: past the ramp's high end, over the next tile's floor.
+    expect((end.x - center.x) * up.x + (end.z - center.z) * up.z).toBeGreaterThan(cs / 2);
     // Monotonic climb, never a jump (velocity never positive).
     expect(path.every((p) => p.velocityY <= 0)).toBe(true);
     for (let i = 1; i < path.length; i++) expect(path[i]!.y).toBeGreaterThanOrEqual(path[i - 1]!.y - 1e-9);
@@ -174,10 +222,10 @@ describe("canonical ramp: one full layer, width halves", () => {
         expect(lateral).toBeCloseTo(sign * cs / 4, 9);
       }
       // The kept lane climbs to the top; the removed lane never leaves the ground.
-      const lane = (side: number) => ({ x: center.x - up.x * (cs + 1) + left.x * side * cs / 4, z: center.z - up.z * (cs + 1) + left.z * side * cs / 4 });
-      const kept = walk(lane(sign), up, 60, half);
+      const lane = (side: number) => ({ x: center.x - up.x * (cs / 2 + 1) + left.x * side * cs / 4, z: center.z - up.z * (cs / 2 + 1) + left.z * side * cs / 4 });
+      const kept = walk(lane(sign), up, 33, half);
       expect(Math.max(...kept.map((p) => p.y))).toBeCloseTo(lh, 6);
-      const removed = walk(lane(-sign), up, 60, half);
+      const removed = walk(lane(-sign), up, 33, half);
       expect(Math.max(...removed.map((p) => p.y))).toBe(0);
     }
   });
@@ -185,7 +233,7 @@ describe("canonical ramp: one full layer, width halves", () => {
   it.each([0, 1, 2, 3])("rotation %i: flipped reverses which end is high", (rotation) => {
     const { up, center } = rampFrame(rotation, false);
     const highEnd = (cuboids: StructureCuboid[]) => {
-      const c = cuboids.reduce((a, b) => (a.halfExtents.y > b.halfExtents.y ? a : b));
+      const c = cuboids.reduce((a, b) => (a.center.y + a.halfExtents.y > b.center.y + b.halfExtents.y ? a : b));
       return (c.center.x - center.x) * up.x + (c.center.z - center.z) * up.z;
     };
     expect(highEnd(structureCuboids({ buildType: "ramp", grid, rotation }))).toBeGreaterThan(0);

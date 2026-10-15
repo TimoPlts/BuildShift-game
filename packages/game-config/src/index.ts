@@ -19,7 +19,7 @@ export {
 } from "./character.js";
 export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableArena } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
-export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
+export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
 export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
 
 export {
@@ -105,6 +105,10 @@ export {
   isWithinBuildBounds,
   placementAnchorWorld,
   isWithinPlacementRange,
+  structureSlots,
+  slotsConflict,
+  wallEdgeRotation,
+  buildCellAt,
   type BuildCell,
   type BuildStructureKey,
   type StructureConfig,

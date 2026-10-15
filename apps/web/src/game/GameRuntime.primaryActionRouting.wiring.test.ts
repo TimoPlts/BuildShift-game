@@ -67,7 +67,7 @@ describe("GameRuntime primary-action routing", () => {
     // the server can accept them (the server rejects placement outside
     // IN_PROGRESS).
     expect(runtime).toContain(
-      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.playerController.getFeetPositionInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);",
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);",
     );
     // The fixed sim tick reads the held fire through the stored frame route
     // (same frame's decision — no re-reading of raw input).

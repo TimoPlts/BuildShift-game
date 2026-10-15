@@ -167,7 +167,7 @@ describe("EditPreviewPresentation", () => {
     expect(geometry!.tiles[4].selected).toBe(true);
   });
 
-  it("poses the preview on the piece grid anchor and cardinal rotation", () => {
+  it("poses a wall preview on its tile edge with the cardinal rotation", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
     preview = new EditPreviewPresentation(scene);
@@ -175,8 +175,9 @@ describe("EditPreviewPresentation", () => {
     preview.show(baseInput({ grid: { x: 1, y: 0, z: 2 }, rotation: 2 }));
 
     const root = scene.getTransformNodeByName(`${NAME_PREFIX}root`) as TransformNode;
+    // Walls are edge pieces: rotation 2 stands on the tile's +Z edge.
     expect(root.position.x).toBeCloseTo(CELL, 4);
-    expect(root.position.z).toBeCloseTo(2 * CELL, 4);
+    expect(root.position.z).toBeCloseTo(2.5 * CELL, 4);
     expect(root.rotation.y).toBeCloseTo(Math.PI, 4);
 
     // Tile 6 (bottom-left, local x = −w/3) stays piece-local while the root
@@ -184,8 +185,8 @@ describe("EditPreviewPresentation", () => {
     const tile6 = meshByName(scene, `${NAME_PREFIX}tile-6`) as Mesh;
     expect(tile6.position.x).toBeCloseTo(-CELL / 3, 4);
     expect(tile6.position.y).toBeCloseTo(LAYER - 2.5 * (LAYER / 3), 4);
-    expect(root.position.x + 0).toBeCloseTo(CELL, 4); // anchor in world space
-    expect(root.position.z).toBeCloseTo(2 * CELL, 4);
+    expect(root.position.x + 0).toBeCloseTo(CELL, 4); // edge centre in world space
+    expect(root.position.z).toBeCloseTo(2.5 * CELL, 4);
   });
 
   it("removed tiles open up: the result shape is the canonical solids of the solid tiles", () => {
@@ -340,7 +341,7 @@ describe("EditPreviewPresentation", () => {
     scene = makeScene(engine);
     preview = new EditPreviewPresentation(scene);
 
-    const rampW = 2 * CELL; // two-cell-long ramp
+    const rampW = CELL; // one-tile ramp
 
     // half_left: full length, only the climber's LEFT half of the width
     // (piece-local +Z when climbing +X), full one-layer height.
@@ -565,7 +566,7 @@ describe("editTileLayout / editRampLayout", () => {
   });
 
   it("lays out ramp spans with canonical half lengths and marker positions", () => {
-    const rampW = 2 * CELL;
+    const rampW = CELL; // one-tile ramp
     const full = editRampLayout("full");
     expect(full.resultLength).toBeCloseTo(rampW, 4);
     expect(full.resultCenter[0]).toBeCloseTo(0, 4);

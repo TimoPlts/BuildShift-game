@@ -41,7 +41,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, createWriteStream, mkdirSync } from "node:fs";
-import { BUILD_GRID, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1999,9 +1999,10 @@ test.describe("Physical edited-geometry acceptance", () => {
       const cs = BUILD_GRID.cellSize;
       const grid = { x: Math.round(spawn.x / cs), y: 0, z: Math.round(spawn.z / cs) };
       const wallX = grid.x * cs;
-      // Wall plane for rotation 0 (spans X, thin along Z).
-      const plane = grid.z * cs;
       const rotation = 0;
+      // Wall plane for rotation 0: walls are edge pieces — the tile's −Z edge
+      // (spans X, thin along Z).
+      const plane = wallEdgeCenter(grid, rotation).z;
       const full = structureCuboids({ buildType: "wall", grid, rotation })[0]!;
       const wallHalfThickness = full.halfExtents.z;
       const radius = PLAYER_COLLIDER.radius;
@@ -2270,7 +2271,8 @@ test.describe("Physical edited-geometry acceptance", () => {
       const cs = BUILD_GRID.cellSize;
       const grid = { x: Math.round((shooter0.x + target0.x) / 2 / cs), y: 0, z: Math.round(shooter0.z / cs) };
       const rotation = 1;
-      const planeX = grid.x * cs;
+      // Walls are edge pieces: rotation 1 stands on the tile's +X edge.
+      const planeX = wallEdgeCenter(grid, rotation).x;
       expect(shooter0.x).toBeGreaterThan(planeX + 2);
       expect(target0.x).toBeLessThan(planeX - 2);
       expect(Math.abs(shooter0.z - target0.z)).toBeLessThan(0.05);
@@ -2818,9 +2820,9 @@ test.describe("Physical edited-geometry acceptance", () => {
       const spawn = await authPose(a);
       const cs = BUILD_GRID.cellSize, lh = BUILD_GRID.layerHeight;
       const radius = PLAYER_COLLIDER.radius;
-      // Rotation 1 climbs toward +Z over cells z, z+1; the floor sits beyond.
+      // Rotation 1 climbs toward +Z within its one tile; the floor is the next tile.
       const rampGrid = { x: Math.round(spawn.x / cs), y: 0, z: Math.round(spawn.z / cs) };
-      const floorGrid = { x: rampGrid.x, y: 1, z: rampGrid.z + 2 };
+      const floorGrid = { x: rampGrid.x, y: 1, z: rampGrid.z + 1 };
       const ramp = structureCuboids({ buildType: "ramp", grid: rampGrid, rotation: 1 });
       const floor = structureCuboids({ buildType: "floor", grid: floorGrid, rotation: 0 })[0]!;
       const lowEndZ = Math.min(...ramp.map(c => c.center.z - c.halfExtents.z));
@@ -2892,8 +2894,9 @@ test.describe("Physical edited-geometry acceptance", () => {
       const climbLane = async (x: number, label: string) => {
         await toLaneX(a, phase, x);
         await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
-        // Stop 1.3 m short of the high edge (≥ 1.6 m margin for stopping distance).
-        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: highEndZ + 1.3 }, label, true);
+        // Stop 0.6 m short of the one-tile ramp's high edge (crouched: short
+        // stopping distance), high enough to show the full climb.
+        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: highEndZ + 0.6 }, label, true);
         await settleInputs(a, 15);
         const end = await authPose(a);
         const points = tracePoints(await poseTrace(a, 4000));
@@ -2910,7 +2913,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       // The removed half of the width is not a ramp: the lane stays on the ground.
       const removed = await climbLane(removedLaneX, `removed ${variant === "half_left" ? "right" : "left"} lane`);
       expect(removed.result.maxY, JSON.stringify(removed.result)).toBe(0);
-      expect(removed.end.z).toBeLessThan(highEndZ + 1.5);
+      expect(removed.end.z).toBeLessThan(highEndZ + 0.8);
       await backDown();
       // The kept half climbs the full layer.
       const kept = await climbLane(keptLaneX, `kept ${variant === "half_left" ? "left" : "right"} lane`);
@@ -3056,10 +3059,15 @@ test.describe("Physical edited-geometry acceptance", () => {
 
   const CS = BUILD_GRID.cellSize;
   const LH = BUILD_GRID.layerHeight;
-  /** Ground centre of grid cell (gx, gz) (the placement preview snaps by floor). */
-  const cellCentre = (gx: number, gz: number) => ({ x: gx * CS + CS / 2, y: 0, z: gz * CS + CS / 2 });
-  /** Centre of wall tile `t` for a rotation-0 wall anchored at grid (gx, 0, gz). */
-  const wallTile = (gx: number, gz: number, t: number) => ({ x: gx * CS + ((t % 3) - 1) * (CS / 3), y: LH - (Math.floor(t / 3) + 0.5) * (LH / 3), z: gz * CS });
+  /** Centre of build tile (gx, gz) on layer `layer`'s base plane (tiles are centred on grid × cellSize). */
+  const cellCentre = (gx: number, gz: number, layer = 0) => ({ x: gx * CS, y: layer * LH, z: gz * CS });
+  /** A point on tile (gx, gz)'s base plane 0.6 m inside its edge `r` (r0 −Z, r1 +X, r2 +Z, r3 −X): walls snap there. */
+  const edgeAim = (gx: number, gz: number, r: number, layer = 0) => {
+    const d = CS / 2 - 0.6;
+    return { x: gx * CS + (r === 1 ? d : r === 3 ? -d : 0), y: layer * LH, z: gz * CS + (r === 2 ? d : r === 0 ? -d : 0) };
+  };
+  /** Centre of wall tile `t` for a rotation-0 wall at grid (gx, 0, gz): it stands on the tile's −Z edge. */
+  const wallTile = (gx: number, gz: number, t: number) => ({ x: gx * CS + ((t % 3) - 1) * (CS / 3), y: LH - (Math.floor(t / 3) + 0.5) * (LH / 3), z: wallEdgeCenter({ x: gx, y: 0, z: gz }, 0).z });
 
   type Placed = { id: string; buildType: string; grid: { x: number; y: number; z: number }; rotation: number; ownerId: string };
   const structuresOf = (page: Page): Promise<Placed[]> => page.evaluate(() =>
@@ -3102,31 +3110,26 @@ test.describe("Physical edited-geometry acceptance", () => {
     } finally { await context.close(); }
   });
 
-  test("competitive input 2: hold LMB — wall → ramp → floor → cone binds place without releasing", { timeout: 120_000 }, async () => {
+  test("competitive input 2: hold LMB on one tile — wall → ramp → floor → cone binds all place there (distinct slots)", { timeout: 120_000 }, async () => {
     test.setTimeout(120_000);
     const { context, a, aId, step } = await openFreshDuel("input 2", { width: 480, height: 270 });
     try {
       const aim = new CrosshairAim(a);
       const mine = async () => (await structuresOf(a)).filter((s) => s.ownerId === aId);
-      // Weapon mode, button down: the rifle fires first.
-      await aim.at(cellCentre(0, -1));
+      // Weapon mode, button down: the rifle fires first. Aim inside the
+      // tile's −Z edge region: the wall snaps to that edge; the ramp, floor
+      // and cone take the same tile's other slots from the same aim.
+      await aim.at(edgeAim(0, -1, 0));
       await setPrimaryFire(a, true);
       try {
         await a.keyboard.press("KeyQ");
-        await waitStructure(a, (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1, "held wall");
+        await waitStructure(a, (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 0, "held wall");
         const ammoInBuild = await getMagazineAmmo(a);
-        // Each next piece: switch first (the crosshair still rests on the
-        // occupied cell, so nothing places), then aim at a free cell.
-        const plan: Array<[string, string, { x: number; y: number; z: number }, { x: number; z: number }]> = [
-          ["KeyE", "ramp", cellCentre(1, -2), { x: 1, z: -2 }],
-          ["KeyF", "floor", cellCentre(1, -1), { x: 1, z: -1 }],
-          ["KeyZ", "cone", cellCentre(-1, -1), { x: -1, z: -1 }],
-        ];
-        for (const [code, type, target, grid] of plan) {
+        // Same crosshair, next binds: each piece takes its own slot of the tile.
+        for (const [code, type] of [["KeyE", "ramp"], ["KeyF", "floor"], ["KeyZ", "cone"]] as const) {
           await a.keyboard.press(code);
-          await aim.at(target);
-          await waitStructure(a, (s) => s.buildType === type && s.grid.x === grid.x && s.grid.z === grid.z, `held ${type}`);
-          step(`${type} placed while LMB held`);
+          await waitStructure(a, (s) => s.buildType === type && s.grid.x === 0 && s.grid.z === -1, `held ${type}`);
+          step(`${type} placed in the same tile while LMB held`);
         }
         expect(await getMagazineAmmo(a)).toBe(ammoInBuild); // no shots once building
       } finally {
@@ -3137,16 +3140,12 @@ test.describe("Physical edited-geometry acceptance", () => {
     } finally { await context.close(); }
   });
 
-  /** Fresh duel with a rotation-0 wall in A's lane at grid (1,0,-1); A walks within edit range. */
+  /** Fresh duel with a rotation-0 wall in A's lane at grid (1,0,0): it stands on the tile's −Z edge, 2.56 m ahead of A. */
   async function openWallEditDuel(tag: string) {
     const duel = await openFreshDuel(tag, { width: 480, height: 270 });
     const { a, b } = duel;
     await installPoseTrace(a);
-    const id = await placeStructure(a, b, 9701, "wall", { x: 1, y: 0, z: -1 }, 0);
-    // The edit target is selected from the camera (7 m behind the pivot):
-    // step up to ≈3 m from the wall.
-    await holdKey(a, tag, "KeyW", "p.z <= arg.z", { z: -1.9 }, "walk to the wall");
-    await settleInputs(a, 10);
+    const id = await placeStructure(a, b, 9701, "wall", { x: 1, y: 0, z: 0 }, 0);
     await recordEditSends(a);
     return { ...duel, id, aim: new CrosshairAim(a) };
   }
@@ -3155,13 +3154,13 @@ test.describe("Physical edited-geometry acceptance", () => {
     test.setTimeout(120_000);
     const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 3");
     try {
-      await aim.at(wallTile(1, -1, 3));
+      await aim.at(wallTile(1, 0, 3));
       await a.keyboard.press("KeyG");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       // One held drag: press on tile 3, one look jump to tile 5 (crossing 4).
       await setPrimaryFire(a, true);
       await sleep(150);
-      await aim.at(wallTile(1, -1, 5));
+      await aim.at(wallTile(1, 0, 5));
       await sleep(300);
       await setPrimaryFire(a, false);
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 3/9", { timeout: 5_000 });
@@ -3169,7 +3168,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       step("drag 3 → 5 selected 3 tiles locally");
       await a.keyboard.press("Enter");
       const window: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, false, false, false, true, true, true] };
-      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: window }, "dragged window");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: window }, "dragged window");
       expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "select", "select", "confirm"]);
       expect(await editModeOn(a)).toBe(false);
       step("window confirmed: canonical opening on both clients");
@@ -3180,28 +3179,29 @@ test.describe("Physical edited-geometry acceptance", () => {
     test.setTimeout(120_000);
     const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 4");
     try {
-      await aim.at(wallTile(1, -1, 4));
+      await aim.at(wallTile(1, 0, 4));
       await a.keyboard.press("KeyG");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       await setPrimaryFire(a, true);
       await sleep(150);
-      await aim.at(wallTile(1, -1, 7));
+      await aim.at(wallTile(1, 0, 7));
       await sleep(300);
       await setPrimaryFire(a, false);
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
       await a.keyboard.press("Enter");
       const doorway: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] };
-      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: doorway }, "dragged doorway");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: doorway }, "dragged doorway");
       step("doorway confirmed");
       // Walk straight through (face −Z again: yaw 0).
       await aim.to(0, 0);
       await settleInputs(a, 5);
       const before = await authPose(a);
-      await holdKey(a, "input 4", "KeyW", "p.z <= arg.z", { z: -7.2 }, "walk through the doorway");
+      const plane = wallEdgeCenter({ x: 1, y: 0, z: 0 }, 0).z;
+      await holdKey(a, "input 4", "KeyW", "p.z <= arg.z", { z: plane - 2 }, "walk through the doorway");
       await settleInputs(a, 10);
       const after = await authPose(a);
       step(`walked ${JSON.stringify({ before, after })}`);
-      expect(after.z).toBeLessThan(-5.12 - 0.384 - PLAYER_COLLIDER.radius);
+      expect(after.z).toBeLessThan(plane - 0.384 - PLAYER_COLLIDER.radius);
     } finally { await context.close(); }
   });
 
@@ -3210,7 +3210,7 @@ test.describe("Physical edited-geometry acceptance", () => {
     const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 5");
     try {
       const full: AcceptanceEditGrid = { kind: "wall", tiles: Array(9).fill(true) };
-      await aim.at(wallTile(1, -1, 1));
+      await aim.at(wallTile(1, 0, 1));
       await a.keyboard.press("KeyG");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       await fireWeapon(a); // select tile 1 (local)
@@ -3218,7 +3218,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       // Shotgun: leaves edit, committing the edit, and switches at once.
       await a.keyboard.press("Digit2");
       await expect.poll(() => getWeaponName(a), { timeout: 5_000 }).toBe("Shotgun");
-      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: { kind: "wall", tiles: [true, false, true, true, true, true, true, true, true] } }, "edit committed by the shotgun bind");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: { kind: "wall", tiles: [true, false, true, true, true, true, true, true, true] } }, "edit committed by the shotgun bind");
       step("edit → shotgun committed the edit");
       // Shoot.
       const shells = await getMagazineAmmo(a);
@@ -3231,7 +3231,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await a.keyboard.press("KeyT");
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 0/9", { timeout: 2_000 });
       await a.keyboard.press("Enter");
-      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: full }, "reset confirmed");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: full }, "reset confirmed");
       expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "confirm", "reset", "confirm"]);
       step("edit → reset → confirm restored the full wall");
     } finally { await context.close(); }
@@ -3271,6 +3271,212 @@ test.describe("Physical edited-geometry acceptance", () => {
       expect(await getMagazineAmmo(a)).toBe(ammo);
       expect(await editSends(a)).toEqual([]);
       step("all binds landed; no stray placement, shot, or edit");
+    } finally { await context.close(); }
+  });
+
+
+  // ─── Fortnite-style building acceptance (real input, slots, one-tile ramp) ──
+
+  /** Rejection events the page receives (installed per test). */
+  const recordRejections = (page: Page) => page.evaluate(() => {
+    const w = window as any;
+    w.__rejections = [];
+    w.__buildshiftNetworking.client.deref().onEvent("build:structure_rejected", (p: unknown) => w.__rejections.push(p));
+  });
+  const rejections = (page: Page): Promise<Array<{ reason: string }>> => page.evaluate(() => (window as any).__rejections ?? []);
+  /** Real dedicated bind + click at a world aim point; resolves when the server has the piece. */
+  async function buildAt(a: Page, aim: CrosshairAim, code: string, point: { x: number; y: number; z: number }, expectPiece: (s: Placed) => boolean, label: string) {
+    await aim.at(point);
+    await a.keyboard.press(code);
+    await sleep(120);
+    await fireWeapon(a);
+    await waitStructure(a, expectPiece, label).catch(async (error) => {
+      throw new Error(`${label}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await a.evaluate(() => (window as any).__rejections ?? []) })}`, { cause: error });
+    });
+  }
+
+  test("scenario A — camera: fast repeated 360° turns under pointer lock never snap, including across mode switches", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, step } = await openFreshDuel("scenario A", { width: 480, height: 270 });
+    try {
+      // Per frame: the camera's view yaw and the look motion delivered since the last frame.
+      await a.evaluate(() => {
+        const w = window as any;
+        const cam = w.__buildshiftEngine.scenes[0].activeCamera;
+        w.__turn = { frames: [] as number[][], pending: 0, stop: false };
+        window.addEventListener("mousemove", (e) => { w.__turn.pending += e.movementX; }, { capture: true });
+        const tick = () => {
+          const t = cam.getTarget();
+          w.__turn.frames.push([Math.atan2(t.x - cam.position.x, -(t.z - cam.position.z)), w.__turn.pending]);
+          w.__turn.pending = 0;
+          if (!w.__turn.stop) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      const perTurn = Math.round((2 * Math.PI) / LOOK_SENSITIVITY);
+      // Four fast turns (right, left, right, left), ~143 px per event, with
+      // build / edit / weapon binds pressed mid-turn.
+      const modes = ["KeyQ", "KeyG", "KeyG", "Digit1", "KeyE", "Digit2"];
+      for (let turn = 0; turn < 4; turn++) {
+        const dir = turn % 2 === 0 ? 1 : -1;
+        for (let i = 0; i < perTurn / 143; i++) {
+          await lookBy(a, dir * 143, 0);
+          if (i % 7 === 3) await a.keyboard.press(modes[(turn * 3 + i) % modes.length]!);
+          await sleep(6);
+        }
+      }
+      await sleep(300);
+      const frames: number[][] = await a.evaluate(() => { const w = window as any; w.__turn.stop = true; return w.__turn.frames; });
+      const wrap = (v: number) => Math.atan2(Math.sin(v), Math.cos(v));
+      let worst = 0, total = 0;
+      for (let i = 1; i < frames.length; i++) {
+        const expected = -frames[i]![1]! * LOOK_SENSITIVITY;
+        worst = Math.max(worst, Math.abs(wrap(frames[i]![0]! - frames[i - 1]![0]! - expected)));
+        total += Math.abs(frames[i]![1]!);
+      }
+      step(`frames ${frames.length}, motion ${total}px (${(total / perTurn).toFixed(2)} turns), worst per-frame deviation ${worst.toExponential(2)} rad`);
+      expect(total).toBeGreaterThanOrEqual(4 * perTurn - 4 * 143);
+      expect(worst).toBeLessThan(1e-3); // every frame turned by exactly the delivered motion
+    } finally { await context.close(); }
+  });
+
+  /** Real-input one-tile ramp (rotation 3: climbs toward −Z, the W direction) at tile (1,-1). */
+  async function placeRampReal(a: Page, aim: CrosshairAim) {
+    await aim.at(cellCentre(1, -1));
+    await a.keyboard.press("KeyE");
+    await sleep(120);
+    await a.keyboard.press("KeyX"); // rotate left: 0 → 3
+    await sleep(120);
+    await fireWeapon(a);
+    await waitStructure(a, (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === 3, "real-input ramp");
+  }
+
+  test("scenario B — one-tile ramp: exactly one tile, climbs to the next layer without a jump, open underneath", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, b, aId, step } = await openFreshDuel("scenario B", { width: 480, height: 270 });
+    try {
+      await installPoseTrace(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim);
+      const ramp = (await structuresOf(a)).find((s) => s.buildType === "ramp")!;
+      await expectCanonicalGeometry([a, b], ramp.id, aId, { buildType: "ramp", grid: ramp.grid, rotation: ramp.rotation, editGrid: { kind: "ramp", variant: "full" } }, "one-tile ramp");
+      const cuboids = structureCuboids({ buildType: "ramp", grid: ramp.grid, rotation: ramp.rotation });
+      const span = (axis: "x" | "z") => [Math.min(...cuboids.map((c) => c.center[axis] - c.halfExtents[axis])), Math.max(...cuboids.map((c) => c.center[axis] + c.halfExtents[axis]))];
+      step(`footprint x ${span("x")} z ${span("z")}`);
+      expect(span("x")).toEqual([0.5 * CS, 1.5 * CS]);
+      expect(span("z").map((v) => +v.toFixed(6))).toEqual([-1.5 * CS, -0.5 * CS]);
+      await a.keyboard.press("Digit1");
+      await aim.to(0, 0);
+      // Underside: along lane x = 10.24 to under the high end, then strafe −X across under it.
+      await holdKey(a, "scenario B", "KeyA", "p.x >= arg.x", { x: 2 * CS }, "to the side lane");
+      await holdKey(a, "scenario B", "KeyW", "p.z <= arg.z", { z: -1.5 * CS + 0.8 }, "beside the high end");
+      await settleInputs(a, 10);
+      await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
+      await holdKey(a, "scenario B", "KeyD", "p.x <= arg.x", { x: 0 }, "walk under the ramp's high end");
+      await settleInputs(a, 10);
+      const under = tracePoints(await poseTrace(a, 4000));
+      step(`underside ${JSON.stringify({ end: await authPose(a), maxY: Math.max(...under.map((p) => p.y)) })}`);
+      expect(Math.max(...under.map((p) => p.y))).toBe(0);
+      expect((await authPose(a)).x).toBeLessThan(0.5 * CS - 0.4); // passed beneath the tile
+      // Climb: back around to the low end, then W up the ramp.
+      await holdKey(a, "scenario B", "KeyA", "p.x >= arg.x", { x: 2 * CS }, "back to the side lane");
+      await holdKey(a, "scenario B", "KeyS", "p.z >= arg.z", { z: 0 }, "past the low end");
+      await holdKey(a, "scenario B", "KeyD", "p.x <= arg.x", { x: CS }, "into the ramp lane");
+      await settleInputs(a, 10);
+      await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
+      await holdKey(a, "scenario B", "KeyW", "p.y >= 3.6", {}, "climb to the top", true);
+      await settleInputs(a, 10);
+      const climb = tracePoints(await poseTrace(a, 4000));
+      const top = await authPose(a);
+      step(`climb ${JSON.stringify({ top, samples: climb.length })}`);
+      expect(top.y).toBeGreaterThan(BUILD_GRID.layerHeight - 0.3); // the next build layer
+      for (let i = 1; i < climb.length; i++) expect(climb[i]!.y).toBeGreaterThanOrEqual(climb[i - 1]!.y - 1e-6); // no jump/drop
+    } finally { await context.close(); }
+  });
+
+  test("scenario C — ramp box: one ramp and walls on all four of its edges coexist (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("scenario C", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim);
+      for (const r of [0, 1, 2, 3]) {
+        await buildAt(a, aim, "KeyQ", edgeAim(1, -1, r), (s) => s.buildType === "wall" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === r, `wall on edge r${r}`);
+        step(`wall r${r} placed around the ramp`);
+      }
+      const box = (await structuresOf(a)).filter((s) => s.ownerId === aId && s.grid.x === 1 && s.grid.z === -1);
+      expect(box.map((s) => `${s.buildType}${s.buildType === "wall" ? s.rotation : ""}`).sort()).toEqual(["ramp", "wall0", "wall1", "wall2", "wall3"]);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("scenarios D + E — ramp → next-layer floor → three air floors, walked across (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("scenario DE", { width: 480, height: 270 });
+    try {
+      await installPoseTrace(a);
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim);
+      // D: climb to the top (crouched: short stop), place the floor beyond it, walk on.
+      await aim.to(0, 0);
+      await holdKey(a, "scenario D", "KeyW", "p.y >= 3.6", {}, "climb to the top", true);
+      await settleInputs(a, 10);
+      await buildAt(a, aim, "KeyF", cellCentre(1, -2, 1), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 1 && s.grid.z === -2, "floor at the ramp top");
+      await aim.to(0, 0);
+      await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
+      await holdKey(a, "scenario D", "KeyW", "p.z <= arg.z", { z: -2 * CS + 0.6 }, "walk from the ramp onto the floor");
+      await settleInputs(a, 10);
+      const onFloor = await authPose(a);
+      step(`ramp → floor ${JSON.stringify(onFloor)}`);
+      expect(onFloor.y).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4);
+      // E: three air floors toward −X, each built then walked onto (D strafes −X at yaw 0).
+      for (const gx of [0, -1, -2]) {
+        await buildAt(a, aim, "KeyF", cellCentre(gx, -2, 1), (s) => s.buildType === "floor" && s.grid.x === gx && s.grid.y === 1 && s.grid.z === -2, `air floor x=${gx}`);
+        await aim.to(0, 0);
+        await holdKey(a, "scenario E", "KeyD", "p.x <= arg.x", { x: gx * CS }, `walk onto air floor x=${gx}`);
+        await settleInputs(a, 10);
+        const pose = await authPose(a);
+        step(`on air floor ${gx}: ${JSON.stringify(pose)}`);
+        expect(pose.y).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4);
+      }
+      const path = tracePoints(await poseTrace(a, 4000));
+      expect(Math.min(...path.map((p) => p.y))).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4); // never fell
+      expect((await structuresOf(a)).filter((s) => s.ownerId === aId && s.buildType === "floor")).toHaveLength(4);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("scenario F — held LMB: wall → ramp → wall → floor → wall → ramp, no overlap rejection (real binds)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("scenario F", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      const plan: Array<[string, string, { x: number; y: number; z: number }, (s: Placed) => boolean]> = [
+        ["KeyQ", "wall", edgeAim(0, -1, 0), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 0],
+        ["KeyE", "ramp", cellCentre(0, -1), (s) => s.buildType === "ramp" && s.grid.x === 0 && s.grid.z === -1],
+        ["KeyQ", "wall", edgeAim(0, -1, 1), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 1],
+        ["KeyF", "floor", cellCentre(0, -1), (s) => s.buildType === "floor" && s.grid.x === 0 && s.grid.z === -1],
+        ["KeyQ", "wall", edgeAim(0, -1, 3), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 3],
+        ["KeyE", "ramp", cellCentre(1, -1), (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1],
+      ];
+      await aim.at(plan[0]![2]);
+      await setPrimaryFire(a, true);
+      try {
+        for (const [code, type, point, match] of plan) {
+          await a.keyboard.press(code); // switch first: the old piece's slot on this aim is already taken
+          await aim.at(point);
+          await waitStructure(a, match, `held ${type}`);
+          step(`${type} placed`);
+        }
+      } finally {
+        await setPrimaryFire(a, false);
+      }
+      const mine = (await structuresOf(a)).filter((s) => s.ownerId === aId);
+      expect(mine).toHaveLength(6);
+      expect((await rejections(a)).filter((r) => r.reason === "overlap")).toEqual([]);
     } finally { await context.close(); }
   });
 

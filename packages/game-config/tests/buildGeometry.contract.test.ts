@@ -106,13 +106,13 @@ describe("STRUCTURES (per-kind footprints and costs)", () => {
     expect(f.footprint).toEqual([1, 1, 1]);
   });
 
-  it("ramp occupies 2×1×1 cells (≈10.24 m × ≈3.84 m × ≈5.12 m world)", () => {
+  it("ramp occupies ONE 1×1×1 tile (≈5.12 m × ≈3.84 m × ≈5.12 m world)", () => {
     const r = getStructureConfig("ramp")!;
-    expect(r.footprint).toEqual([2, 1, 1]);
-    expect(r.footprint[0] * BUILD_GRID.cellSize).toBeCloseTo(10.24, 6);
+    expect(r.footprint).toEqual([1, 1, 1]);
+    expect(r.footprint[0] * BUILD_GRID.cellSize).toBeCloseTo(5.12, 6);
   });
 
-  it("ramp rises ≈ 3.84 m (exactly one layer) across its two-cell length", () => {
+  it("ramp rises ≈ 3.84 m (exactly one layer) within its one tile", () => {
     const r = getStructureConfig("ramp")!;
     expect(r.footprint[1] * BUILD_GRID.layerHeight).toBeCloseTo(3.84, 6);
   });

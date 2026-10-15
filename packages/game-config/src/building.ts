@@ -166,7 +166,7 @@ export interface StructureConfig {
  *   tall (≈ 3.84 m rise), rotatable in 4 cardinal directions.
  * - **floor** — a single-cell platform (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
  *   rotation-invariant.
- * - **ramp** — a two-cell-long (≈ 10.24 m) incline rising one layer
+ * - **ramp** — a one-tile (≈ 5.12 m) thin stepped incline rising one layer
  *   (≈ 3.84 m), rotatable in 4 cardinal directions.
  * - **cone** — a single-cell point/fixture (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
  *   rotation-invariant.
@@ -191,7 +191,7 @@ export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
   },
   ramp: {
     buildType: "ramp",
-    footprint: [2, 1, 1],
+    footprint: [1, 1, 1],
     cost: 8,
     rotationCount: 4,
   },
@@ -297,4 +297,62 @@ export function placementAnchorWorld(grid: BuildCell): BuildCell {
 export function isWithinPlacementRange(player: BuildCell, grid: BuildCell): boolean {
   const a = placementAnchorWorld(grid);
   return Math.hypot(player.x - a.x, player.y - a.y, player.z - a.z) <= BUILD_RANGE.maxPlacementDistance;
+}
+
+// ─────────────────────────── Canonical build slots ───────────────────────────
+//
+// Placement occupancy is per structural SLOT, not per whole cell, so
+// Fortnite-style combinations coexist in one tile: a floor (the tile's
+// horizontal plane at its layer base), a ramp, a cone, and up to four walls
+// on the tile's edges. Only the SAME slot conflicts.
+//
+// Walls are edge pieces: a wall at tile `grid` with rotation r stands on the
+// tile's edge r0 = −Z, r1 = +X, r2 = +Z, r3 = −X. The two tiles that share an
+// edge name it by ONE canonical key, so a wall cannot be placed twice on the
+// same physical edge from either side:
+//
+//   - edges spanning X (r0 / r2): `wall-z:<x>,<y>,<boundary z>` where the
+//     boundary is the larger tile z on either side (r0 → z, r2 → z + 1);
+//   - edges spanning Z (r1 / r3): `wall-x:<boundary x>,<y>,<z>` (r3 → x,
+//     r1 → x + 1).
+
+/** The canonical slot keys a structure occupies. */
+export function structureSlots(buildType: string, grid: BuildCell, rotation: number): string[] {
+  if (buildType === "wall") {
+    const r = ((rotation % 4) + 4) % 4;
+    if (r === 0 || r === 2) return [`wall-z:${grid.x},${grid.y},${grid.z + (r === 2 ? 1 : 0)}`];
+    return [`wall-x:${grid.x + (r === 1 ? 1 : 0)},${grid.y},${grid.z}`];
+  }
+  const channel = buildType === "floor" ? "floor" : buildType === "ramp" ? "ramp" : buildType === "cone" ? "cone" : buildType;
+  return structureFootprintCells(buildType, grid, rotation).map((c) => `${channel}:${c.x},${c.y},${c.z}`);
+}
+
+/** Whether two placements share any canonical slot (i.e. would conflict). */
+export function slotsConflict(
+  a: { buildType: string; grid: BuildCell; rotation: number },
+  b: { buildType: string; grid: BuildCell; rotation: number },
+): boolean {
+  const taken = new Set(structureSlots(b.buildType, b.grid, b.rotation));
+  return structureSlots(a.buildType, a.grid, a.rotation).some((key) => taken.has(key));
+}
+
+/**
+ * The wall rotation (edge) of tile `grid` nearest to the world point
+ * `(x, z)` — walls snap to the edge the player aims at.
+ */
+export function wallEdgeRotation(grid: BuildCell, x: number, z: number): number {
+  const ox = x - grid.x * BUILD_GRID.cellSize;
+  const oz = z - grid.z * BUILD_GRID.cellSize;
+  if (Math.abs(ox) > Math.abs(oz)) return ox > 0 ? 1 : 3;
+  return oz > 0 ? 2 : 0;
+}
+
+/**
+ * The build tile containing world point `(x, z)` on layer `layer`: tiles are
+ * centred on `grid × cellSize` (the canonical geometry convention), so the
+ * nearest tile centre wins.
+ */
+export function buildCellAt(x: number, z: number, layer: number): BuildCell {
+  // `+ 0` normalizes −0 (Math.round of a small negative) to 0.
+  return { x: Math.round(x / BUILD_GRID.cellSize) + 0, y: layer, z: Math.round(z / BUILD_GRID.cellSize) + 0 };
 }

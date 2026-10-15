@@ -52,7 +52,8 @@ class FakeTarget implements InputEventTarget {
 
 /** The world-space X that aims the ground-plane candidate at grid cell `i`. */
 function cellCamX(i: number): number {
-  return i * BUILD_GRID.cellSize + BUILD_GRID.cellSize / 2;
+  // Build tiles are centred on grid × cellSize (the canonical geometry).
+  return i * BUILD_GRID.cellSize;
 }
 
 function createFixture() {
@@ -199,31 +200,28 @@ describe("placement preview correction on server rejection", () => {
     fixture.dispose();
   });
 
-  it("multi-cell (ramp) rejection frees ALL cells in the preview", () => {
+  it("ramp rejection frees its tile's ramp slot in the preview", () => {
     const fixture = createFixture();
     fixture.setBuildMode(true);
 
-    // Select ramp (Digit3). Ramp at cell 0 occupies cells (0,0,0) and (1,0,0).
+    // Select ramp (E). A ramp occupies one tile's ramp slot.
     fixture.selectPiece("KeyE");
 
     // Place a ramp at cell 0.
     fixture.frame(0, true, { gridX: 0 });
     expect(fixture.store.pendingCount).toBe(1);
 
-    // While pending, aiming at cell 1 shows overlap (ramp's second cell is pending).
-    fixture.frame(50, false, { gridX: 1 });
-    expect(fixture.controller.getPreview().valid).toBe(false);
+    // While pending, another ramp on the same tile shows overlap; the next
+    // tile is free (one-tile ramps).
+    fixture.frame(50, false, { gridX: 0 });
     expect(fixture.controller.getPreview().reason).toBe("overlap");
-
-    // Server rejects the ramp.
-    fixture.reject(0, "overlap");
-    expect(fixture.store.pendingCount).toBe(0);
-
-    // Both cells are now free in the preview.
-    fixture.frame(100, false, { gridX: 0 });
+    fixture.frame(60, false, { gridX: 1 });
     expect(fixture.controller.getPreview().valid).toBe(true);
 
-    fixture.frame(150, false, { gridX: 1 });
+    // Server rejects the ramp: the slot is free again.
+    fixture.reject(0, "overlap");
+    expect(fixture.store.pendingCount).toBe(0);
+    fixture.frame(100, false, { gridX: 0 });
     expect(fixture.controller.getPreview().valid).toBe(true);
 
     fixture.dispose();

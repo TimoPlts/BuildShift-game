@@ -207,36 +207,17 @@ describe("contested placement arbitration (authoritative processing order)", () 
 
   // ─── 3. Wall/floor/ramp/cone conflicts (multi-cell structures) ──────────
 
-  it("ramp race: two players race to place a ramp that shares one cell — first wins, second gets overlap", async () => {
+  it("ramp race on one tile: every rotation contests the tile's single ramp slot — first wins", async () => {
     clearRateLimits();
     const ea = internal.state.players.get("a")!.energy;
     const eb = internal.state.players.get("b")!.energy;
     const rampCost = getStructureConfig("ramp")!.cost;
-
-    // Ramp has footprint [2,1,1] at rotation 0: occupies (x,y,z) and (x+1,y,z).
-    // A places ramp at (0,0,0) → cells (0,0,0) and (1,0,0).
-    // B places ramp at (1,0,0) → cells (1,0,0) and (2,0,0).
-    // They share cell (1,0,0).
-
     await placeStructure(a, "ramp", { x: 0, y: 0, z: 0 }, 0, 500);
-    await placeStructure(b, "ramp", { x: 1, y: 0, z: 0 }, 0, 501);
-
-    // A's ramp is placed (cells 0 and 1 occupied).
-    const ramps = [...internal.bld.structures.values()].filter(
-      (s: any) => s.buildType === "ramp",
-    );
+    await placeStructure(b, "ramp", { x: 0, y: 0, z: 0 }, 1, 501);
+    const ramps = [...internal.bld.structures.values()].filter((s: any) => s.buildType === "ramp");
     expect(ramps).toHaveLength(1);
-    expect(ramps[0].grid.x).toBe(0);
-    expect(ramps[0].grid.y).toBe(0);
-    expect(ramps[0].grid.z).toBe(0);
     expect(ramps[0].ownerId).toBe("a");
-
-    // B rejected with overlap (cell (1,0,0) is occupied by A's ramp).
-    const bRejects = (b.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(bRejects).toHaveLength(1);
-
-    // Energy: only A charged.
+    expect(((b.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(1);
     expect(internal.state.players.get("a")!.energy).toBe(ea - rampCost);
     expect(internal.state.players.get("b")!.energy).toBe(eb);
   });
@@ -266,113 +247,49 @@ describe("contested placement arbitration (authoritative processing order)", () 
     expect(internal.state.players.get("b")!.energy).toBe(eb);
   });
 
-  it("cross-type conflict: existing wall blocks a ramp that overlaps it", async () => {
-    // Place a wall at (1,0,0) first.
-    makeStructure("existing-wall", "wall", "a", 1, 0, 0);
-
+  it("slot coexistence: a wall on a tile edge and a ramp in that tile are different slots", async () => {
+    makeStructure("existing-wall", "wall", "a", 1, 0, 0, 0);
     clearRateLimits();
     const eb = internal.state.players.get("b")!.energy;
-
-    // B tries to place a ramp at (0,0,0) → cells (0,0,0) and (1,0,0).
-    // Cell (1,0,0) is occupied by the existing wall.
-    await placeStructure(b, "ramp", { x: 0, y: 0, z: 0 }, 0, 700);
-
-    // Rejected with overlap.
-    const bRejects = (b.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(bRejects).toHaveLength(1);
-
-    // No ramp was created.
-    const ramps = [...internal.bld.structures.values()].filter(
-      (s: any) => s.buildType === "ramp",
-    );
-    expect(ramps).toHaveLength(0);
-
-    // Energy unchanged.
-    expect(internal.state.players.get("b")!.energy).toBe(eb);
+    await placeStructure(b, "ramp", { x: 1, y: 0, z: 0 }, 0, 700);
+    expect(((b.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(0);
+    expect([...internal.bld.structures.values()].filter((s: any) => s.buildType === "ramp")).toHaveLength(1);
+    expect(internal.state.players.get("b")!.energy).toBe(eb - getStructureConfig("ramp")!.cost);
   });
 
-  it("cross-type conflict: existing ramp blocks a wall in its second cell", async () => {
-    // Place a ramp at (0,0,0) → cells (0,0,0) and (1,0,0).
-    makeStructure("existing-ramp", "ramp", "b", 0, 0, 0);
-
-    clearRateLimits();
-    const ea = internal.state.players.get("a")!.energy;
-
-    // A tries to place a wall at (1,0,0) → cell (1,0,0) is occupied by the ramp.
-    await placeStructure(a, "wall", { x: 1, y: 0, z: 0 }, 0, 800);
-
-    const aRejects = (a.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(aRejects).toHaveLength(1);
-
-    // No new wall at (1,0,0).
-    const wallsAt1 = [...internal.bld.structures.values()].filter(
-      (s: any) => s.buildType === "wall" && s.grid.x === 1 && s.grid.y === 0 && s.grid.z === 0,
-    );
-    expect(wallsAt1).toHaveLength(0);
-
-    expect(internal.state.players.get("a")!.energy).toBe(ea);
+  it("slot coexistence: a ramp and all four walls of its tile exist simultaneously", async () => {
+    makeStructure("existing-ramp", "ramp", "b", 0, 0, 0, 1);
+    for (const rotation of [0, 1, 2, 3]) {
+      internal.tc += 11;
+      await placeStructure(a, "wall", { x: 0, y: 0, z: 0 }, rotation, 800 + rotation);
+    }
+    expect(((a.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(0);
+    const walls = [...internal.bld.structures.values()].filter((s: any) => s.buildType === "wall");
+    expect(walls.map((w: any) => w.rotation).sort()).toEqual([0, 1, 2, 3]);
+    expect(internal.bld.structures.size).toBe(5);
   });
 
-  it("ramp with rotation 1: footprint extends in Z, not X", async () => {
+  it("one-tile ramps: ramps in adjacent tiles never contest", async () => {
     clearRateLimits();
-    const ea = internal.state.players.get("a")!.energy;
-    const eb = internal.state.players.get("b")!.energy;
-    const rampCost = getStructureConfig("ramp")!.cost;
-
-    // Ramp rotation 1: footprint swaps → [1,1,2], occupies (x,y,z) and (x,y,z+1).
-    // A places ramp at (0,0,0) rot 1 → cells (0,0,0) and (0,0,1).
-    // B places ramp at (0,0,1) rot 1 → cells (0,0,1) and (0,0,2).
-    // They share cell (0,0,1).
-
     await placeStructure(a, "ramp", { x: 0, y: 0, z: 0 }, 1, 900);
     await placeStructure(b, "ramp", { x: 0, y: 0, z: 1 }, 1, 901);
-
-    const ramps = [...internal.bld.structures.values()].filter(
-      (s: any) => s.buildType === "ramp",
-    );
-    expect(ramps).toHaveLength(1);
-    expect(ramps[0].ownerId).toBe("a");
-
-    const bRejects = (b.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(bRejects).toHaveLength(1);
-
-    expect(internal.state.players.get("a")!.energy).toBe(ea - rampCost);
-    expect(internal.state.players.get("b")!.energy).toBe(eb);
+    expect([...internal.bld.structures.values()].filter((s: any) => s.buildType === "ramp")).toHaveLength(2);
+    expect(((b.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(0);
   });
 
-  it("multi-cell race: three players effectively racing (A and B rapid-fire) — exactly one structure per cell", async () => {
+  it("shared-edge race: the same physical wall edge named from either tile — exactly one wins", async () => {
     clearRateLimits();
-
-    // A places a ramp at (0,0,0) → cells (0,0,0) and (1,0,0).
     await placeStructure(a, "ramp", { x: 0, y: 0, z: 0 }, 0, 1000);
-
-    // B tries wall at (0,0,0) → blocked by ramp's first cell.
-    await placeStructure(b, "wall", { x: 0, y: 0, z: 0 }, 0, 1001);
-
-    // A tries wall at (1,0,0) → blocked by ramp's second cell (rate limit cleared by tc).
+    // B: the +Z edge of tile (0,0,0). A: the −Z edge of tile (0,0,1) — the same edge.
+    await placeStructure(b, "wall", { x: 0, y: 0, z: 0 }, 2, 1001);
     internal.tc += 11;
-    await placeStructure(a, "wall", { x: 1, y: 0, z: 0 }, 0, 1002);
-
-    // Verify occupancy integrity: cells (0,0,0) and (1,0,0) are occupied,
-    // and each has exactly one structure.
-    const occCells = internal.occ;
-    expect(occCells.has("0,0,0")).toBe(true);
-    expect(occCells.has("1,0,0")).toBe(true);
-
-    // Total structures: 1 ramp + 0 walls = 1.
-    expect(internal.bld.structures.size).toBe(1);
-
-    // Energy: only the ramp cost was charged.
-    // We verify the ramp was the only placement and B got no energy change from the rejected wall.
-    const bRejects = (b.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(bRejects).toHaveLength(1);
+    await placeStructure(a, "wall", { x: 0, y: 0, z: 1 }, 0, 1002);
+    const walls = [...internal.bld.structures.values()].filter((s: any) => s.buildType === "wall");
+    expect(walls).toHaveLength(1);
+    expect(walls[0].ownerId).toBe("b");
+    expect(((a.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(1);
+    expect(internal.bld.structures.size).toBe(2); // ramp + one wall
   });
-
-  // ─── 4. Duplicates/replays ──────────────────────────────────────────────
 
   it("duplicate ramp packet: same sequence sent twice does not create duplicate", async () => {
     clearRateLimits();
@@ -468,27 +385,22 @@ describe("contested placement arbitration (authoritative processing order)", () 
     expect(eb).toBe(ENERGY.startingEnergy);
   });
 
-  it("turbo race: rapid mixed build types — no cell is double-occupied", async () => {
+  it("turbo race: mixed types in one tile coexist; only duplicates of one slot are rejected", async () => {
     clearRateLimits();
-
-    // A places a ramp at (0,0,0) → cells (0,0,0) and (1,0,0).
     internal.tc += 11;
     await placeStructure(a, "ramp", { x: 0, y: 0, z: 0 }, 0, 1400);
-
-    // B tries a wall at (0,0,0) and a floor at (1,0,0) — both blocked.
     await placeStructure(b, "wall", { x: 0, y: 0, z: 0 }, 0, 1401);
-    await placeStructure(b, "floor", { x: 1, y: 0, z: 0 }, 0, 1402);
-
-    // Verify: ramp occupies both cells, no other structures exist there.
-    expect(internal.bld.structures.size).toBe(1);
-    const ramp = [...internal.bld.structures.values()][0] as any;
-    expect(ramp.buildType).toBe("ramp");
-    expect(ramp.ownerId).toBe("a");
-
-    // B got 2 overlap rejections.
-    const bRejects = (b.send as ReturnType<typeof vi.fn>).mock.calls
-      .filter(([, d]) => (d as any)?.reason === "overlap");
-    expect(bRejects).toHaveLength(2);
+    internal.tc += 11;
+    await placeStructure(b, "floor", { x: 0, y: 0, z: 0 }, 0, 1402);
+    internal.tc += 11;
+    await placeStructure(a, "floor", { x: 0, y: 1, z: 0 }, 0, 1403); // next layer
+    internal.tc += 11;
+    await placeStructure(b, "ramp", { x: 0, y: 0, z: 0 }, 2, 1404); // duplicate ramp slot
+    internal.tc += 11;
+    await placeStructure(a, "wall", { x: 0, y: 0, z: 0 }, 0, 1405); // duplicate wall edge
+    expect(internal.bld.structures.size).toBe(4);
+    expect(((b.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(1);
+    expect(((a.send as ReturnType<typeof vi.fn>).mock.calls.filter(([, d]) => (d as any)?.reason === "overlap"))).toHaveLength(1);
   });
 
   it("turbo race: 4 rapid requests from same player (rate-limited after first) — exactly one structure", async () => {
@@ -586,27 +498,18 @@ describe("contested placement arbitration (authoritative processing order)", () 
 
   // ─── 8. Occupancy integrity after multiple contested placements ─────────
 
-  it("occupancy set has exactly the expected cells after a contested ramp+wall race", async () => {
+  it("occupancy holds exactly the canonical slots after a contested ramp + shared-edge race", async () => {
     clearRateLimits();
-
-    // A places ramp at (0,0,0) rot 0 → cells "0,0,0" and "1,0,0".
     internal.tc += 11;
     await placeStructure(a, "ramp", { x: 0, y: 0, z: 0 }, 0, 1900);
-
-    // B tries wall at (0,0,0) → rejected.
-    await placeStructure(b, "wall", { x: 0, y: 0, z: 0 }, 0, 1901);
-
-    // Occupancy should have exactly 2 cells (the ramp's footprint).
-    const rampCfg = getStructureConfig("ramp")!;
-    const rampCells = oc({ x: 0, y: 0, z: 0 }, rampCfg, 0);
-    expect(internal.occ.size).toBe(rampCells.size);
-    for (const cell of rampCells) {
-      expect(internal.occ.has(cell)).toBe(true);
-    }
-
-    // No extra cells from the rejected wall.
-    expect(internal.occ.has("0,0,0")).toBe(true); // ramp cell
-    expect(internal.occ.has("1,0,0")).toBe(true); // ramp cell
-    // The wall would have been at (0,0,0) — already counted as ramp's cell.
+    await placeStructure(b, "wall", { x: 0, y: 0, z: 0 }, 2, 1901);
+    internal.tc += 11;
+    await placeStructure(a, "wall", { x: 0, y: 0, z: 1 }, 0, 1902); // same edge: rejected
+    const expected = new Set([
+      ...oc({ x: 0, y: 0, z: 0 }, getStructureConfig("ramp")!, 0),
+      ...oc({ x: 0, y: 0, z: 0 }, getStructureConfig("wall")!, 2),
+    ]);
+    expect([...internal.occ].sort()).toEqual([...expected].sort());
+    expect(expected.size).toBe(2);
   });
 });
