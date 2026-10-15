@@ -46,7 +46,7 @@ describe("GameRuntime movement presentation wiring", () => {
       "this.cameraController.setTransientVerticalOffset(this.movementFeedback.updateCameraMotion(dt))",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+      "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",
     );
     expect(setIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(setIdx);
@@ -61,7 +61,7 @@ describe("GameRuntime movement presentation wiring", () => {
       "this.cameraController.setBuildMode(this.interactionMode.isBuildActive()||this.interactionMode.isEditActive())",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+      "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",
     );
     // The FOV toggle is presentation wiring on the existing camera path, set
     // before the camera update from the shared interaction-mode state (the

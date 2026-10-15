@@ -1385,11 +1385,11 @@ test.describe("Production browser smoke", () => {
     // sub-metre timing jitter from the movement test):
     //   1. cone  — face +X, aim 7.5 m ahead → x cell 0, own z cell
     //   2. floor — face +Z, aim 0.5 m inside the far z cell ahead
-    //   3. wall  — face +Z, just ahead: 2.4 m ahead while ≥ 2.6 m remain in
-    //              the player's own z cell, else 2.0 m into the next cell —
-    //              and the floor takes whichever of those two cells the
-    //              wall does not, so the three placements never overlap no
-    //              matter where in the cell the player stands.
+    //   3. wall  — face +Z, aim 0.4 m past the player's own z cell's far
+    //              edge: walls snap to the nearest tile edge, so the wall
+    //              stands on that edge, in front of the aim point, where the
+    //              same aim ray meets it above the ground. Slots never
+    //              overlap (cone/floor tiles, wall edge).
     //    The wall is placed LAST, directly under the crosshair, so the
     //    immediate-edit step needs no further camera move (its AABB is
     //    first on the aim ray within the 12 m edit range: the floor is one
@@ -1397,10 +1397,10 @@ test.describe("Production browser smoke", () => {
     const auth = await authPos(a);
     expect(auth).not.toBeNull();
     const pz = auth![2];
-    const cellRemaining = 5.12 - (pz - 5.12 * Math.floor(pz / 5.12));
-    const wallInOwnCell = cellRemaining >= 2.6;
-    const wallRadius = wallInOwnCell ? 2.4 : cellRemaining + 2.0;
-    const floorRadius = wallInOwnCell ? cellRemaining + 0.5 : cellRemaining + 5.62;
+    // Tiles are centred on grid × 5.12: the own tile's +Z edge is at (round(pz/5.12) + ½)·5.12.
+    const cellRemaining = (Math.round(pz / 5.12) + 0.5) * 5.12 - pz;
+    const wallRadius = cellRemaining + 0.4;
+    const floorRadius = cellRemaining + 5.62; // 0.5 m into the second cell ahead
     const conePitchPx = pitchPxForRadius(7.5);
     const floorPitchPx = pitchPxForRadius(floorRadius);
     const wallPitchPx = pitchPxForRadius(wallRadius);

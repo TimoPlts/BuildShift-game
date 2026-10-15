@@ -15,6 +15,7 @@ import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
 import { PlayerPresentation } from "../scene/PlayerPresentation";
+import { presentationFeetInto } from "./presentationFeet";
 
 /**
  * The local (Stage 1) player: a stylized low-poly body (see
@@ -302,6 +303,15 @@ export class PlayerController {
       this.mesh.position.z,
     );
     return out;
+  }
+
+  /**
+   * Feet of the rendered body (the camera's follow point) — see
+   * {@link presentationFeetInto}. `rootAtFeet` is true while the runtime
+   * drives the presentation with the networked (feet-convention) prediction.
+   */
+  public getPresentationFeetInto(out: Vector3, rootAtFeet: boolean): Vector3 {
+    return presentationFeetInto(out, this.mesh.position, rootAtFeet);
   }
 
   /**
