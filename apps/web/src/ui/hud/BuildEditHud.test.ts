@@ -56,13 +56,18 @@ describe("BuildEditHud", () => {
     expect(html).toContain("Aim: Wall (2, 0, -3)");
     // The pending tile summary reads the open count against the grid.
     expect(html).toContain("Tiles open: 2/9");
-    // With a target and a live connection, the hint names the full control
-    // set bound by the edit input controller + routed primary button.
-    expect(html).toContain("LMB select tiles");
-    expect(html).toContain("Enter");
-    expect(html).toContain("confirm");
-    expect(html).toContain("cancel");
-    expect(html).toContain("reset");
+    // With a target and a live connection, the hint names the drag-select,
+    // confirm, and reset binds from the gameplay action map.
+    expect(html).toContain("Drag LMB select · G/Enter confirm · T reset");
+    expect(html).not.toContain("Unconfirmed");
+  });
+
+  it("flags an unconfirmed edit, and an invalid pattern instead", () => {
+    const pending = render(props({ mode: true, target: { structureId: "s", buildType: "wall", grid: { x: 0, y: 0, z: 0 } }, applyReady: true, unconfirmed: true }));
+    expect(pending).toContain("Unconfirmed");
+    const invalid = render(props({ mode: true, target: { structureId: "s", buildType: "floor", grid: { x: 0, y: 0, z: 0 } }, applyReady: true, unconfirmed: true, invalidReason: "Floor cannot be fully opened" }));
+    expect(invalid).toContain("Invalid: Floor cannot be fully opened");
+    expect(invalid).not.toContain("Unconfirmed");
   });
 
   it("shows an accurate aim prompt and a no-target chip when in edit mode but aiming off", () => {
@@ -103,7 +108,7 @@ describe("BuildEditHud", () => {
 
     expect(html).toContain("Not connected");
     expect(html).toContain("build-edit-hud__hint--warn");
-    expect(html).not.toContain("LMB select tiles");
+    expect(html).not.toContain("select");
   });
 
   it("shows only the accepted feedback banner after the mode has ended", () => {

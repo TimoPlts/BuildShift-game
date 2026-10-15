@@ -11,7 +11,7 @@
  */
 import type { StructureEditState } from "@buildshift/protocol";
 import type { TargetedStructure } from "./structureSelection";
-import type { BuildEditFeedback } from "./buildEditController";
+import type { BuildEditFeedback, BuildEditView } from "./buildEditController";
 
 /** The structure the aim ray currently selects (presentation data). */
 export interface BuildEditTargetHud {
@@ -58,6 +58,10 @@ export interface BuildEditHudState {
    * and contextual hint.
    */
   applyReady: boolean;
+  /** Whether the edit has unconfirmed changes (draft differs from the piece). */
+  unconfirmed?: boolean;
+  /** Why the current edit pattern cannot be confirmed, or `null`. */
+  invalidReason?: string | null;
 }
 
 /** The raw controller presentation values fed into {@link buildBuildEditHudView}. */
@@ -69,6 +73,8 @@ export interface BuildEditHudInput {
   feedback: BuildEditFeedback | null;
   /** Whether the canonical network connection is live. */
   connected: boolean;
+  /** The locked piece's edit view (draft vs applied), when editing. */
+  view?: BuildEditView | null;
 }
 
 /**
@@ -109,6 +115,8 @@ export function buildBuildEditHudView(input: BuildEditHudInput): BuildEditHudSta
       ? { kind: input.feedback.kind, message: input.feedback.message }
       : null,
     applyReady: input.mode && input.target !== null && input.connected,
+    unconfirmed: input.view?.changed ?? false,
+    invalidReason: input.view?.invalidReason ?? null,
   };
 }
 
@@ -135,5 +143,7 @@ export function buildEditHudChangeKey(state: BuildEditHudState): string {
     tiles,
     feedback,
     state.applyReady ? "r" : "-",
+    state.unconfirmed ? "u" : "-",
+    state.invalidReason ?? "-",
   ].join("|");
 }

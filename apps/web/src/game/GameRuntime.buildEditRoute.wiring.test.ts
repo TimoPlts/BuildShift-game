@@ -41,10 +41,10 @@ describe("build-edit authoritative route", () => {
     // the SAME canvas + the SAME network client instance + the SAME shared
     // interaction-mode coordinator (overhaul task 12).
     expect(runtime).toContain(
-      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics);",
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics,inputManager.actions);",
     );
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
     );
     // The build-edit system is created after the shared client exists.
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
@@ -62,6 +62,7 @@ describe("build-edit authoritative route", () => {
     expect(block).toContain("new BuildEditInputController(");
     expect(block).toContain("options?.env");
     expect(block).toContain("options?.interactionMode");
+    expect(block).toContain("options?.actions");
     expect(block).toContain(
       "const controller = new BuildEditController(\n    input,\n    network,",
     );
@@ -75,7 +76,7 @@ describe("build-edit authoritative route", () => {
     // ... and the controller references the shared constant (not a
     // hard-coded string side channel) in both directions: intents go out on
     // it, the result broadcast comes in on it.
-    expect(buildEditController).toContain("this.network.send(EDIT_GRID_ACTION_MESSAGE, payload)");
+    expect(buildEditController).toContain("this.network.send(EDIT_GRID_ACTION_MESSAGE, { structureId: id, ...action })");
     expect(buildEditController).toContain(
       "this.unsubscribeResult = network.onEvent(\n      EDIT_GRID_ACTION_MESSAGE,",
     );
@@ -87,13 +88,17 @@ describe("build-edit authoritative route", () => {
     // in-round flag the runtime hands over each frame ...
     const updateIdx = buildEditController.indexOf("public updateFrame(ctx: BuildEditFrameContext)");
     expect(updateIdx).toBeGreaterThan(-1);
-    const updateBlock = buildEditController.slice(updateIdx, updateIdx + 3000);
+    const updateBlock = buildEditController.slice(updateIdx, updateIdx + 8000);
     expect(updateBlock).toContain("ctx.connected");
     expect(updateBlock).toContain("ctx.inRound");
-    // ... and the per-frame intent path re-checks both before consuming the
-    // routed select edges.
+    // ... the per-frame intent path re-checks both before consuming the
+    // routed select edges ...
     expect(updateBlock).toContain(
-      "if (this.mode && this.target !== null && ctx.connected && ctx.inRound) {",
+      "if (this.mode && draft !== null && structure !== undefined && ctx.connected && ctx.inRound) {",
     );
+    // ... and so does the commit path that sends a confirmed draft.
+    const exitIdx = buildEditController.indexOf("private handleExit(");
+    expect(exitIdx).toBeGreaterThan(-1);
+    expect(buildEditController.slice(exitIdx, exitIdx + 900)).toContain("if (!ctx.connected || !ctx.inRound");
   });
 });

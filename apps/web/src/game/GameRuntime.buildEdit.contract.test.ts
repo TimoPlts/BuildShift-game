@@ -39,13 +39,13 @@ const hud = readFileSync(new URL("../ui/hud/GameHud.tsx", import.meta.url), "utf
 describe("GameRuntime build-edit wiring", () => {
   it("constructs the build-edit system + preview from the existing canvas + network client", () => {
     expect(runtime).toContain(
-      'import{createBuildEditSystem,buildBuildEditHudView,EditPreviewPresentation,aimEditTile,BUILD_EDIT_RANGE,type BuildEditSystem}from"./buildEdit"',
+      'import{createBuildEditSystem,buildBuildEditHudView,EditPreviewPresentation,type BuildEditSystem}from"./buildEdit"',
     );
     expect(runtime).toContain("private readonly buildEditSystem:BuildEditSystem;");
     // Same canvas + network client as the building system — no new network
     // surface — plus the shared interaction-mode coordinator.
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
     );
     // The projected edit-grid preview is a presentation-only scene resource.
     expect(runtime).toContain(
@@ -55,7 +55,7 @@ describe("GameRuntime build-edit wiring", () => {
     // precedes it, which itself follows `this.networkClient=...`).
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
     const buildEditIdx = runtime.indexOf(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
     );
     expect(clientIdx).toBeGreaterThan(-1);
     expect(buildEditIdx).toBeGreaterThan(clientIdx);
@@ -67,12 +67,13 @@ describe("GameRuntime build-edit wiring", () => {
       "private readonly interactionMode=new InteractionModeCoordinator();",
     );
     // ... and the SAME instance is threaded into both systems (no per-system
-    // mode state, no duplicate listeners — the coordinator owns none).
+    // mode state, no duplicate listeners — the coordinator owns none), with
+    // the input manager's ONE gameplay action map (shared bindings).
     expect(runtime).toContain(
-      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics);",
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics,inputManager.actions);",
     );
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics});",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
     );
   });
 
@@ -103,15 +104,16 @@ describe("GameRuntime build-edit wiring", () => {
     expect(block).toContain("editSelectPressed:route.editSelectPressed,editSelectHeld:route.editSelectHeld");
   });
 
-  it("drives the projected edit-grid preview from the pending state + pure tile mapping", () => {
+  it("drives the projected edit-grid preview from the controller's edit view (draft vs applied, crosshair tile)", () => {
     const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
     expect(fnIdx).toBeGreaterThan(-1);
     const block = runtime.slice(fnIdx, fnIdx + 1400);
-    // The preview shows the pending (optimistic/auth) state for the targeted
-    // structure with the crosshair tile / ramp-half highlighted ...
+    // The preview shows the locked piece's unconfirmed draft against its
+    // applied state, with the crosshair tile / ramp half highlighted (one
+    // canonical sampling path inside the controller) ...
+    expect(block).toContain("const view=controller.getEditView();");
     expect(block).toContain("this.editPreview.show({");
-    expect(block).toContain("aimEditTile({structure,aimOrigin:camera.position");
-    expect(block).toContain("maxRange:BUILD_EDIT_RANGE");
+    expect(block).toContain("state:view.draftState,baseState:view.baseState,selectedTile:view.hoverTile,selectedVariant:view.hoverVariant");
     // ... and hides it whenever there is no target or pending state.
     expect(block).toContain("this.editPreview.hide();");
   });

@@ -204,7 +204,7 @@ describe("placement preview correction on server rejection", () => {
     fixture.setBuildMode(true);
 
     // Select ramp (Digit3). Ramp at cell 0 occupies cells (0,0,0) and (1,0,0).
-    fixture.selectPiece("Digit3");
+    fixture.selectPiece("KeyE");
 
     // Place a ramp at cell 0.
     fixture.frame(0, true, { gridX: 0 });

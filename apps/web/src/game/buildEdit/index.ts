@@ -6,8 +6,10 @@
  *
  *  - {@link selectTargetStructure} — pure aim-ray selection of an owned
  *    structure from the authoritative building-state mirror.
- *  - {@link aimEditTile} — pure crosshair → canonical tile (wall 3×3,
- *    floor/cone 2×2) / ramp half-cell mapping for the selected piece.
+ *  - {@link aimEditTile} / {@link sampleEditSurface} — pure crosshair →
+ *    canonical tile (wall 3×3, floor/cone 2×2) / ramp width-half mapping,
+ *    and {@link TileDragSelection} — the local drag selection that never
+ *    skips a tile the crosshair path crosses.
  *  - {@link BuildEditInputController} — the browser intent source (edit mode
  *    toggle, confirm, cancel, reset, and the routed primary-button
  *    tile-selection state — no mouse listeners of its own).
@@ -43,6 +45,7 @@ import {
   type BuildEditInputEnvironment,
 } from "./buildEditInputController";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
+import type { ActionMap } from "../input/actionBindings";
 import type { TargetedStructure } from "./structureSelection";
 import type { BuildLatencyMetrics } from "../building/buildLatencyMetrics";
 
@@ -87,6 +90,8 @@ export interface CreateBuildEditSystemOptions {
    * developer diagnostics overlay.
    */
   latency?: BuildLatencyMetrics;
+  /** The shared gameplay action map (bindings); defaults when omitted. */
+  actions?: ActionMap;
 }
 
 /**
@@ -104,6 +109,7 @@ export function createBuildEditSystem(
     canvas,
     options?.env,
     options?.interactionMode,
+    options?.actions,
   );
   const controller = new BuildEditController(
     input,
@@ -134,6 +140,10 @@ export {
   BUILD_EDIT_RANGE,
   EDIT_GRID_ACTION_MESSAGE,
   parseEditActionResult,
+  editDiffActions,
+  sameEditState,
+  type BuildEditView,
+  type EditActionBody,
   type BuildEditFrameContext,
   type BuildEditNetworkLike,
   type BuildEditActionResultInfo,
@@ -156,6 +166,17 @@ export {
   type StructureSelectionInput,
   type Vec3Like,
 } from "./structureSelection";
+export {
+  TileDragSelection,
+  cellsAlongSegment,
+  editGridSize,
+  sampleEditSurface,
+  sampleTile,
+  type EditGridSize,
+  type EditSurfaceSample,
+  type EditRampSample,
+  type TileDragMode,
+} from "./editDragSelection";
 export {
   aimEditTile,
   type EditTileAimResult,

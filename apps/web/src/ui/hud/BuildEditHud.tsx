@@ -21,6 +21,7 @@ import type {
   BuildEditTargetHud,
   BuildEditFeedbackHud,
 } from "../../game/buildEdit/buildEditHudView";
+import { actionLabel } from "../../game/input/actionBindings";
 
 export interface BuildEditHudProps {
   /** Whether edit mode is active. */
@@ -40,6 +41,10 @@ export interface BuildEditHudProps {
    * structure aimed, connection live).
    */
   applyReady: boolean;
+  /** Whether the edit has unconfirmed changes. */
+  unconfirmed?: boolean;
+  /** Why the current pattern cannot be confirmed, or `null`. */
+  invalidReason?: string | null;
 }
 
 /** Human-readable labels per build type (the "Aim:" read-out). */
@@ -72,6 +77,8 @@ export function BuildEditHud({
   rampVariant,
   feedback,
   applyReady,
+  unconfirmed = false,
+  invalidReason = null,
 }: BuildEditHudProps) {
   // Idle: nothing to show.
   if (!mode && feedback === null) {
@@ -117,11 +124,17 @@ export function BuildEditHud({
         {tilesSummary !== null && (
           <span className="build-edit-hud__tiles">{tilesSummary}</span>
         )}
+        {invalidReason !== null ? (
+          <span className="build-edit-hud__invalid">Invalid: {invalidReason}</span>
+        ) : unconfirmed ? (
+          <span className="build-edit-hud__pending">Unconfirmed</span>
+        ) : null}
       </div>
       <div className="build-edit-hud__hint">
         {applyReady ? (
           <span className="build-edit-hud__hint--ok">
-            LMB select tiles · Enter confirm · C cancel · ⌫ reset · F exit
+            Drag {actionLabel("editSelect")} select · {actionLabel("edit")}/{actionLabel("editConfirm")} confirm ·{" "}
+            {actionLabel("editReset")} reset
           </span>
         ) : (
           target !== null && (

@@ -155,25 +155,25 @@ describe("placement preview build bounds (shared BUILD_BOUNDS rule)", () => {
   });
 });
 
-describe("Q/E rotation, turbo and piece switching", () => {
-  it("Q/E wrap around 0–3", () => {
+describe("rotation binds, turbo and piece switching", () => {
+  it("rotate left/right wrap around 0–3", () => {
     const f = createFixture();
     expect(f.input.getRotation()).toBe(0);
-    f.key("KeyQ");
+    f.key("KeyX");
     expect(f.input.getRotation()).toBe(3);
-    f.key("KeyE");
+    f.key("KeyR");
     expect(f.input.getRotation()).toBe(0);
-    for (const expected of [1, 2, 3, 0]) { f.key("KeyE"); expect(f.input.getRotation()).toBe(expected); }
-    for (const expected of [3, 2, 1, 0]) { f.key("KeyQ"); expect(f.input.getRotation()).toBe(expected); }
+    for (const expected of [1, 2, 3, 0]) { f.key("KeyR"); expect(f.input.getRotation()).toBe(expected); }
+    for (const expected of [3, 2, 1, 0]) { f.key("KeyX"); expect(f.input.getRotation()).toBe(expected); }
     f.dispose();
   });
 
   it("turbo keeps placing while rotating, each request carrying the current rotation", () => {
     const f = createFixture();
-    f.key("Digit1"); // wall
+    f.key("KeyQ"); // wall
     const cells = [-2, -1, 0, 1, 2];
     for (const [i, x] of cells.entries()) {
-      if (i > 0) f.key("KeyE");
+      if (i > 0) f.key("KeyR");
       f.frame(x, 0, true);
     }
     expect(f.sent.map(r => r.rotation)).toEqual([0, 1, 2, 3, 0]);
@@ -183,8 +183,8 @@ describe("Q/E rotation, turbo and piece switching", () => {
 
   it("switching wall → floor → ramp → cone after rotating sends the canonical rotation for each piece", () => {
     const f = createFixture();
-    f.key("KeyE"); // rotation 1 selected
-    const plan: Array<[string, BuildType, number]> = [["Digit1", "wall", -2], ["Digit2", "floor", -1], ["Digit3", "ramp", 0], ["Digit4", "cone", 2]];
+    f.key("KeyR"); // rotation 1 selected
+    const plan: Array<[string, BuildType, number]> = [["KeyQ", "wall", -2], ["KeyF", "floor", -1], ["KeyE", "ramp", 0], ["KeyZ", "cone", 2]];
     for (const [code, , x] of plan) { f.key(code); f.frame(x, 0, true); }
     expect(f.sent.map(r => [r.buildType, r.rotation])).toEqual([["wall", 1], ["floor", 0], ["ramp", 1], ["cone", 0]]);
     for (const r of f.sent) expect(isValidPlacementRotation(r.buildType as string, r.rotation as number)).toBe(true);

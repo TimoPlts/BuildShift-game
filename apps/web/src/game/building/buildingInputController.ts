@@ -4,11 +4,16 @@
  *
  * Owns the *player intent* signals for building that live on the keyboard
  * (docs/TECHNICAL_ARCHITECTURE.md §9 "Client Owns ... Keyboard state, Mouse
- * state, Build ghost preview"):
+ * state, Build ghost preview"), resolved through the shared gameplay
+ * {@link ActionMap} (no literal key codes):
  *
- *  - `B`            toggle build mode on/off
- *  - `1` / `2` / `3` / `4`   select wall / floor / ramp / cone
- *  - `Q` / `E`      rotate the selected placement (counter-clockwise / clockwise)
+ *  - `buildWall` / `buildFloor` / `buildRamp` / `buildCone` — dedicated
+ *    build binds: select that piece **and** enter building in one press, from
+ *    weapon, build, or edit mode (no mode key required first),
+ *  - `weaponSlot1` / `weaponSlot2` — leave building for weapon mode (the
+ *    weapon switch itself is handled by the weapon input),
+ *  - `buildRotateLeft` / `buildRotateRight` — rotate while building,
+ *  - `buildToggle` — optional legacy build-mode toggle (never required).
  *
  * The shared left mouse button is NOT listened to here: its browser state is
  * owned by the centralized {@link InputManager} (movement/fire module), and
@@ -32,23 +37,25 @@
  */
 import type { BuildType, GridRotation } from "@buildshift/protocol";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
+import { ActionMap, BUILD_PIECE_ACTIONS, DEFAULT_ACTION_BINDINGS } from "../input/actionBindings";
 
-/** The key that toggles build mode. */
-export const BUILD_MODE_TOGGLE_KEY = "KeyB";
+/** The default key of the optional legacy build-mode toggle. */
+export const BUILD_MODE_TOGGLE_KEY = DEFAULT_ACTION_BINDINGS.buildToggle[0]!;
 
-/** Maps number-row keys to build types (1=wall, 2=floor, 3=ramp, 4=cone). */
-export const BUILD_TYPE_KEYS: Readonly<Record<string, BuildType>> = {
-  Digit1: "wall",
-  Digit2: "floor",
-  Digit3: "ramp",
-  Digit4: "cone",
-};
+/** Default dedicated build binds → build types (derived from the action map). */
+export const BUILD_TYPE_KEYS: Readonly<Record<string, BuildType>> = Object.freeze(
+  Object.fromEntries(BUILD_PIECE_ACTIONS.flatMap(([action, type]) => DEFAULT_ACTION_BINDINGS[action].map((code) => [code, type]))),
+);
 
-/** The key that rotates the placement counter-clockwise. */
-export const ROTATE_LEFT_KEY = "KeyQ";
+/** The default key that rotates the placement counter-clockwise. */
+export const ROTATE_LEFT_KEY = DEFAULT_ACTION_BINDINGS.buildRotateLeft[0]!;
 
-/** The key that rotates the placement clockwise. */
-export const ROTATE_RIGHT_KEY = "KeyE";
+/** Build-piece action → build type. */
+const BUILD_PIECE_TYPE: Readonly<Record<(typeof BUILD_PIECE_ACTIONS)[number][0], BuildType>> =
+  Object.fromEntries(BUILD_PIECE_ACTIONS) as Record<(typeof BUILD_PIECE_ACTIONS)[number][0], BuildType>;
+
+/** The default key that rotates the placement clockwise (build mode only). */
+export const ROTATE_RIGHT_KEY = DEFAULT_ACTION_BINDINGS.buildRotateRight[0]!;
 
 /** The minimum building-input event shape the controller reads. */
 interface KeyboardLikeEvent {
@@ -95,15 +102,12 @@ export function defaultBuildingInputEnvironment(
 /**
  * Owns the build-mode keyboard/mouse intent signals.
  *
- * Mode ownership (overhaul task 12): when constructed with a shared
- * `InteractionModeCoordinator`, KeyB toggles the build layer on the
- * coordinator (not a private flag) and `isBuildModeActive()` reports the
- * coordinator's effective mode — so build and edit can never be "active"
- * at once, and confirming/cancelling an edit (which clears the build layer
- * too) immediately returns the number keys to the weapon slots. Without a
- * coordinator the controller keeps its own flag (legacy behavior, used by
- * standalone unit tests). This controller's browser listeners are
- * unchanged — the coordinator is a pure state machine with none of its own.
+ * Mode ownership: when constructed with a shared `InteractionModeCoordinator`,
+ * the build binds drive the coordinator (not a private flag) and
+ * `isBuildModeActive()` reports the coordinator's effective mode — so build
+ * and edit can never be "active" at once. Without a coordinator the controller
+ * keeps its own flag (used by standalone unit tests). The coordinator is a
+ * pure state machine with no listeners of its own.
  */
 export class BuildingInputController {
   private readonly canvas: HTMLCanvasElement;
@@ -113,15 +117,18 @@ export class BuildingInputController {
   private rotation: GridRotation = 0;
   private disposed = false;
   private readonly mode: InteractionModeCoordinator | null;
+  private readonly actions: ActionMap;
 
   public constructor(
     canvas: HTMLCanvasElement,
     env?: BuildingInputEnvironment,
     mode?: InteractionModeCoordinator,
+    actions?: ActionMap,
   ) {
     this.canvas = canvas;
     this.env = env ?? defaultBuildingInputEnvironment(canvas);
     this.mode = mode ?? null;
+    this.actions = actions ?? new ActionMap();
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
@@ -192,25 +199,36 @@ export class BuildingInputController {
       return;
     }
 
-    if (e.code === BUILD_MODE_TOGGLE_KEY) {
-      if (this.mode) {
-        this.mode.toggleBuild();
-      } else {
-        this.buildModeActive = !this.buildModeActive;
+    for (const action of this.actions.actionsFor(e.code)) {
+      switch (action) {
+        case "buildToggle":
+          if (this.mode) this.mode.toggleBuild();
+          else this.buildModeActive = !this.buildModeActive;
+          break;
+        case "buildWall":
+        case "buildFloor":
+        case "buildRamp":
+        case "buildCone":
+          // One press: piece + build layer. The routed primary hold keeps
+          // placing with the new piece if the button is already down.
+          this.selectedBuildType = BUILD_PIECE_TYPE[action];
+          if (this.mode) this.mode.selectBuild();
+          else this.buildModeActive = true;
+          break;
+        case "weaponSlot1":
+        case "weaponSlot2":
+          if (this.mode) this.mode.selectWeapon();
+          else this.buildModeActive = false;
+          break;
+        case "buildRotateLeft":
+          if (this.isBuildModeActive()) this.rotation = ((this.rotation + 3) % 4) as GridRotation;
+          break;
+        case "buildRotateRight":
+          if (this.isBuildModeActive()) this.rotation = ((this.rotation + 1) % 4) as GridRotation;
+          break;
+        default:
+          break;
       }
-      return;
-    }
-    const type = BUILD_TYPE_KEYS[e.code];
-    if (type !== undefined) {
-      this.selectedBuildType = type;
-      return;
-    }
-    if (e.code === ROTATE_LEFT_KEY) {
-      this.rotation = ((this.rotation + 3) % 4) as GridRotation;
-      return;
-    }
-    if (e.code === ROTATE_RIGHT_KEY) {
-      this.rotation = ((this.rotation + 1) % 4) as GridRotation;
     }
   };
 

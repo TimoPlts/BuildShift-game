@@ -332,7 +332,7 @@ describe("turbo building: piece switch", () => {
     fixture.confirm(0, 0, "wall");
 
     // Switch to floor mid-hold (no release): the next window places a floor.
-    fixture.selectPiece("Digit2");
+    fixture.selectPiece("KeyF");
     fixture.frame(PLACEMENT_REQUEST_INTERVAL_MS + 60, true, { gridX: 1 });
     expect(fixture.placedRequests()).toHaveLength(2);
     expect(fixture.placedRequests()[1].buildType).toBe("floor");
@@ -341,7 +341,7 @@ describe("turbo building: piece switch", () => {
     // Switch to ramp mid-hold: the next window places a ramp (at x=-2: a
     // rotation-0 ramp spans x=-2..-1, inside the shared build bounds and
     // clear of the wall at 0 / floor at 1).
-    fixture.selectPiece("Digit3");
+    fixture.selectPiece("KeyE");
     fixture.frame(2 * PLACEMENT_REQUEST_INTERVAL_MS + 120, true, { gridX: -2 });
     expect(fixture.placedRequests()).toHaveLength(3);
     expect(fixture.placedRequests()[2].buildType).toBe("ramp");
@@ -358,28 +358,28 @@ describe("turbo building: piece switch", () => {
 
     // Start with ramp selected (Digit3). Ramp footprint [2,1,1] occupies
     // cells (0,0,0) and (1,0,0).
-    fixture.selectPiece("Digit3");
+    fixture.selectPiece("KeyE");
     fixture.frame(0, true, { gridX: 0 });
     expect(fixture.placedRequests()).toHaveLength(1);
     expect(fixture.placedRequests()[0].buildType).toBe("ramp");
     fixture.confirm(0, 0, "ramp");
 
     // Switch to floor mid-hold: cell 2 is free (ramp occupies 0 and 1).
-    fixture.selectPiece("Digit2");
+    fixture.selectPiece("KeyF");
     fixture.frame(PLACEMENT_REQUEST_INTERVAL_MS + 50, true, { gridX: 2 });
     expect(fixture.placedRequests()).toHaveLength(2);
     expect(fixture.placedRequests()[1].buildType).toBe("floor");
     fixture.confirm(2, 1, "floor");
 
     // Switch to cone mid-hold: cell -1 is free and in range.
-    fixture.selectPiece("Digit4");
+    fixture.selectPiece("KeyZ");
     fixture.frame(2 * PLACEMENT_REQUEST_INTERVAL_MS + 100, true, { gridX: -1 });
     expect(fixture.placedRequests()).toHaveLength(3);
     expect(fixture.placedRequests()[2].buildType).toBe("cone");
     fixture.confirm(-1, 2, "cone");
 
     // Switch back to wall mid-hold: cell -2 is free and in range.
-    fixture.selectPiece("Digit1");
+    fixture.selectPiece("KeyQ");
     fixture.frame(3 * PLACEMENT_REQUEST_INTERVAL_MS + 150, true, { gridX: -2 });
     expect(fixture.placedRequests()).toHaveLength(4);
     expect(fixture.placedRequests()[3].buildType).toBe("wall");
@@ -403,7 +403,7 @@ describe("turbo building: piece switch", () => {
     // Switch to cone; the selection change is synchronous — no extra frame
     // or state transition is needed. The next valid frame in a new window
     // places the cone.
-    fixture.selectPiece("Digit4");
+    fixture.selectPiece("KeyZ");
     // The rate window has not opened yet, so even at t=50 no request.
     fixture.frame(50, true, { gridX: 1 });
     expect(fixture.placedRequests()).toHaveLength(1);
@@ -421,19 +421,19 @@ describe("turbo building: piece switch", () => {
     fixture.setBuildMode(true);
 
     // Press each piece key in sequence; build mode must remain active.
-    fixture.selectPiece("Digit3");
+    fixture.selectPiece("KeyE");
     expect(fixture.input.isBuildModeActive()).toBe(true);
     expect(fixture.input.getSelectedBuildType()).toBe("ramp");
 
-    fixture.selectPiece("Digit2");
+    fixture.selectPiece("KeyF");
     expect(fixture.input.isBuildModeActive()).toBe(true);
     expect(fixture.input.getSelectedBuildType()).toBe("floor");
 
-    fixture.selectPiece("Digit4");
+    fixture.selectPiece("KeyZ");
     expect(fixture.input.isBuildModeActive()).toBe(true);
     expect(fixture.input.getSelectedBuildType()).toBe("cone");
 
-    fixture.selectPiece("Digit1");
+    fixture.selectPiece("KeyQ");
     expect(fixture.input.isBuildModeActive()).toBe(true);
     expect(fixture.input.getSelectedBuildType()).toBe("wall");
 

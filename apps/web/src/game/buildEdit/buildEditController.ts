@@ -4,39 +4,31 @@
  *
  * Wires the client's half of the canonical edit-grid contract for *editing*
  * an already-placed, owned structure — as opposed to the
- * {@link BuildingController}, which handles *placing* new ones. The fast
- * third-person interaction is:
+ * {@link BuildingController}, which handles *placing* new ones. The
+ * competitive interaction (bindings are gameplay actions, see
+ * `DEFAULT_ACTION_BINDINGS`):
  *
- *  - aim at an owned piece (the crosshair selects via the shared aim-ray
- *    selection volume),
- *  - click (or hold-drag) the primary button on the projected tile grid —
- *    the crosshair maps to the canonical tile (wall 3×3, floor/cone 2×2) or
- *    ramp half-cell, and each change is sent as an `edit_grid_action`
- *    intent (`select` / `deselect`),
- *  - confirm (`Enter`), cancel (`C`), or reset (`Backspace`) the edit.
+ *  - aim at an owned piece and press `edit`: the piece is locked into a local
+ *    draft (its canonical edit grid becomes targetable),
+ *  - hold `editSelect` (the primary button) and drag across the canonical
+ *    tiles (wall 3×3, floor/cone 2×2): every tile the crosshair path crosses
+ *    is selected — or restored, when the drag started on a removed tile —
+ *    live in the preview; ramps pick a width half by press,
+ *  - `editReset` previews the default form immediately,
+ *  - `editConfirm` (or `edit` again, or a build-piece / weapon bind) applies
+ *    the draft; `editCancel` (unbound by default) drops it.
  *
  * State model (all presentation-only):
  *
  *  - the authoritative per-structure edit state is tracked from two
  *    converging sources: the replicated room state (each structure's
- *    `editGrid`, parsed from the server's `editKind` / `editTiles` /
- *    `editRampVariant` fields) and the fast
- *    `two-player:edit_grid_action` result broadcast (which carries the
- *    authoritative state on success);
- *  - the player's in-progress edit is applied *optimistically* the moment
- *    the action is sent (the pending state shown in the preview), and
- *    reconciled on the authoritative result: a success re-syncs the
- *    pending state to the broadcast, a rejection rolls it back to the last
- *    authoritative state and surfaces a reason banner;
- *  - terminal actions (confirm / cancel / reset) are only sent when the
- *    player actually changed the piece — the server treats a confirm as an
- *    acknowledgement of an already-committed state, so there is nothing to
- *    send for an untouched piece. A `reset` (or `cancel`) is applied to the
- *    pending state *optimistically and immediately*, so the preview snaps to
- *    the full/default canonical form before the server round-trip (the fast,
- *    combat-ready reset); repeated edit → reset → edit cycles therefore
- *    replicate identically from the same canonical baseline.
- *
+ *    `editGrid`) and the fast `two-player:edit_grid_action` result broadcast;
+ *  - the drag selection is local input state: nothing is sent per tile or
+ *    per hover. Confirming sends only the canonical difference between the
+ *    draft and the applied state ({@link editDiffActions}) over the existing
+ *    edit route, shows it optimistically at once, and rolls back to the
+ *    authoritative state (with a reason banner) if the server rejects it.
+
  * Authority contract: this controller NEVER edits structures on its own
  * authority. It sends *intents* and consumes the server's results. It does
  * not write to the building mirror, structure health, ownership, or any
@@ -56,7 +48,8 @@ import {
 import { BUILD_RANGE } from "@buildshift/game-config";
 import type { BuildLatencyMetrics } from "../building/buildLatencyMetrics";
 import type { BuildEditInputController } from "./buildEditInputController";
-import { aimEditTile, type EditTileAimResult } from "./editTileSelection";
+import type { EditTileAimResult } from "./editTileSelection";
+import { TileDragSelection, editGridSize, sampleEditSurface, sampleTile } from "./editDragSelection";
 import {
   selectTargetStructure,
   type TargetedStructure,
@@ -165,8 +158,49 @@ const REJECTION_LABELS: Readonly<Record<string, string>> = {
   invalid_form: "Floor cannot be fully opened",
 };
 
+/** The local, unconfirmed edit of the locked piece (presentation/input only). */
+interface EditDraft {
+  structureId: string;
+  buildType: StructureState["buildType"];
+  /** The authoritative (or in-flight optimistic) state the draft started from. */
+  base: StructureEditState;
+  /** The player's working state (shown in the preview; sent on confirm). */
+  state: StructureEditState;
+}
+
+/** The edit view for the preview / HUD while a piece is being edited. */
+export interface BuildEditView {
+  structureId: string;
+  /** The applied state (authoritative or in-flight optimistic). */
+  baseState: StructureEditState;
+  /** The player's unconfirmed working state. */
+  draftState: StructureEditState;
+  /** The tile under the crosshair (wall 0–8, floor/cone 0–3), or `null`. */
+  hoverTile: number | null;
+  /** The ramp width half under the crosshair, or `null`. */
+  hoverVariant: RampVariant | null;
+  /** Whether a drag (held select) is in progress. */
+  dragging: boolean;
+  /** Whether the draft differs from the applied state. */
+  changed: boolean;
+  /** Human-readable reason when the draft cannot be confirmed, else `null`. */
+  invalidReason: string | null;
+}
+
 /**
  * The client build-edit orchestrator (presentation-only).
+ *
+ * Edit flow (competitive): the edit bind locks the owned piece under the
+ * crosshair into a local **draft**. Holding the primary button and dragging
+ * across the piece's canonical tiles selects them locally — every tile the
+ * crosshair path crosses, even between slow frames ({@link TileDragSelection}).
+ * Reset previews the default form immediately. Nothing is sent while
+ * dragging: confirming (the confirm bind, the edit bind again, or leaving
+ * edit through a build-piece / weapon bind) sends only the canonical
+ * difference between the draft and the applied state over the existing
+ * `edit_grid_action` route (restores before removals, or one `reset`), then a
+ * `confirm`. The result is shown optimistically and rolled back if the
+ * server rejects it; the server remains the only authority.
  */
 export class BuildEditController {
   private readonly input: BuildEditInputController;
@@ -189,32 +223,25 @@ export class BuildEditController {
    */
   private readonly authStates = new Map<string, StructureEditState>();
   /**
-   * The last optimistically-applied state per structure (the pending state
-   * shown in the preview while the server's result is in flight).
+   * The last optimistically-applied state per structure (the confirmed edit
+   * shown while the server's results are in flight).
    */
   private readonly optimistic = new Map<string, StructureEditState>();
   /** Actions sent but not yet answered, per structure. */
   private readonly unacked = new Map<string, number>();
-  /**
-   * Structures the local player has changed since the last terminal action
-   * (gates the confirm/cancel/reset sends — an untouched piece has nothing
-   * to confirm).
-   */
-  private readonly touched = new Set<string>();
   /** The last sent action per structure (for result feedback). */
   private readonly lastAction = new Map<string, string>();
-  /**
-   * The last painted target while holding the primary button (`null`
-   * between presses) — prevents drag-painting from re-applying the same
-   * tile every frame.
-   */
-  private lastPainted: { structureId: string; key: string } | null = null;
   /**
    * Structures with a successful edit result that have been consumed
    * (unacked reached 0) but whose `acceptToReplicatedMeshMs` has not yet
    * been resolved. Resolved on the next frame in {@link updateFrame}.
    */
   private readonly pendingEditMesh = new Set<string>();
+
+  /** The locked piece's unconfirmed edit, or `null`. */
+  private draft: EditDraft | null = null;
+  private readonly drag = new TileDragSelection();
+  private hover: EditTileAimResult | null = null;
 
   public constructor(
     input: BuildEditInputController,
@@ -240,7 +267,7 @@ export class BuildEditController {
     return this.input.isEditModeActive();
   }
 
-  /** The structure the aim ray currently selects, or `null`. */
+  /** The structure being edited (locked) or aimed at, or `null`. */
   public getTarget(): TargetedStructure | null {
     return this.target;
   }
@@ -251,16 +278,38 @@ export class BuildEditController {
   }
 
   /**
-   * The pending edit state for the targeted structure (the preview's
-   * canonical input): the optimistic state while actions are in flight,
-   * otherwise the last authoritative state (or the default when the piece
-   * has never been edited). `null` when nothing is targeted.
+   * The state the preview shows for the target: the player's draft while
+   * editing, otherwise the in-flight optimistic or authoritative state (the
+   * default when never edited). `null` when nothing is targeted.
    */
   public getPendingState(): StructureEditState | null {
     if (this.target === null) {
       return null;
     }
-    return this.pendingStateFor(this.target.structureId);
+    if (this.draft !== null && this.draft.structureId === this.target.structureId) {
+      return this.draft.state;
+    }
+    return this.pendingStateFor(this.target.structureId, this.target.buildType);
+  }
+
+  /** The full edit view of the locked piece (preview + HUD), or `null`. */
+  public getEditView(): BuildEditView | null {
+    const draft = this.draft;
+    if (draft === null || this.target === null || draft.structureId !== this.target.structureId) {
+      return null;
+    }
+    const base = this.pendingStateFor(draft.structureId, draft.buildType);
+    const hover = this.hover;
+    return {
+      structureId: draft.structureId,
+      baseState: base,
+      draftState: draft.state,
+      hoverTile: hover !== null && hover.kind === "tile" ? hover.tileIndex : null,
+      hoverVariant: hover !== null && hover.kind === "ramp_half" ? (hover.side === "left" ? "half_left" : "half_right") : null,
+      dragging: this.drag.isDragging(),
+      changed: !sameEditState(base, draft.state),
+      invalidReason: draftInvalidReason(draft),
+    };
   }
 
   // ── per-frame update ──────────────────────────────────────────────────────
@@ -270,13 +319,12 @@ export class BuildEditController {
    *
    *  1. expires stale feedback,
    *  2. latches the routed primary-button state into the input controller,
-   *  3. mirrors the input controller's edit-mode state, reporting a genuine
-   *     enter/exit transition to the HUD,
-   *  4. resolves the aim target (owned piece under the crosshair),
+   *  3. applies or drops the draft when the edit layer was left (commit /
+   *     discard), and mirrors the edit mode for the HUD,
+   *  4. locks the owned piece under the crosshair into a draft,
    *  5. converges the authoritative per-structure states from the mirror,
-   *  6. consumes the edit intents (tile toggle, confirm, cancel, reset,
-   *     optional confirm-on-release) and submits the matching
-   *     `edit_grid_action` intents.
+   *  6. drives the local drag selection and the confirm / reset / cancel
+   *     intents (confirm sends the canonical difference).
    *
    * Returns the targeted structure for this frame (or `null`).
    */
@@ -296,14 +344,12 @@ export class BuildEditController {
     //    derives the press/hold/release edges — no mouse listeners here).
     this.input.latchEditSelect(ctx.editSelectPressed, ctx.editSelectHeld);
 
-    // 3. mirror edit mode; report user enter/exit transitions to the HUD.
-    //    A forced exit (round reset / disconnect) sets this.mode directly in
-    //    reset()/clearOnDisconnect(), so it is never observed as a
-    //    transition here and never produces a banner.
+    // 3. apply / drop the draft when the edit layer was left this frame.
+    this.handleExit(this.input.consumeEditExit(), ctx);
     const nextMode = this.input.isEditModeActive();
     if (nextMode !== this.mode) {
       this.mode = nextMode;
-      this.lastPainted = null;
+      if (!nextMode) this.dropDraft();
       // Never clobber a live accepted/rejected banner: the server's verdict
       // is more important than the mode-transition notice.
       const keepResult =
@@ -319,23 +365,46 @@ export class BuildEditController {
       }
     }
 
-    // 4. resolve the aim target (only while in edit mode with a known id).
-    if (this.mode && ctx.sessionId !== null) {
-      this.target = selectTargetStructure({
-        aimOrigin: ctx.aimOrigin,
-        aimDirection: ctx.aimDirection,
-        maxRange: BUILD_EDIT_RANGE,
-        building: ctx.building,
-        ownerId: ctx.sessionId,
-      });
-    } else {
-      this.target = null;
-    }
-
     // 5. converge the authoritative states from the replicated mirror (and
     //    prune caches for structures that no longer exist).
     if (this.mode) {
       this.syncAuthFromMirror(ctx.building);
+    }
+
+    // 4. the locked piece, or lock the owned piece under the crosshair.
+    this.target = null;
+    this.hover = null;
+    if (this.mode && ctx.sessionId !== null) {
+      if (this.draft !== null) {
+        const locked = ctx.building.structures[this.draft.structureId];
+        if (locked === undefined || locked.ownerId !== ctx.sessionId) {
+          this.dropDraft();
+          this.showFeedback({ kind: "info", message: "Edit target lost" });
+        } else {
+          this.target = { structureId: locked.structureId, buildType: locked.buildType, grid: locked.grid, rotation: locked.rotation, ownerId: locked.ownerId, distance: 0 };
+        }
+      }
+      if (this.draft === null) {
+        this.target = selectTargetStructure({
+          aimOrigin: ctx.aimOrigin,
+          aimDirection: ctx.aimDirection,
+          maxRange: BUILD_EDIT_RANGE,
+          building: ctx.building,
+          ownerId: ctx.sessionId,
+        });
+        if (this.target !== null) {
+          const base = this.pendingStateFor(this.target.structureId, this.target.buildType);
+          this.draft = { structureId: this.target.structureId, buildType: this.target.buildType, base, state: cloneEditState(base) };
+        }
+      } else {
+        // An untouched draft follows the applied state (e.g. a confirmed
+        // edit's result arriving): the player always edits the current form.
+        const applied = this.pendingStateFor(this.draft.structureId, this.draft.buildType);
+        if (!sameEditState(applied, this.draft.base) && sameEditState(this.draft.state, this.draft.base)) {
+          this.draft.base = applied;
+          this.draft.state = cloneEditState(applied);
+        }
+      }
     }
 
     // 5b. resolve any pending edit mesh latency measurements (the preview
@@ -351,59 +420,57 @@ export class BuildEditController {
       }
     }
 
-    // 6. consume the edit intents.
-    if (this.mode && this.target !== null && ctx.connected && ctx.inRound) {
-      const id = this.target.structureId;
-      const structure = ctx.building.structures[id];
-      if (structure !== undefined) {
-        const aim = aimEditTile({
-          structure,
-          aimOrigin: ctx.aimOrigin,
-          aimDirection: ctx.aimDirection,
-          maxRange: BUILD_EDIT_RANGE,
-        });
-        const pressEdge = this.input.consumeEditSelectPressed();
+    // 6. drive the drag selection and the terminal intents.
+    const draft = this.draft;
+    const structure = draft !== null ? ctx.building.structures[draft.structureId] : undefined;
+    if (this.mode && draft !== null && structure !== undefined && ctx.connected && ctx.inRound) {
+      const sample = sampleEditSurface(structure, ctx.aimOrigin, ctx.aimDirection, BUILD_EDIT_RANGE);
+      const size = editGridSize(structure.buildType);
+      if (sample !== null && sample.kind === "ramp") {
+        this.hover = { kind: "ramp_half", side: sample.side };
+      } else if (sample !== null && size !== null) {
+        const tile = sampleTile(sample, size);
+        this.hover = tile === null ? null : { kind: "tile", tileIndex: tile };
+      }
+
+      const pressEdge = this.input.consumeEditSelectPressed();
+      const tileSample = sample !== null && sample.kind === "tiles" ? sample : null;
+      if (draft.state.kind === "ramp") {
+        if (pressEdge && sample !== null && sample.kind === "ramp") {
+          const half: RampVariant = sample.side === "left" ? "half_left" : "half_right";
+          draft.state = { kind: "ramp", variant: draft.state.variant === half ? "full" : half };
+        }
+      } else if (size !== null) {
         if (pressEdge) {
-          this.lastPainted = null;
-          if (aim !== null) {
-            this.applyTileToggle(structure, aim);
-          }
-        } else if (this.input.isEditSelectHeld()) {
-          // Hold-drag painting: apply when the aim reaches a fresh tile.
-          if (aim !== null) {
-            const key = paintKey(aim);
-            if (
-              this.lastPainted === null ||
-              this.lastPainted.structureId !== id ||
-              this.lastPainted.key !== key
-            ) {
-              this.applyTileToggle(structure, aim);
-            }
-          }
+          this.drag.press(tileSample, size, draft.state.tiles);
+        } else if (this.input.isEditSelectHeld() && this.drag.isDragging()) {
+          this.drag.move(tileSample, size, draft.state.tiles);
         }
-        if (this.input.consumeConfirmPressed()) {
-          this.sendTerminal(ctx, structure, "confirm");
-        }
-        if (this.input.consumeCancelPressed()) {
-          this.sendTerminal(ctx, structure, "cancel");
-        }
-        if (this.input.consumeResetPressed()) {
-          this.sendTerminal(ctx, structure, "reset");
-        }
-        if (this.confirmOnRelease && this.input.consumeEditSelectReleased()) {
-          this.sendTerminal(ctx, structure, "confirm");
+      }
+      if (!this.input.isEditSelectHeld() && this.drag.isDragging()) {
+        this.drag.release();
+      }
+
+      if (this.input.consumeResetPressed()) {
+        // Immediate predicted reset: the preview shows the default form now;
+        // confirming applies it.
+        draft.state = createDefaultEditState(draft.buildType);
+        this.drag.release();
+      }
+      const released = this.input.consumeEditSelectReleased();
+      const confirm = this.input.consumeConfirmPressed() ||
+        (this.confirmOnRelease && released && !sameEditState(this.pendingStateFor(draft.structureId, draft.buildType), draft.state));
+      if (this.input.consumeCancelPressed()) {
+        this.input.cancelEditExit();
+        this.handleExit(this.input.consumeEditExit(), ctx);
+      } else if (confirm) {
+        const invalid = draftInvalidReason(draft);
+        if (invalid !== null) {
+          this.showFeedback({ kind: "rejected", message: invalid, structureId: draft.structureId });
         } else {
-          // Keep the release latch drained when the option is off.
-          this.input.consumeEditSelectReleased();
+          this.input.commitEditExit();
+          this.handleExit(this.input.consumeEditExit(), ctx);
         }
-      } else {
-        // Target vanished mid-frame: drain the latches so they do not leak
-        // into the next frame.
-        this.input.consumeEditSelectPressed();
-        this.input.consumeConfirmPressed();
-        this.input.consumeCancelPressed();
-        this.input.consumeResetPressed();
-        this.input.consumeEditSelectReleased();
       }
     } else {
       // Out of the interaction window (no mode / no target / not connected /
@@ -413,149 +480,81 @@ export class BuildEditController {
       this.input.consumeCancelPressed();
       this.input.consumeResetPressed();
       this.input.consumeEditSelectReleased();
+      if (this.drag.isDragging()) this.drag.release();
     }
 
+    if (!this.input.isEditModeActive() && this.mode) {
+      // Left during this frame (confirm / cancel above).
+      this.mode = false;
+      this.target = null;
+      this.hover = null;
+    }
     return this.target;
   }
 
   // ── intent submission ─────────────────────────────────────────────────────
 
-  /**
-   * Applies one crosshair tile toggle optimistically and submits the
-   * matching `edit_grid_action` intent (`select` marks a tile for removal /
-   * sets the ramp half; `deselect` restores it / returns the ramp to full).
-   *
-   * The server remains authoritative: the change is only real once the
-   * server broadcasts the result (and the replicated state carries the
-   * updated structure).
-   */
-  private applyTileToggle(
-    structure: StructureState,
-    aim: EditTileAimResult,
+  /** Applies (commit) or drops (discard) the draft when the edit layer was left. */
+  private handleExit(
+    exit: "commit" | "discard" | null,
+    ctx: Pick<BuildEditFrameContext, "connected" | "inRound" | "building">,
   ): void {
-    const id = structure.structureId;
-    const pending = this.pendingStateFor(id);
-    let action: "select" | "deselect";
-    let next: StructureEditState;
-    let rampVariant: RampVariant | null = null;
-    let tileIndex: number | null = null;
-
-    if (aim.kind === "ramp_half") {
-      const variant: RampVariant =
-        aim.side === "left" ? "half_left" : "half_right";
-      rampVariant = variant;
-      if (pending.kind === "ramp" && pending.variant === variant) {
-        // Same half again: back to the full ramp.
-        action = "deselect";
-        next = { kind: "ramp", variant: "full" };
-      } else {
-        action = "select";
-        next = { kind: "ramp", variant };
-      }
-    } else {
-      const tile = aim.tileIndex;
-      tileIndex = tile;
-      if (pending.kind !== "wall" && pending.kind !== "floor_cone") {
-        return; // shape mismatch (cannot happen for a targeted piece)
-      }
-      const tiles = [...pending.tiles];
-      if (tile < 0 || tile >= tiles.length) {
-        return;
-      }
-      if (tiles[tile]) {
-        action = "select";
-        tiles[tile] = false;
-      } else {
-        action = "deselect";
-        tiles[tile] = true;
-      }
-      next = { ...pending, tiles };
+    if (exit === null) return;
+    const draft = this.draft;
+    this.dropDraft();
+    if (exit !== "commit" || draft === null) return;
+    if (!ctx.connected || !ctx.inRound || ctx.building.structures[draft.structureId] === undefined) return;
+    const invalid = draftInvalidReason(draft);
+    if (invalid !== null) {
+      this.showFeedback({ kind: "rejected", message: invalid, structureId: draft.structureId });
+      return;
     }
-
-    // Optimistic application: the preview shows the pending state at once.
-    this.optimistic.set(id, next);
-    const inFlight = (this.unacked.get(id) ?? 0) + 1;
-    this.unacked.set(id, inFlight);
-    this.touched.add(id);
-    this.lastAction.set(id, action);
-    this.lastPainted = { structureId: id, key: paintKey(aim) };
-
-    const payload: Record<string, unknown> = { structureId: id, action };
-    if (rampVariant !== null) {
-      payload.rampVariant = rampVariant;
-    } else if (tileIndex !== null) {
-      payload.tileIndex = tileIndex;
-    }
-    this.network.send(EDIT_GRID_ACTION_MESSAGE, payload);
-    this.latency?.recordEditSent(id);
+    this.sendDraft(draft);
   }
 
   /**
-   * Submits a terminal edit action (`confirm` / `cancel` / `reset`) when the
-   * piece was actually changed, then exits edit mode for confirm/cancel
-   * (reset keeps the mode on so further edits continue). An untouched piece
-   * simply exits (confirm/cancel) — there is nothing to send.
-   *
-   * Fast reset: `reset` and `cancel` both resolve to the canonical default
-   * state on the server, so the matching default is applied to the pending
-   * (optimistic) cache *immediately* — the preview reflects the reset to the
-   * full/default form before the server round-trip, so repeated
-   * edit → reset → edit cycles start from an identical canonical baseline.
-   * The server remains authoritative: the intent is still sent, and a
-   * rejection drops the optimistic default (the pending state rolls back to
-   * the last authoritative state) in {@link handleActionResult}.
+   * Sends the canonical difference between the applied state and the draft:
+   * a single `reset` when the draft is the default form, the ramp variant
+   * change, or the tile changes (restores before removals, so no
+   * intermediate state is less solid than the target), then `confirm`. The
+   * draft is shown optimistically until every result arrives.
    */
-  private sendTerminal(
-    ctx: Pick<BuildEditFrameContext, "connected" | "inRound">,
-    structure: StructureState,
-    action: "confirm" | "cancel" | "reset",
-  ): void {
-    if (!ctx.connected || !ctx.inRound) {
+  private sendDraft(draft: EditDraft): void {
+    const id = draft.structureId;
+    const applied = this.pendingStateFor(id, draft.buildType);
+    const actions = editDiffActions(draft.buildType, applied, draft.state);
+    if (actions.length === 0) {
       return;
     }
-    const id = structure.structureId;
-    const send = this.touched.has(id);
-    if (send) {
-      this.lastAction.set(id, action);
-      const inFlight = (this.unacked.get(id) ?? 0) + 1;
-      this.unacked.set(id, inFlight);
-      this.network.send(EDIT_GRID_ACTION_MESSAGE, { structureId: id, action });
-      // A terminal action ends the change set for this piece.
-      this.touched.delete(id);
-      // Apply the reset-to-default result optimistically now, so the preview
-      // is immediately combat-ready (full/default canonical form) instead of
-      // waiting for the broadcast. `confirm` is a no-op acknowledgement and
-      // keeps the current state, so it is deliberately not applied here.
-      if (action === "reset" || action === "cancel") {
-        this.optimistic.set(id, createDefaultEditState(structure.buildType));
-      }
+    actions.push({ action: "confirm" });
+    for (const action of actions) {
+      this.network.send(EDIT_GRID_ACTION_MESSAGE, { structureId: id, ...action });
     }
-    if (action === "confirm" || action === "cancel") {
-      // Commit-exit drops the edit layer AND the build layer beneath it, so
-      // the primary button and the number keys are combat actions
-      // immediately ("confirm then shotgun") — overhaul task 12.
-      this.input.commitEditExit();
-    }
+    this.optimistic.set(id, cloneEditState(draft.state));
+    this.unacked.set(id, (this.unacked.get(id) ?? 0) + actions.length);
+    this.lastAction.set(id, "confirm");
+    this.latency?.recordEditSent(id);
+  }
+
+  private dropDraft(): void {
+    this.draft = null;
+    this.hover = null;
+    if (this.drag.isDragging()) this.drag.release();
   }
 
   // ── state convergence ─────────────────────────────────────────────────────
 
   /**
-   * The pending edit state for one structure: optimistic while actions are
-   * in flight, otherwise the last authoritative state (or the default when
-   * the piece has never been edited).
+   * The applied edit state for one structure: optimistic while actions are
+   * in flight, otherwise the last authoritative state (or the default form
+   * when the piece has never been edited).
    */
-  private pendingStateFor(structureId: string): StructureEditState {
+  private pendingStateFor(structureId: string, buildType: StructureState["buildType"] = "wall"): StructureEditState {
     if ((this.unacked.get(structureId) ?? 0) > 0) {
-      return (
-        this.optimistic.get(structureId) ??
-        this.authStates.get(structureId) ??
-        createDefaultEditState("wall")
-      );
+      const optimistic = this.optimistic.get(structureId);
+      if (optimistic !== undefined) return optimistic;
     }
-    return (
-      this.authStates.get(structureId) ?? createDefaultEditState("wall")
-    );
+    return this.authStates.get(structureId) ?? createDefaultEditState(buildType);
   }
 
   /**
@@ -588,12 +587,8 @@ export class BuildEditController {
     this.authStates.delete(structureId);
     this.optimistic.delete(structureId);
     this.unacked.delete(structureId);
-    this.touched.delete(structureId);
     this.lastAction.delete(structureId);
     this.pendingEditMesh.delete(structureId);
-    if (this.lastPainted?.structureId === structureId) {
-      this.lastPainted = null;
-    }
   }
 
   // ── authoritative result consumption ──────────────────────────────────────
@@ -623,11 +618,16 @@ export class BuildEditController {
       return;
     }
     const remaining = inFlight - 1;
+    if (!parsed.success) {
+      // Rejection: drop the optimistic result at once — the preview rolls
+      // back to the authoritative state.
+      this.optimistic.delete(id);
+    }
     if (remaining <= 0) {
       this.unacked.delete(id);
-      this.optimistic.delete(id); // pending falls back to authoritative
+      this.optimistic.delete(id); // applied state falls back to authoritative
       if (parsed.success) {
-        // The pending state now shows the authoritative result on the
+        // The applied state now shows the authoritative result on the
         // next frame — resolve the mesh latency measurement then.
         this.pendingEditMesh.add(id);
       }
@@ -636,7 +636,7 @@ export class BuildEditController {
     }
 
     if (parsed.success) {
-      // Record the result for latency measurement (only for local in-flight).
+      if (remaining > 0) return; // one banner per confirmed edit
       this.latency?.recordEditResult(id, true);
       const action = this.lastAction.get(id);
       if (action === "confirm") {
@@ -645,24 +645,10 @@ export class BuildEditController {
           message: "Edit confirmed",
           structureId: id,
         });
-      } else if (action === "cancel") {
-        this.showFeedback({
-          kind: "info",
-          message: "Edit cancelled",
-          structureId: id,
-        });
-      } else if (action === "reset") {
-        this.showFeedback({
-          kind: "info",
-          message: "Edit reset",
-          structureId: id,
-        });
       }
-      // select / deselect are silent: the piece's shape is the feedback.
       return;
     }
 
-    // Record rejection for latency measurement.
     this.latency?.recordEditResult(id, false);
     this.showFeedback({
       kind: "rejected",
@@ -682,7 +668,7 @@ export class BuildEditController {
   // ── cleanup triggers (presentation-only) ──────────────────────────────────
 
   /**
-   * Drops the preview + feedback + pending caches. Called when the player
+   * Drops the preview + feedback + local draft. Called when the player
    * exits edit mode outside the key path (e.g. a forced transition).
    */
   public cancel(): void {
@@ -692,53 +678,53 @@ export class BuildEditController {
     this.target = null;
     this.feedback = null;
     this.feedbackUntil = 0;
-    this.lastPainted = null;
+    this.dropDraft();
   }
 
   /**
-   * Full reset for a round reset / rematch: exits edit mode, drops the
-   * preview, feedback, and every pending cache. The authoritative structure
-   * mirror (owned by the building system) is reset separately by the
-   * runtime.
+   * Full reset for a round reset / rematch: exits edit mode without applying
+   * the draft, drops the preview, feedback, and every pending cache. The
+   * authoritative structure mirror (owned by the building system) is reset
+   * separately by the runtime.
    */
   public reset(): void {
     if (this.disposed) {
       return;
     }
     this.input.exitEditMode();
+    this.input.consumeEditExit();
     this.mode = false;
     this.target = null;
     this.feedback = null;
     this.feedbackUntil = 0;
-    this.lastPainted = null;
+    this.dropDraft();
     this.authStates.clear();
     this.optimistic.clear();
     this.unacked.clear();
-    this.touched.clear();
     this.lastAction.clear();
     this.pendingEditMesh.clear();
     this.latency?.reset();
   }
 
   /**
-   * Clears preview + feedback + pending caches and exits edit mode without
-   * dropping the connection. Called when the connection drops so a stale
-   * selection, optimistic state, or feedback can never persist.
+   * Clears preview + feedback + pending caches and exits edit mode (without
+   * applying the draft) when the connection drops, so a stale selection,
+   * optimistic state, or feedback can never persist.
    */
   public clearOnDisconnect(): void {
     if (this.disposed) {
       return;
     }
     this.input.exitEditMode();
+    this.input.consumeEditExit();
     this.mode = false;
     this.target = null;
     this.feedback = null;
     this.feedbackUntil = 0;
-    this.lastPainted = null;
+    this.dropDraft();
     this.authStates.clear();
     this.optimistic.clear();
     this.unacked.clear();
-    this.touched.clear();
     this.lastAction.clear();
     this.pendingEditMesh.clear();
     this.latency?.clearInFlight();
@@ -754,29 +740,70 @@ export class BuildEditController {
     this.mode = false;
     this.target = null;
     this.feedback = null;
+    this.dropDraft();
     this.authStates.clear();
     this.optimistic.clear();
     this.unacked.clear();
-    this.touched.clear();
     this.lastAction.clear();
     this.pendingEditMesh.clear();
   }
 }
 
-// ── pure helpers ────────────────────────────────────────────────────────────
+/** One `edit_grid_action` intent body (without the structure id). */
+export type EditActionBody =
+  | { action: "select" | "deselect"; tileIndex: number }
+  | { action: "select"; rampVariant: RampVariant }
+  | { action: "deselect" | "reset" | "confirm" };
 
-/** A stable key for the painted target (prevents drag re-applying). */
-function paintKey(aim: EditTileAimResult): string {
-  return aim.kind === "tile"
-    ? `t:${aim.tileIndex}`
-    : `v:${aim.side}`;
+/**
+ * The canonical intents that turn `applied` into `target` (excluding the
+ * final `confirm`): `[]` when they are equal; a single `reset` when `target`
+ * is the default form; for ramps the variant change; for tiles every restore
+ * (`deselect`) before every removal (`select`), so each intermediate state is
+ * at least as solid as `target` (a valid target never passes through an
+ * invalid floor form).
+ */
+export function editDiffActions(
+  buildType: StructureState["buildType"],
+  applied: StructureEditState,
+  target: StructureEditState,
+): EditActionBody[] {
+  if (sameEditState(applied, target)) return [];
+  if (sameEditState(createDefaultEditState(buildType), target)) return [{ action: "reset" }];
+  if (target.kind === "ramp") {
+    return target.variant === "full" ? [{ action: "deselect" }] : [{ action: "select", rampVariant: target.variant }];
+  }
+  if (applied.kind === "ramp" || applied.kind !== target.kind || applied.tiles.length !== target.tiles.length) {
+    return [{ action: "reset" }, ...editDiffActions(buildType, createDefaultEditState(buildType), target)];
+  }
+  const restores: EditActionBody[] = [];
+  const removals: EditActionBody[] = [];
+  for (let i = 0; i < target.tiles.length; i++) {
+    if (target.tiles[i] && !applied.tiles[i]) restores.push({ action: "deselect", tileIndex: i });
+    if (!target.tiles[i] && applied.tiles[i]) removals.push({ action: "select", tileIndex: i });
+  }
+  return [...restores, ...removals];
 }
+
+/** Why a draft cannot be confirmed (mirrors the server's floor rule), else `null`. */
+function draftInvalidReason(draft: EditDraft): string | null {
+  if (draft.buildType === "floor" && draft.state.kind === "floor_cone" && !draft.state.tiles.some(Boolean)) {
+    return REJECTION_LABELS.invalid_form!;
+  }
+  return null;
+}
+
+function cloneEditState(state: StructureEditState): StructureEditState {
+  return state.kind === "ramp" ? { kind: "ramp", variant: state.variant } : { kind: state.kind, tiles: [...state.tiles] };
+}
+
+// ── pure helpers ────────────────────────────────────────────────────────────
 
 /**
  * Structural equality of two edit states (the replicated mirror reparses
  * its objects on every state sync, so identity comparison is not enough).
  */
-function sameEditState(
+export function sameEditState(
   a: StructureEditState | undefined,
   b: StructureEditState,
 ): boolean {

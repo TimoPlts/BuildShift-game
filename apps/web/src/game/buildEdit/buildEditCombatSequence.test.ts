@@ -8,8 +8,9 @@
  *  - the centralized {@link InputManager} (fire / weapon-slot / reload edges +
  *    pointer-lock lifecycle),
  *  - the {@link InteractionModeCoordinator} (shared build + edit layer owner),
- *  - the {@link BuildingInputController} (KeyB) and
- *    {@link BuildEditInputController} (KeyF / Enter / Backspace),
+ *  - the {@link BuildingInputController} (dedicated build binds: Q wall) and
+ *    {@link BuildEditInputController} (G edit / Enter confirm / T reset),
+ *    all resolved through the default gameplay action map,
  *  - the {@link BuildEditController} (edit intents + result convergence),
  *  - the {@link WeaponController} (fire-rate gate),
  *  - {@link routePrimaryAction} (the single primary-button ownership decision).
@@ -23,8 +24,9 @@
  *    fire-rate interval still limits rapid pulls;
  *  - the build layer never owns the primary while editing or in weapon mode
  *    (no accidental placement);
- *  - reset returns the piece to its canonical default while edit mode stays
- *    on, so edit → reset → edit repeats from the same baseline;
+ *  - reset previews the canonical default immediately while edit mode stays
+ *    on, and confirm applies it, so edit → reset → edit repeats from the same
+ *    baseline;
  *  - repeated edit → confirm → fire → reset cycles replicate identically
  *    (no listener / state accumulation across cycles).
  */
@@ -269,29 +271,24 @@ function createFixture(): Fixture {
   };
 }
 
-/** Enter build mode (KeyB) then edit mode (KeyF), one frame per step. */
+/** Wall bind (enters building) then the edit bind, one frame per step. */
 function enterBuildEdit(f: Fixture): void {
-  f.keyDown("KeyB");
+  f.keyDown("KeyQ");
   f.frame();
-  f.keyDown("KeyF");
+  f.keyDown("KeyG");
   f.frame();
 }
 
-/** Edit the centre tile (a routed primary press) and let the result land. */
+/** Select the centre tile in the local draft (a routed primary click). */
 function editCentreTile(f: Fixture): void {
   f.mouseDown();
   f.frame();
   f.mouseUp();
   f.frame();
-  f.network.emitResult({
-    structureId: "wall1",
-    success: true,
-    editState: {
-      kind: "wall",
-      tiles: [true, true, true, true, false, true, true, true, true],
-    },
-  });
 }
+
+const WINDOW_TILES = [true, true, true, true, false, true, true, true, true];
+const FULL_TILES = Array<boolean>(9).fill(true);
 
 describe("edit → confirm → shotgun → reset combat sequence", () => {
   it("confirm → fire: the weapon fires on the first click after confirm (immediate, single)", () => {
@@ -301,14 +298,16 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     expect(f.coordinator.mode).toBe("edit");
     editCentreTile(f);
 
-    // confirm → commit-exit to weapon
+    // the drag is local: nothing went out before the confirm
+    expect(f.network.sent).toEqual([]);
+    // confirm → sends the canonical change + confirm, commit-exit to weapon
     f.keyDown("Enter");
     f.frame();
     expect(f.coordinator.mode).toBe("weapon");
-    expect(f.network.sent.at(-1)?.payload).toEqual({
-      structureId: "wall1",
-      action: "confirm",
-    });
+    expect(f.network.sent.map((m) => m.payload)).toEqual([
+      { structureId: "wall1", action: "select", tileIndex: 4 },
+      { structureId: "wall1", action: "confirm" },
+    ]);
 
     // first click after confirm fires immediately (no re-entry needed)
     f.mouseDown();
@@ -418,79 +417,68 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     f.dispose();
   });
 
-  it("reset returns the piece to its default while edit mode stays on (repeatable baseline)", () => {
+  it("reset previews the default at once while edit mode stays on; nothing is sent until confirm", () => {
     const f = createFixture();
     f.lock();
     enterBuildEdit(f);
+    editCentreTile(f);
+    expect(f.editController.getPendingState()).toEqual({ kind: "wall", tiles: WINDOW_TILES });
 
-    // touch a tile, then reset it (Backspace) — the reset lands because the
-    // piece was changed, and edit mode must stay on for a repeatable cycle.
-    f.mouseDown();
-    f.frame();
-    f.mouseUp();
-    f.frame();
-    expect(f.network.sent.at(-1)?.payload).toEqual({
-      structureId: "wall1",
-      action: "select",
-      tileIndex: 4,
-    });
-
-    f.keyDown("Backspace");
+    f.keyDown("KeyT");
     f.frame();
     expect(f.coordinator.mode).toBe("edit"); // reset keeps edit mode on
-    expect(f.network.sent.at(-1)?.payload).toEqual({
-      structureId: "wall1",
-      action: "reset",
-    });
-    // the pending state snaps to the canonical default immediately
-    expect(f.editController.getPendingState()).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, true, true, true, true, true, true],
-    });
+    // the preview snaps to the canonical default immediately, locally
+    expect(f.editController.getPendingState()).toEqual({ kind: "wall", tiles: FULL_TILES });
+    expect(f.network.sent).toEqual([]);
+    // the piece was never changed on the server: confirming sends nothing
+    f.keyDown("Enter");
+    f.frame();
+    expect(f.network.sent).toEqual([]);
+    expect(f.coordinator.mode).toBe("weapon");
     f.dispose();
   });
 
-  it("resets to the default and re-edits from an identical canonical baseline", () => {
+  it("edit → confirm, edit → reset → confirm, edit → confirm replicate from an identical baseline", () => {
     const f = createFixture();
     f.lock();
+    const payloads = () => f.network.sent.map((m) => m.payload);
+    const land = (tiles: boolean[], n: number) => {
+      for (let i = 0; i < n; i++) f.network.emitResult({ structureId: "wall1", success: true, editState: { kind: "wall", tiles } });
+    };
+
+    // Cycle 1: open the centre tile from the default baseline.
     enterBuildEdit(f);
-
-    const click = (): void => {
-      f.mouseDown();
-      f.frame();
-      f.mouseUp();
-      f.frame();
-    };
-    const expectSelect = (action: string): void => {
-      expect(f.network.sent.at(-1)?.payload).toEqual({
-        structureId: "wall1",
-        action,
-        tileIndex: 4,
-      });
-    };
-
-    // Cycle 1: select the centre tile from the default baseline.
-    click();
-    expectSelect("select");
-
-    // Reset (touched) → the piece is back to its canonical default form and
-    // edit mode stays on, so the next edit starts from the same baseline.
-    f.keyDown("Backspace");
+    editCentreTile(f);
+    f.keyDown("Enter");
     f.frame();
-    f.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: {
-        kind: "wall",
-        tiles: [true, true, true, true, true, true, true, true, true],
-      },
-    });
-    expect(f.coordinator.mode).toBe("edit");
+    land(WINDOW_TILES, 2);
+    const first = payloads().slice(0, 2);
+    expect(first).toEqual([
+      { structureId: "wall1", action: "select", tileIndex: 4 },
+      { structureId: "wall1", action: "confirm" },
+    ]);
 
-    // Cycle 2: the identical edit from the reset baseline replicates exactly.
-    click();
-    expectSelect("select"); // not a deselect — the baseline was reset
+    // Cycle 2: edit → reset (predicted) → confirm with the edit bind again.
+    f.keyDown("KeyG");
+    f.frame();
+    expect(f.editController.getPendingState()).toEqual({ kind: "wall", tiles: WINDOW_TILES });
+    f.keyDown("KeyT");
+    f.frame();
+    f.keyDown("KeyG");
+    f.frame();
+    land(FULL_TILES, 2);
+    expect(payloads().slice(2, 4)).toEqual([
+      { structureId: "wall1", action: "reset" },
+      { structureId: "wall1", action: "confirm" },
+    ]);
 
+    // Cycle 3: the identical edit from the reset baseline replicates exactly.
+    f.keyDown("KeyG");
+    f.frame();
+    editCentreTile(f);
+    f.keyDown("Enter");
+    f.frame();
+    expect(payloads().slice(4)).toEqual(first);
     f.dispose();
   });
 
@@ -526,7 +514,7 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     f.lock();
     f.keyDown("Digit2"); // weapon mode: switch to shotgun up front
     f.frame();
-    f.keyDown("KeyB");
+    f.keyDown("KeyQ"); // building (wall)
     f.frame();
 
     const CYCLES = 3;
@@ -534,7 +522,7 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     for (let i = 0; i < CYCLES; i++) {
       // enter edit mode (confirm commits-exits to weapon each cycle)
       if (f.coordinator.mode !== "edit") {
-        f.keyDown("KeyF");
+        f.keyDown("KeyG");
         f.frame();
       }
       // edit the centre tile
@@ -553,28 +541,17 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
       f.mouseUp();
       f.frame();
       // let the in-flight edit actions resolve so no pending state carries
-      // over into the next cycle (the authoritative baseline stays clean).
-      f.network.emitResult({
-        structureId: "wall1",
-        success: true,
-        editState: {
-          kind: "wall",
-          tiles: [true, true, true, true, false, true, true, true, true],
-        },
-      });
-      f.network.emitResult({
-        structureId: "wall1",
-        success: true,
-        editState: {
-          kind: "wall",
-          tiles: [true, true, true, true, false, true, true, true, true],
-        },
-      });
+      // over into the next cycle: the click toggles the centre tile, so the
+      // authoritative state alternates window → full → window.
+      const tiles = i % 2 === 0 ? WINDOW_TILES : FULL_TILES;
+      for (let k = 0; k < 2; k++) {
+        f.network.emitResult({ structureId: "wall1", success: true, editState: { kind: "wall", tiles } });
+      }
     }
 
     // Repeatable: the weapon fires once every cycle ...
     expect(shots).toBe(CYCLES);
-    // ...and exactly two edit intents per cycle (select + confirm) went out —
+    // ...and exactly two edit intents per cycle (the change + confirm) went out —
     // no stale confirm / placement / duplicate edges accumulated across loops.
     expect(f.network.sent.length).toBe(CYCLES * 2);
     expect(f.coordinator.mode).toBe("weapon");

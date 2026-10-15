@@ -146,10 +146,12 @@ describe("EditPreviewPresentation", () => {
     const gridLines = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}grid-`));
     expect(gridLines).toHaveLength(4);
 
-    // Resulting shape: all 9 tiles solid → 9 enabled result tiles.
+    // Resulting shape: the canonical full wall solid; the 9 tile overlays
+    // only mark draft removals, so none is shown without a draft.
     const tiles = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}tile-`));
     expect(tiles).toHaveLength(9);
-    expect(tiles.every((t) => t.isEnabled())).toBe(true);
+    expect(tiles.some((t) => t.isEnabled())).toBe(false);
+    expect(previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}solid-`) && m.isEnabled())).toHaveLength(1);
 
     // Selection highlight on the centre tile (local (0, h/2, 0)).
     const selection = meshByName(scene, `${NAME_PREFIX}selection`);
@@ -186,7 +188,7 @@ describe("EditPreviewPresentation", () => {
     expect(root.position.z).toBeCloseTo(2 * CELL, 4);
   });
 
-  it("removed tiles open up: only solid tiles keep their result mesh enabled", () => {
+  it("removed tiles open up: the result shape is the canonical solids of the solid tiles", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
     preview = new EditPreviewPresentation(scene);
@@ -194,10 +196,30 @@ describe("EditPreviewPresentation", () => {
     // Window: the centre tile (4) removed.
     preview.show(baseInput({ state: wallState(true, true, true, true, false, true, true, true, true) }));
 
-    const tiles = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}tile-`));
-    expect(tiles).toHaveLength(9);
-    expect(meshByName(scene, `${NAME_PREFIX}tile-4`)!.isEnabled()).toBe(false);
-    expect(tiles.filter((t) => t.isEnabled())).toHaveLength(8);
+    const solids = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}solid-`) && m.isEnabled());
+    expect(solids).toHaveLength(8);
+    expect(previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}tile-`) && t.isEnabled())).toHaveLength(0);
+  });
+
+  it("marks exactly the tiles an unconfirmed draft removes from the applied piece", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    preview = new EditPreviewPresentation(scene);
+
+    // Applied: tile 0 already open. Draft: also removes 4 and 7 (doorway-ish).
+    const applied = wallState(false, true, true, true, true, true, true, true, true);
+    const draft = wallState(false, true, true, true, false, true, true, false, true);
+    preview.show(baseInput({ state: draft, baseState: applied, selectedTile: 7 }));
+
+    const marked = previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}tile-`) && t.isEnabled()).map((t) => t.name).sort();
+    expect(marked).toEqual([`${NAME_PREFIX}tile-4`, `${NAME_PREFIX}tile-7`]); // tile 0 is already open, not marked
+    expect((meshByName(scene, `${NAME_PREFIX}tile-4`)!.material as StandardMaterial).name).toBe(`${NAME_PREFIX}mark`);
+    // The result shape is the draft's canonical solids.
+    expect(previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}solid-`) && m.isEnabled())).toHaveLength(6);
+
+    // Restoring the draft to the applied state clears every mark.
+    preview.show(baseInput({ state: applied, baseState: applied, selectedTile: 7 }));
+    expect(previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}tile-`) && t.isEnabled())).toHaveLength(0);
   });
 
   it("hides the selection highlight when no tile is selected", () => {
@@ -306,9 +328,9 @@ describe("EditPreviewPresentation", () => {
     expect(previewMeshes(scene)).toHaveLength(14);
     // Wall-only tiles are gone.
     expect(meshByName(scene, `${NAME_PREFIX}tile-5`)).toBeNull();
-    // The removed floor quadrant is open.
+    // The removed floor quadrant is open: three canonical quadrant solids.
     expect(meshByName(scene, `${NAME_PREFIX}tile-3`)!.isEnabled()).toBe(false);
-    expect(previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}tile-`) && t.isEnabled())).toHaveLength(3);
+    expect(previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}solid-`) && t.isEnabled())).toHaveLength(3);
   });
 
   // ── ramp variants ────────────────────────────────────────────────────────
@@ -389,7 +411,6 @@ describe("EditPreviewPresentation", () => {
     const gridLines = previewMeshes(scene).filter((m) => m.name.startsWith(`${NAME_PREFIX}grid-`));
     expect(gridLines).toHaveLength(2);
     expect(meshByName(scene, `${NAME_PREFIX}tile-3`)!.isEnabled()).toBe(false);
-    expect(previewMeshes(scene).filter((t) => t.name.startsWith(`${NAME_PREFIX}tile-`) && t.isEnabled())).toHaveLength(3);
   });
 
   // ── lifecycle ────────────────────────────────────────────────────────────
@@ -439,7 +460,7 @@ describe("EditPreviewPresentation", () => {
 
     preview.show(baseInput({ selectedTile: 4 }));
     expect(previewMeshes(scene)).toHaveLength(24);
-    expect(previewMaterials(scene)).toHaveLength(5);
+    expect(previewMaterials(scene)).toHaveLength(6);
 
     preview.dispose();
 

@@ -14,8 +14,10 @@
  *  - **resulting shape** — one ghost tile per *solid* tile of the
  *    prospective canonical state (removed tiles simply have no tile: the
  *    opening), or the canonical ramp variant span,
+ *  - **marked tiles** — tiles the unconfirmed draft removes from the applied
+ *    piece, drawn as amber overlays (already-open tiles stay open),
  *  - **selected highlight** — a brighter tile (or ramp span) under the
- *    player's current selection, and
+ *    player's crosshair, and
  *  - **invalid indication** — the same red, faster/wider opacity pulse the
  *    placement preview uses for rejected candidates, driven by the
  *    {@link buildEditPreviewGeometry} validity result.
@@ -94,6 +96,13 @@ export interface EditPreviewInput {
    * non-ramp pieces.
    */
   selectedVariant: RampVariant | null;
+  /**
+   * The piece's applied (authoritative / in-flight) state while `state` is an
+   * unconfirmed draft. Tiles solid here but removed in `state` are drawn as
+   * **marked for removal**; tiles removed in both are simply open. Omit when
+   * `state` is the applied state.
+   */
+  baseState?: StructureEditState | null;
 }
 
 // ─── Pose helpers (match BuildStructureRenderer conventions) ───────────────
@@ -153,6 +162,10 @@ const SELECT_INVALID_COLOR = new Color3(1.0, 0.4, 0.3);
 const SELECT_BASE = 0.8;
 const SELECT_PULSE = 0.08;
 const SELECT_FREQ = 2.5;
+
+/** Tiles marked for removal by the unconfirmed draft (amber). */
+const MARK_COLOR = new Color3(1.0, 0.55, 0.15);
+const MARK_ALPHA = 0.55;
 
 /** Ramp direction / turn markers (calm amber). */
 const MARKER_COLOR = new Color3(1.0, 0.8, 0.35);
@@ -297,6 +310,7 @@ export class EditPreviewPresentation {
   private resultMat: StandardMaterial | null = null;
   private selectMat: StandardMaterial | null = null;
   private markerMat: StandardMaterial | null = null;
+  private markMat: StandardMaterial | null = null;
 
   /** Fingerprint of the last applied input (per-frame fast path). */
   private lastKey: string | null = null;
@@ -366,6 +380,7 @@ export class EditPreviewPresentation {
 
     this.applyInvalid(geometry.invalid);
     this.applyGeometry(pool, geometry);
+    this.applyMarks(pool, input);
     this.applyCanonicalSolids(pool, input, geometry);
     this.lastKey = key;
   }
@@ -385,14 +400,14 @@ export class EditPreviewPresentation {
     this.disposed = true;
     this.scene.onBeforeRenderObservable.remove(this.observer);
     this.disposePool();
-    for (const mat of [this.baseMat, this.gridMat, this.resultMat, this.selectMat, this.markerMat]) {
+    for (const mat of [this.baseMat, this.gridMat, this.resultMat, this.selectMat, this.markerMat, this.markMat]) {
       if (mat) mat.dispose();
     }
     if (this.root) {
       this.root.dispose();
       this.root = null;
     }
-    this.baseMat = this.gridMat = this.resultMat = this.selectMat = this.markerMat = null;
+    this.baseMat = this.gridMat = this.resultMat = this.selectMat = this.markerMat = this.markMat = null;
     this.lastKey = null;
     this.lastGeometry = null;
   }
@@ -433,6 +448,7 @@ export class EditPreviewPresentation {
     this.resultMat = this.resultMat ?? this.makeMaterial(`${NAME_PREFIX}result`, RESULT_VALID_COLOR, RESULT_VALID_BASE);
     this.selectMat = this.selectMat ?? this.makeMaterial(`${NAME_PREFIX}select`, SELECT_VALID_COLOR, SELECT_BASE);
     this.markerMat = this.markerMat ?? this.makeMaterial(`${NAME_PREFIX}marker`, MARKER_COLOR, MARKER_ALPHA);
+    this.markMat = this.markMat ?? this.makeMaterial(`${NAME_PREFIX}mark`, MARK_COLOR, MARK_ALPHA);
 
     const [w, h, d] = footprintDims(buildType);
     const tiles: AbstractMesh[] = [];
@@ -549,9 +565,12 @@ export class EditPreviewPresentation {
         solid.setEnabled(false);
         return solid;
       });
-      // The original tile/span meshes remain as non-rendering interaction
-      // markers; solid results come from the shared geometry generator.
-      for (const tile of this.pool.tiles) tile.visibility = 0;
+      // The tile meshes render only as "marked for removal" overlays (see
+      // applyMarks); solid results come from the shared geometry generator.
+      for (const tile of this.pool.tiles) {
+        tile.material = this.markMat;
+        tile.setEnabled(false);
+      }
       if (this.pool.rampResult) this.pool.rampResult.visibility = 0;
     }
   }
@@ -650,10 +669,6 @@ export class EditPreviewPresentation {
   /** Enables result tiles per solidity + poses the selection highlight. */
   private applyTiles(pool: PreviewPool, geometry: EditPreviewGeometry): void {
     const buildType = geometry.buildType as BuildType;
-    for (let i = 0; i < pool.tiles.length; i++) {
-      const tile = geometry.tiles[i];
-      pool.tiles[i].setEnabled(tile !== undefined && tile.solid);
-    }
 
     const selection = pool.selection;
     if (selection === null) return;
@@ -662,6 +677,19 @@ export class EditPreviewPresentation {
     if (selectedTile !== undefined) {
       const layout = editTileLayout(buildType, selectedTile.index);
       selection.position.set(layout.center[0], layout.center[1], layout.center[2]);
+    }
+  }
+
+  /** Enables the overlay of each tile the draft removes from the applied piece. */
+  private applyMarks(pool: PreviewPool, input: EditPreviewInput): void {
+    const base = input.baseState;
+    const draft = input.state;
+    for (let i = 0; i < pool.tiles.length; i++) {
+      const marked =
+        base !== undefined && base !== null &&
+        base.kind !== "ramp" && draft.kind !== "ramp" &&
+        base.tiles[i] === true && draft.tiles[i] === false;
+      pool.tiles[i]!.setEnabled(marked);
     }
   }
 
@@ -722,13 +750,13 @@ export class EditPreviewPresentation {
 
   /** Stable string fingerprint of one input (cheap: tiny field set). */
   private fingerprint(input: EditPreviewInput): string {
-    let stateKey: string;
-    const state = input.state as { kind: string; tiles?: boolean[]; variant?: string };
-    if (state.kind === "ramp") {
-      stateKey = `r:${state.variant ?? ""}`;
-    } else {
-      stateKey = `t:${(state.tiles ?? []).map((b) => (b ? "1" : "0")).join("")}`;
-    }
+    const keyOf = (state: StructureEditState | null | undefined): string => {
+      if (state === null || state === undefined) return "-";
+      return state.kind === "ramp"
+        ? `r:${state.variant}`
+        : `t:${state.tiles.map((b) => (b ? "1" : "0")).join("")}`;
+    };
+    const stateKey = `${keyOf(input.state)}/${keyOf(input.baseState)}`;
     return [
       input.structureId,
       input.buildType,

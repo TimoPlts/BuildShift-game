@@ -119,6 +119,8 @@ export function GameHud(props: GameHudProps): JSX.Element | null {
             rampVariant={local.buildEdit.rampVariant}
             feedback={local.buildEdit.feedback}
             applyReady={local.buildEdit.applyReady}
+            unconfirmed={local.buildEdit.unconfirmed}
+            invalidReason={local.buildEdit.invalidReason}
           />
         </>
       )}

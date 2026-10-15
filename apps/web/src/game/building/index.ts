@@ -24,6 +24,7 @@
  * deliberately NOT part of this module; consumers read the plain
  * state this layer exposes.
  */
+import type { ActionMap } from "../input/actionBindings";
 import { BuildingInputController } from "./buildingInputController";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
 import { BuildingStateStore } from "./buildingStateStore";
@@ -132,8 +133,9 @@ export function createBuildingSystem(
   network: BuildingNetworkLike,
   interactionMode?: InteractionModeCoordinator,
   latency?: BuildLatencyMetrics,
+  actions?: ActionMap,
 ): BuildingSystem {
-  const input = new BuildingInputController(canvas, undefined, interactionMode);
+  const input = new BuildingInputController(canvas, undefined, interactionMode, actions);
   const store = new BuildingStateStore();
   const controller = new BuildingController(input, store, network, latency);
   return {

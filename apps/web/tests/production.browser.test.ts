@@ -1184,9 +1184,10 @@ test.describe("Production browser smoke", () => {
 
   test("build-mode fire suppression: fire does not consume ammo in build mode", async () => {
     expect(pageA).not.toBeNull();
-    // Enter build mode.
-    await pageA!.keyboard.press("KeyB");
+    // Enter building with the dedicated wall bind.
+    await pageA!.keyboard.press("KeyQ");
     await sleep(300);
+    expect(await buildModeActive(pageA!)).toBe(true);
 
     const ammoBefore = await getMagazineAmmo(pageA!);
 
@@ -1197,29 +1198,26 @@ test.describe("Production browser smoke", () => {
     const ammoAfter = await getMagazineAmmo(pageA!);
     expect(ammoAfter).toBe(ammoBefore);
 
-    // Exit build mode.
-    await pageA!.keyboard.press("KeyB");
+    // A weapon bind leaves building at once.
+    await pageA!.keyboard.press("Digit1");
     await sleep(300);
+    expect(await buildModeActive(pageA!)).toBe(false);
   });
 
   test("authoritative build visible to both clients", async () => {
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
-    // Enter build mode on page A.
-    await pageA!.keyboard.press("KeyB");
-    await sleep(200);
-
-    // Select a build type (Digit3 = ramp).
-    await pageA!.keyboard.press("Digit3");
+    // The dedicated ramp bind enters building with the ramp selected.
+    await pageA!.keyboard.press("KeyE");
     await sleep(200);
 
     // Place the structure (left click in build mode places).
     await fireWeapon(pageA!);
     await sleep(1_000);
 
-    // Exit build mode.
-    await pageA!.keyboard.press("KeyB");
+    // Back to the weapon.
+    await pageA!.keyboard.press("Digit1");
     await sleep(200);
 
     // Verify both pages are still connected and in progress.
@@ -1283,33 +1281,25 @@ test.describe("Production browser smoke", () => {
 
     await ensurePointerLock(pageA!);
 
-    // Enter build mode.
-    await pageA!.keyboard.press("KeyB");
-    await sleep(300);
-
-    // Select each build type (Digit1=wall, Digit2=floor, Digit3=ramp,
-    // Digit4=cone) and attempt a placement for each. The placement may be
-    // accepted or rejected by range/energy rules — either way the clients
-    // must stay connected and in the same phase. Also exercise the Q/E
-    // rotation keys while in build mode.
-    for (const typeKey of ["Digit1", "Digit2", "Digit3", "Digit4"] as const) {
+    // Each dedicated build bind (Q=wall, F=floor, E=ramp, Z=cone) enters
+    // building with that piece; attempt a placement for each. The placement
+    // may be accepted or rejected by range/energy rules — either way the
+    // clients must stay connected and in the same phase. Also exercise the
+    // rotate binds (R / X) while building.
+    for (const typeKey of ["KeyQ", "KeyF", "KeyE", "KeyZ"] as const) {
       await pageA!.keyboard.press(typeKey);
       await sleep(200);
+      expect(await buildModeActive(pageA!)).toBe(true);
       await fireWeapon(pageA!); // in build mode this is the place press
       await sleep(400);
     }
-    await pageA!.keyboard.press("KeyQ");
+    await pageA!.keyboard.press("KeyR");
     await sleep(150);
-    await pageA!.keyboard.press("KeyE");
+    await pageA!.keyboard.press("KeyX");
     await sleep(150);
 
-    // Exit build mode.
-    await pageA!.keyboard.press("KeyB");
-    await sleep(300);
-
-    // The number row doubles as weapon slots (Digit1/Digit2), so the build
-    // selection above may have switched the weapon. Restore the assault
-    // rifle for the later combat tests.
+    // The weapon bind leaves building and keeps the assault rifle for the
+    // later combat tests.
     await pageA!.keyboard.press("Digit1");
     await sleep(300);
     expect(await getWeaponName(pageA!)).toBe("Assault Rifle");
@@ -1331,18 +1321,19 @@ test.describe("Production browser smoke", () => {
     // so do not press it blindly).
     expect(await buildModeActive(pageA!)).toBe(false);
 
-    // Enter build-edit mode, select the `clear` edit (Digit9) to destroy
-    // the aimed structure, and apply it (Enter). In headless the aim may
-    // not target a structure, so the intent may be a no-op — the assertion
-    // is that the edit path does not crash, drop, or desync either client.
-    await pageA!.keyboard.press("KeyF");
+    // Enter edit mode (G) and confirm (Enter). In headless the aim may not
+    // target a structure, so the confirm may be a no-op — the assertion is
+    // that the edit path does not crash, drop, or desync either client. The
+    // edit bind again leaves edit mode if Enter had nothing to confirm.
+    await pageA!.keyboard.press("KeyG");
     await sleep(300);
-    await pageA!.keyboard.press("Digit9");
-    await sleep(200);
     await pageA!.keyboard.press("Enter");
     await sleep(1_000);
-    await pageA!.keyboard.press("KeyF");
-    await sleep(300);
+    if (await pageA!.locator(".build-edit-hud__title").count() > 0) {
+      await pageA!.keyboard.press("KeyG");
+      await sleep(300);
+    }
+    expect(await pageA!.locator(".build-edit-hud__title").count()).toBe(0);
 
     const phaseA = await pageA!.locator(".match-hud__phase").textContent();
     const phaseB = await pageB!.locator(".match-hud__phase").textContent();
@@ -1417,36 +1408,48 @@ test.describe("Production browser smoke", () => {
     // ── Rapid piece placement: three pieces fired back-to-back into three
     //    mutually distinct grid cells, each ≈ 0.5 s apart (well above the
     //    client and 10-tick server placement-rate windows).
-    await a.keyboard.press("KeyB");
-    await sleep(300);
-    expect(await buildModeActive(a)).toBe(true);
-
+    // Dedicated build binds: one key enters building with that piece (no
+    // mode key first).
     await look(0, conePitchPx); // pitch down ≈ 12°
     await look(-YAW_QUARTER_PX, 0); // yaw +90° → face +X
-    await a.keyboard.press("Digit4"); // cone
+    await a.keyboard.press("KeyZ"); // cone (enters building)
     await sleep(200);
+    expect(await buildModeActive(a)).toBe(true);
     await fireWeapon(a);
     await sleep(400);
 
     await look(0, floorPitchPx - conePitchPx); // onto the floor pitch
     await look(-YAW_QUARTER_PX, 0); // yaw +180° → face +Z (away from the opponent)
-    await a.keyboard.press("Digit2"); // floor, far +Z cell
+    await a.keyboard.press("KeyF"); // floor, far +Z cell
     await sleep(200);
     await fireWeapon(a);
     await sleep(400);
 
     await look(0, wallPitchPx - floorPitchPx); // onto the wall pitch
-    await a.keyboard.press("Digit1"); // wall, near +Z cell (no yaw change)
+    await a.keyboard.press("KeyQ"); // wall, near +Z cell (no yaw change)
     await sleep(200);
     await fireWeapon(a);
     await sleep(500);
 
-    // ── Immediate edit: the edit layer turns on in the same breath (KeyF
-    //    over the build layer) and must target one of A's just-placed
-    //    canonical pieces. Geometry selection is deliberately type-agnostic:
-    //    the exact first intersection is camera/placement dependent, while
-    //    every supported piece must use the same authoritative edit path.
-    await a.keyboard.press("KeyF");
+    // ── Immediate edit: the edit bind (G) over the build layer locks one of
+    //    A's just-placed canonical pieces. Geometry selection is deliberately
+    //    type-agnostic: the exact first intersection is camera/placement
+    //    dependent, while every supported piece uses the same edit path.
+    const editMessages = () => a.evaluate(() => {
+      const w = window as any;
+      return (w.__editSends ?? []).length as number;
+    });
+    await a.evaluate(() => {
+      const w = window as any;
+      const client = w.__buildshiftNetworking.client.deref();
+      w.__editSends = [];
+      const send = client.send.bind(client);
+      client.send = (type: string, payload: unknown) => {
+        if (type === "two-player:edit_grid_action") w.__editSends.push(payload);
+        return send(type, payload);
+      };
+    });
+    await a.keyboard.press("KeyG");
     await sleep(500);
     const target = await a.evaluate(
       () => document.querySelector(".build-edit-hud__target")?.textContent ?? "",
@@ -1454,35 +1457,34 @@ test.describe("Production browser smoke", () => {
     expect(target).toMatch(/^Aim: (?:Wall|Floor|Ramp|Cone) /);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
 
-    // ── Tile select round-trip: LMB toggles the aimed tile; the count must
-    //    hold after the authoritative broadcast returns (a rejection would
-    //    roll the optimistic pending state back to 0/9).
+    // ── Local selection: LMB selects the aimed tile at once — shown in the
+    //    HUD as unconfirmed — and nothing is sent until the edit is confirmed.
     await fireWeapon(a);
-    await sleep(1_000);
+    await sleep(300);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 1\/(?:9|4)$/);
-
-    // ── Tile deselect round-trip restores the full wall.
+    expect(await a.locator(".build-edit-hud__pending").count()).toBe(1);
+    // Pressing the same tile again restores it (still local).
     await fireWeapon(a);
-    await sleep(1_000);
+    await sleep(300);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
-
-    // ── Select, then reset to the canonical default (Backspace): the
-    //    server round-trip answers with the info "Edit reset" banner and the
-    //    full-wall pending state.
+    // Select, then reset (T): the default form is previewed immediately.
     await fireWeapon(a);
-    await sleep(700);
-    await a.keyboard.press("Backspace");
-    await sleep(800);
-    expect(await a.locator(".build-edit-hud__feedback--info").textContent()).toContain("Edit reset");
+    await sleep(300);
+    await a.keyboard.press("KeyT");
+    await sleep(300);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
+    expect(await editMessages()).toBe(0);
 
-    // ── Confirm-then-shotgun: Enter commits and drops BOTH the edit and the
-    //    build layers, so the number keys are combat actions immediately.
+    // ── Confirm: select a tile and press Enter — the change goes out once and
+    //    the server confirms it; Enter returns to weapon mode.
+    await fireWeapon(a);
+    await sleep(300);
     await a.keyboard.press("Enter");
-    await sleep(500);
+    await expect(a.locator(".build-edit-hud__feedback--accepted")).toContainText("Edit confirmed", { timeout: 5_000 });
+    expect(await editMessages()).toBe(2); // the tile change + confirm
     expect(await buildModeActive(a)).toBe(false);
-    // Confirm exits edit/build ownership cleanly. The transient reset feedback
-    // is intentionally replaced by the normal "Edit mode off" exit message.
+
+    // ── Then shotgun: the weapon bind switches at once and the next click fires.
     await a.keyboard.press("Digit2");
     await sleep(500);
     expect(await getWeaponName(a)).toBe("Shotgun");
@@ -1491,6 +1493,18 @@ test.describe("Production browser smoke", () => {
     await fireWeapon(a);
     await sleep(500);
     expect(await getMagazineAmmo(a)).toBeLessThan(sgAmmoBefore);
+
+    // ── Edit → reset → confirm (edit bind again): the piece shows its applied
+    //    edit, reset previews the default at once, and confirming restores it.
+    await a.keyboard.press("KeyG");
+    await sleep(500);
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 1\/(?:9|4)$/);
+    await a.keyboard.press("KeyT");
+    await sleep(200);
+    expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
+    await a.keyboard.press("KeyG");
+    await expect.poll(editMessages, { timeout: 5_000 }).toBe(4); // reset + confirm
+    await expect(a.locator(".build-edit-hud__feedback--accepted")).toContainText("Edit confirmed", { timeout: 5_000 });
 
     // Restore the assault rifle for the combat tests that follow.
     await a.keyboard.press("Digit1");
@@ -1512,11 +1526,11 @@ test.describe("Production browser smoke", () => {
     //    tests, since a client can only submit edits for its own aimed
     //    piece.)
     await ensurePointerLock(b);
-    await b.keyboard.press("KeyF");
+    await b.keyboard.press("KeyG");
     await sleep(500);
     expect(await b.locator(".build-edit-hud__none").count()).toBe(1);
     expect(await b.locator(".build-edit-hud__target").count()).toBe(0);
-    await b.keyboard.press("KeyF");
+    await b.keyboard.press("KeyG");
     await sleep(300);
 
     // ── No disconnect / freeze / duplicate listeners: both clients agree on
@@ -2987,6 +3001,276 @@ test.describe("Physical edited-geometry acceptance", () => {
       expect((rejection as any).reason).toBe("invalid_grid");
       expect(energy1).toBeGreaterThanOrEqual(energy0); // regen only; nothing charged
       expect(structures).toBe(0);
+    } finally { await context.close(); }
+  });
+
+
+  // ─── Competitive input acceptance (real keyboard + mouse) ──────────────────
+  //
+  // Dedicated build binds, held-primary piece switching, drag editing on the
+  // canonical edit grid, and the combat flow — all through the production
+  // input path (InputManager → action map → mode coordinator → building /
+  // edit controllers → NetworkClient). Default binds: Q wall, F floor, E
+  // ramp, Z cone, G edit, Enter confirm, T reset, 1/2 weapons.
+
+  /**
+   * Tracks the camera's yaw/pitch (fresh pages start at 0, 0) and aims the
+   * crosshair with real look deltas. `at` closes the loop on the live camera
+   * (its actual world position and aim direction — the same ray placement and
+   * edit selection use), so dolly / obstruction / smoothing never skew it.
+   */
+  class CrosshairAim {
+    yaw = 0;
+    pitch = 0;
+    constructor(private readonly page: Page) {}
+    async to(yaw: number, pitch: number): Promise<void> {
+      const dx = Math.round((this.yaw - yaw) / LOOK_SENSITIVITY);
+      const dy = Math.round((this.pitch - pitch) / LOOK_SENSITIVITY);
+      if (dx !== 0 || dy !== 0) await lookBy(this.page, dx, dy);
+      this.yaw -= dx * LOOK_SENSITIVITY;
+      this.pitch -= dy * LOOK_SENSITIVITY;
+    }
+    /** The live camera position (after a rendered frame). */
+    private camera(): Promise<{ x: number; y: number; z: number }> {
+      return this.page.evaluate(() => {
+        const p = (window as any).__buildshiftEngine.scenes[0].activeCamera.position;
+        return { x: p.x, y: p.y, z: p.z };
+      });
+    }
+    /** Aim the crosshair at world point `t` (iterates on the live camera). */
+    async at(t: { x: number; y: number; z: number }): Promise<void> {
+      for (let i = 0; i < 6; i++) {
+        await sleep(120); // let the camera follow the last look
+        const c = await this.camera();
+        const dx = t.x - c.x;
+        const dy = t.y - c.y;
+        const dz = t.z - c.z;
+        const yaw = Math.atan2(dx, -dz);
+        const pitch = Math.atan2(dy, Math.hypot(dx, dz));
+        if (Math.abs(yaw - this.yaw) < 0.004 && Math.abs(pitch - this.pitch) < 0.004) return;
+        await this.to(yaw, pitch);
+      }
+      await sleep(120);
+    }
+  }
+
+  const CS = BUILD_GRID.cellSize;
+  const LH = BUILD_GRID.layerHeight;
+  /** Ground centre of grid cell (gx, gz) (the placement preview snaps by floor). */
+  const cellCentre = (gx: number, gz: number) => ({ x: gx * CS + CS / 2, y: 0, z: gz * CS + CS / 2 });
+  /** Centre of wall tile `t` for a rotation-0 wall anchored at grid (gx, 0, gz). */
+  const wallTile = (gx: number, gz: number, t: number) => ({ x: gx * CS + ((t % 3) - 1) * (CS / 3), y: LH - (Math.floor(t / 3) + 0.5) * (LH / 3), z: gz * CS });
+
+  type Placed = { id: string; buildType: string; grid: { x: number; y: number; z: number }; rotation: number; ownerId: string };
+  const structuresOf = (page: Page): Promise<Placed[]> => page.evaluate(() =>
+    Object.values((window as any).__buildshiftNetworking.client.deref().state.building.structures).map((s: any) => ({ id: s.structureId, buildType: s.buildType, grid: s.grid, rotation: s.rotation, ownerId: s.ownerId })));
+  const editTilesOf = (page: Page, id: string): Promise<boolean[] | null> => page.evaluate((id) =>
+    (window as any).__buildshiftNetworking.client.deref().state.building.structures[id]?.editGrid?.tiles ?? null, id);
+  /** Records every edit intent the page sends (wraps the production send). */
+  const recordEditSends = (page: Page) => page.evaluate(() => {
+    const w = window as any;
+    const client = w.__buildshiftNetworking.client.deref();
+    w.__editSends = [];
+    const send = client.send.bind(client);
+    client.send = (type: string, payload: unknown) => {
+      if (type === "two-player:edit_grid_action") w.__editSends.push(payload);
+      return send(type, payload);
+    };
+  });
+  const editSends = (page: Page): Promise<Array<Record<string, unknown>>> => page.evaluate(() => (window as any).__editSends ?? []);
+  const editModeOn = (page: Page) => page.evaluate(() => document.querySelector(".build-edit-hud__title") !== null);
+  const waitStructure = (page: Page, predicate: (s: Placed) => boolean, label: string) =>
+    expect.poll(async () => (await structuresOf(page)).some(predicate), { message: label, timeout: 10_000 }).toBe(true);
+
+  test("competitive input 1: dedicated wall bind → immediate preview → LMB places", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("input 1", { width: 480, height: 270 });
+    try {
+      const aim = new CrosshairAim(a);
+      await aim.at(cellCentre(0, -1));
+      const ammo = await getMagazineAmmo(a);
+      expect(await buildModeActive(a)).toBe(false);
+      await a.keyboard.press("KeyQ"); // weapon → building with the wall, one key
+      await expect(a.locator(".build-hud__selected")).toContainText("Wall", { timeout: 5_000 });
+      await expect(a.locator(".build-hud__validity--valid")).toHaveCount(1, { timeout: 5_000 });
+      expect(await buildModeActive(a)).toBe(true);
+      step("wall bind: building, valid preview");
+      await fireWeapon(a);
+      await waitStructure(a, (s) => s.buildType === "wall" && s.ownerId === aId && s.grid.x === 0 && s.grid.z === -1, "wall placed at (0, 0, -1)");
+      expect(await getMagazineAmmo(a)).toBe(ammo); // the click placed, never fired
+      step(`placed ${JSON.stringify(await structuresOf(a))}`);
+    } finally { await context.close(); }
+  });
+
+  test("competitive input 2: hold LMB — wall → ramp → floor → cone binds place without releasing", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("input 2", { width: 480, height: 270 });
+    try {
+      const aim = new CrosshairAim(a);
+      const mine = async () => (await structuresOf(a)).filter((s) => s.ownerId === aId);
+      // Weapon mode, button down: the rifle fires first.
+      await aim.at(cellCentre(0, -1));
+      await setPrimaryFire(a, true);
+      try {
+        await a.keyboard.press("KeyQ");
+        await waitStructure(a, (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1, "held wall");
+        const ammoInBuild = await getMagazineAmmo(a);
+        // Each next piece: switch first (the crosshair still rests on the
+        // occupied cell, so nothing places), then aim at a free cell.
+        const plan: Array<[string, string, { x: number; y: number; z: number }, { x: number; z: number }]> = [
+          ["KeyE", "ramp", cellCentre(1, -2), { x: 1, z: -2 }],
+          ["KeyF", "floor", cellCentre(1, -1), { x: 1, z: -1 }],
+          ["KeyZ", "cone", cellCentre(-1, -1), { x: -1, z: -1 }],
+        ];
+        for (const [code, type, target, grid] of plan) {
+          await a.keyboard.press(code);
+          await aim.at(target);
+          await waitStructure(a, (s) => s.buildType === type && s.grid.x === grid.x && s.grid.z === grid.z, `held ${type}`);
+          step(`${type} placed while LMB held`);
+        }
+        expect(await getMagazineAmmo(a)).toBe(ammoInBuild); // no shots once building
+      } finally {
+        await setPrimaryFire(a, false);
+      }
+      const placed = (await mine()).map((s) => s.buildType).sort();
+      expect(placed).toEqual(["cone", "floor", "ramp", "wall"]);
+    } finally { await context.close(); }
+  });
+
+  /** Fresh duel with a rotation-0 wall in A's lane at grid (1,0,-1); A walks within edit range. */
+  async function openWallEditDuel(tag: string) {
+    const duel = await openFreshDuel(tag, { width: 480, height: 270 });
+    const { a, b } = duel;
+    await installPoseTrace(a);
+    const id = await placeStructure(a, b, 9701, "wall", { x: 1, y: 0, z: -1 }, 0);
+    // The edit target is selected from the camera (7 m behind the pivot):
+    // step up to ≈3 m from the wall.
+    await holdKey(a, tag, "KeyW", "p.z <= arg.z", { z: -1.9 }, "walk to the wall");
+    await settleInputs(a, 10);
+    await recordEditSends(a);
+    return { ...duel, id, aim: new CrosshairAim(a) };
+  }
+
+  test("competitive input 3: edit wall — drag a window across the middle row → confirm → opening", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 3");
+    try {
+      await aim.at(wallTile(1, -1, 3));
+      await a.keyboard.press("KeyG");
+      await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
+      // One held drag: press on tile 3, one look jump to tile 5 (crossing 4).
+      await setPrimaryFire(a, true);
+      await sleep(150);
+      await aim.at(wallTile(1, -1, 5));
+      await sleep(300);
+      await setPrimaryFire(a, false);
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 3/9", { timeout: 5_000 });
+      expect(await editSends(a)).toEqual([]); // the drag is local
+      step("drag 3 → 5 selected 3 tiles locally");
+      await a.keyboard.press("Enter");
+      const window: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, false, false, false, true, true, true] };
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: window }, "dragged window");
+      expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "select", "select", "confirm"]);
+      expect(await editModeOn(a)).toBe(false);
+      step("window confirmed: canonical opening on both clients");
+    } finally { await context.close(); }
+  });
+
+  test("competitive input 4: edit wall — drag a doorway → confirm → the player walks through", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 4");
+    try {
+      await aim.at(wallTile(1, -1, 4));
+      await a.keyboard.press("KeyG");
+      await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
+      await setPrimaryFire(a, true);
+      await sleep(150);
+      await aim.at(wallTile(1, -1, 7));
+      await sleep(300);
+      await setPrimaryFire(a, false);
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
+      await a.keyboard.press("Enter");
+      const doorway: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] };
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: doorway }, "dragged doorway");
+      step("doorway confirmed");
+      // Walk straight through (face −Z again: yaw 0).
+      await aim.to(0, 0);
+      await settleInputs(a, 5);
+      const before = await authPose(a);
+      await holdKey(a, "input 4", "KeyW", "p.z <= arg.z", { z: -7.2 }, "walk through the doorway");
+      await settleInputs(a, 10);
+      const after = await authPose(a);
+      step(`walked ${JSON.stringify({ before, after })}`);
+      expect(after.z).toBeLessThan(-5.12 - 0.384 - PLAYER_COLLIDER.radius);
+    } finally { await context.close(); }
+  });
+
+  test("competitive input 5: edit → shotgun → shoot → edit → reset → confirm", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 5");
+    try {
+      const full: AcceptanceEditGrid = { kind: "wall", tiles: Array(9).fill(true) };
+      await aim.at(wallTile(1, -1, 1));
+      await a.keyboard.press("KeyG");
+      await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
+      await fireWeapon(a); // select tile 1 (local)
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 1/9", { timeout: 5_000 });
+      // Shotgun: leaves edit, committing the edit, and switches at once.
+      await a.keyboard.press("Digit2");
+      await expect.poll(() => getWeaponName(a), { timeout: 5_000 }).toBe("Shotgun");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: { kind: "wall", tiles: [true, false, true, true, true, true, true, true, true] } }, "edit committed by the shotgun bind");
+      step("edit → shotgun committed the edit");
+      // Shoot.
+      const shells = await getMagazineAmmo(a);
+      await fireWeapon(a);
+      await expect.poll(() => getMagazineAmmo(a), { timeout: 5_000 }).toBeLessThan(shells);
+      step("shotgun fired");
+      // Edit again → reset (predicted at once) → confirm.
+      await a.keyboard.press("KeyG");
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 1/9", { timeout: 5_000 });
+      await a.keyboard.press("KeyT");
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 0/9", { timeout: 2_000 });
+      await a.keyboard.press("Enter");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: -1 }, rotation: 0, editGrid: full }, "reset confirmed");
+      expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "confirm", "reset", "confirm"]);
+      step("edit → reset → confirm restored the full wall");
+    } finally { await context.close(); }
+  });
+
+  test("competitive input 6: rapid weapon → wall → weapon → ramp → edit alternation loses no input", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, step } = await openFreshDuel("input 6", { width: 480, height: 270 });
+    try {
+      await recordEditSends(a);
+      const ammo = await getMagazineAmmo(a);
+      const before = (await structuresOf(a)).length;
+      // Back-to-back key presses, no waits.
+      for (const code of ["Digit1", "KeyQ", "Digit1", "KeyE", "KeyG"]) await a.keyboard.press(code);
+      await expect.poll(() => editModeOn(a), { timeout: 5_000 }).toBe(true);
+      // The edit bind again returns to the build layer beneath with the ramp.
+      await a.keyboard.press("KeyG");
+      await expect.poll(() => buildModeActive(a), { timeout: 5_000 }).toBe(true);
+      await expect(a.locator(".build-hud__selected")).toContainText("Ramp");
+      await a.keyboard.press("Digit2");
+      await expect.poll(() => getWeaponName(a), { timeout: 5_000 }).toBe("Shotgun");
+      expect(await buildModeActive(a)).toBe(false);
+      // Step by step, every bind lands immediately.
+      const steps: Array<[string, () => Promise<boolean>]> = [
+        ["KeyQ", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Wall")],
+        ["Digit1", async () => !(await buildModeActive(a)) && (await getWeaponName(a)) === "Assault Rifle"],
+        ["KeyE", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Ramp")],
+        ["KeyG", () => editModeOn(a)],
+        ["Digit1", async () => !(await editModeOn(a)) && !(await buildModeActive(a))],
+      ];
+      for (const [code, check] of steps) {
+        await a.keyboard.press(code);
+        await expect.poll(check, { message: code, timeout: 3_000 }).toBe(true);
+      }
+      // Nothing strayed: no placement, no shot from the rifle, no edit sent.
+      expect((await structuresOf(a)).length).toBe(before);
+      expect(await getMagazineAmmo(a)).toBe(ammo);
+      expect(await editSends(a)).toEqual([]);
+      step("all binds landed; no stray placement, shot, or edit");
     } finally { await context.close(); }
   });
 

@@ -12,11 +12,12 @@
  *    unrotated frame: col 0 = −X edge, row 0 = top;
  *  - the floor / cone 2×2 grid projects onto the base: col 0 = −X half,
  *    row 0 = −Z half;
- *  - the ramp splits into two half-cells at the anchor's X
- *    (default ramp rises from the −X end, so "left" = −X half).
+ *  - the ramp splits into its canonical width halves (`half_left` /
+ *    `half_right` in the shared ramp geometry).
  */
 import { describe, expect, it } from "vitest";
 import type { StructureState } from "@buildshift/protocol";
+import { structureCuboids } from "@buildshift/game-config";
 import { aimEditTile } from "./editTileSelection";
 
 const RANGE = 12;
@@ -181,23 +182,22 @@ describe("aimEditTile — floor / cone 2×2 mapping", () => {
   });
 });
 
-describe("aimEditTile — ramp half-cells", () => {
-  it("splits the ramp at the anchor's X (left = −X half)", () => {
-    // Ramp at grid (0,0,-1) spans world x ∈ [-2.56, 7.68]; anchor x = 0.
-    const left = aimEditTile({
-      structure: ramp(),
-      aimOrigin: { x: -1, y: 2, z: 0 },
-      aimDirection: { x: 0, y: 0, z: -1 },
-      maxRange: RANGE,
-    });
-    expect(left).toEqual({ kind: "ramp_half", side: "left" });
-
-    const right = aimEditTile({
-      structure: ramp(),
-      aimOrigin: { x: 1, y: 2, z: 0 },
-      aimDirection: { x: 0, y: 0, z: -1 },
-      maxRange: RANGE,
-    });
-    expect(right).toEqual({ kind: "ramp_half", side: "right" });
+describe("aimEditTile — ramp width halves", () => {
+  it("selects the canonical half_left / half_right width half under the crosshair, every rotation", () => {
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const piece = ramp({ rotation });
+      for (const [variant, side] of [["half_left", "left"], ["half_right", "right"]] as const) {
+        // Aim straight down onto the middle of that canonical half.
+        const cuboids = structureCuboids({ buildType: "ramp", grid: piece.grid, rotation, editGrid: { kind: "ramp", variant } });
+        const mid = cuboids[Math.floor(cuboids.length / 2)]!;
+        const aim = aimEditTile({
+          structure: piece,
+          aimOrigin: { x: mid.center.x, y: 6, z: mid.center.z },
+          aimDirection: { x: 0, y: -1, z: 0 },
+          maxRange: RANGE,
+        });
+        expect(aim, `rotation ${rotation} ${variant}`).toEqual({ kind: "ramp_half", side });
+      }
+    }
   });
 });

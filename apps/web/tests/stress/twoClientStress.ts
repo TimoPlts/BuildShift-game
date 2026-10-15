@@ -402,9 +402,9 @@ const mouse = (p: Player, down: boolean) => p.page.evaluate((down) => {
 }, down);
 const buildModeOn = (p: Player) => p.page.evaluate(() => /Build:\s*on/i.test(document.querySelector(".devdiag-overlay")?.textContent ?? ""));
 const editModeOn = (p: Player) => p.page.evaluate(() => document.querySelector(".build-edit-hud__title") !== null);
-/** Leave the edit layer (F toggles it) and the build layer (B toggles it). */
+/** Leave the edit layer (G toggles it) and the build layer (legacy B toggle). */
 async function combatMode(p: Player) {
-  for (let i = 0; i < 3 && await editModeOn(p); i++) { await p.page.keyboard.press("KeyF"); await sleep(200); }
+  for (let i = 0; i < 3 && await editModeOn(p); i++) { await p.page.keyboard.press("KeyG"); await sleep(200); }
   if (await editModeOn(p)) fail(`${p.name} could not leave the edit layer`);
   if (await buildModeOn(p)) { await p.page.keyboard.press("KeyB"); await sleep(250); }
   if (await buildModeOn(p)) fail(`${p.name} could not leave build mode`);
@@ -640,16 +640,14 @@ async function realInputBuild(room: AnyRoom, p: Player) {
   // outer build column (A: +X/−Z, B: −X/−Z): the aimed cells are (±2, 0, 1..2),
   // clear of both movement lanes and of the line between the players.
   await setLook(p, p.sign * Math.PI / 4, -0.25);
-  await p.page.keyboard.press("KeyB");
+  await p.page.keyboard.press("KeyQ"); // dedicated wall bind enters building
   await sleep(250);
   check(await buildModeOn(p), `${p.name} build mode did not activate`);
-  await p.page.keyboard.press("Digit1");
   await mouse(p, true);
-  // Wall/floor/cone + rotations (a ramp's 2-cell footprint would reach back
-  // into the movement lane; ramps are exercised by the burst and movement).
-  // Q/E net to zero so every round starts at rotation 0 (see the client
-  // placement-preview rotation defect noted in the stress report).
-  const keys = ["Digit2", "KeyE", "Digit1", "Digit4", "KeyQ", "Digit2", "Digit1", "KeyE", "Digit4", "KeyQ"];
+  // Wall/floor/cone binds + rotations while the primary stays held (a ramp's
+  // 2-cell footprint would reach back into the movement lane; ramps are
+  // exercised by the burst and movement). Rotate right/left net to zero.
+  const keys = ["KeyF", "KeyR", "KeyQ", "KeyZ", "KeyX", "KeyF", "KeyQ", "KeyR", "KeyZ", "KeyX"];
   for (const [i, k] of keys.entries()) {
     await p.page.keyboard.press(k);
     await look(p, (i % 2 ? 1 : -1) * 70, 0);
@@ -660,32 +658,36 @@ async function realInputBuild(room: AnyRoom, p: Player) {
   const turbo = placements.filter(r => r.sid === p.sid && r.accepted).length - before;
   log(`${p.name} after turbo: overlay ${(await p.page.evaluate(() => (document.querySelector(".devdiag-overlay")?.textContent ?? "").slice(0, 300))).replace(/\s+/g, " ")}`);
   counters.turboPlacements += turbo;
-  // Real-input edit layer: F over the aimed own piece, LMB toggles a tile
-  // (server round-trip), Backspace resets, Enter confirms; F leaves the
-  // edit layer if it is still active.
+  // Real-input edit layer: G over the aimed own piece, LMB selects a tile
+  // locally, Enter confirms (the change goes out), then G, T (reset preview),
+  // Enter confirms the reset; G leaves the edit layer if it is still active.
   const editsBefore = edits.filter(e => e.sid === p.sid && e.ok).length;
-  await p.page.keyboard.press("Digit1");
+  await p.page.keyboard.press("KeyQ");
   await setLook(p, p.sign * Math.PI / 4, -0.22);
   const targeted = () => p.page.evaluate(() => document.querySelector(".build-edit-hud__target") !== null);
   let noTarget = 0;
   for (let i = 0; i < 4; i++) {
-    if (!(await editModeOn(p))) { await p.page.keyboard.press("KeyF"); await sleep(250); }
+    if (!(await editModeOn(p))) { await p.page.keyboard.press("KeyG"); await sleep(250); }
     check(await editModeOn(p), `${p.name} edit layer did not open`);
     if (await targeted()) {
-      await mouse(p, true); await sleep(60); await mouse(p, false); // select the aimed tile
+      await mouse(p, true); await sleep(60); await mouse(p, false); // select the aimed tile (local)
+      await sleep(200);
+      await p.page.keyboard.press("Enter"); // confirm: the tile change goes out
       await sleep(300);
-      await p.page.keyboard.press("Backspace"); // reset to the default form
-      await sleep(300);
-      await p.page.keyboard.press("Enter"); // confirm
+      await p.page.keyboard.press("KeyG");
+      await sleep(250);
+      await p.page.keyboard.press("KeyT"); // reset preview
+      await sleep(150);
+      await p.page.keyboard.press("Enter"); // confirm the reset
       await sleep(200);
     } else noTarget++;
-    if (await editModeOn(p)) { await p.page.keyboard.press("KeyF"); await sleep(200); }
+    if (await editModeOn(p)) { await p.page.keyboard.press("KeyG"); await sleep(200); }
     await look(p, (i % 2 ? 1 : -1) * 60, 0);
   }
   const realEdits = edits.filter(e => e.sid === p.sid && e.ok).length - editsBefore;
   counters.realInputEdits += realEdits;
   if (noTarget) log(`${p.name} real-input edit: ${noTarget}/4 attempts had no aimed own piece`);
-  // Leave any edit layer (Escape-free: F toggles), then build mode.
+  // Leave any edit layer (G toggles), then build mode.
   await combatMode(p);
   return { turbo, realEdits };
 }

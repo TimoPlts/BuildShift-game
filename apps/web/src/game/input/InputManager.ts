@@ -1,16 +1,5 @@
 import type { LocalMovementInput } from "@buildshift/simulation";
-
-const MOVEMENT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
-const JUMP_CODE = "Space";
-/** Crouch key: held to enter/keep the crouched posture. */
-const CROUCH_CODE = "KeyC";
-
-/** Weapon switch key: key 1 → assault rifle. */
-const WEAPON_SLOT_1_CODE = "Digit1";
-/** Weapon switch key: key 2 → shotgun. */
-const WEAPON_SLOT_2_CODE = "Digit2";
-/** Reload key. */
-const RELOAD_CODE = "KeyR";
+import { ActionMap, mouseBindingCode, type GameAction } from "./actionBindings";
 
 /** Accumulated pointer-lock mouse movement in pixels since the last frame. */
 export interface LookDelta {
@@ -41,11 +30,15 @@ export interface WeaponInputFrame {
 /**
  * Owns every browser input signal used by the local game loop:
  *
- * - keyboard state (WASD intent)
+ * - keyboard state (movement intent)
  * - accumulated pointer-lock mouse movement (look delta)
  * - pointer-lock lifecycle (request, release, listeners)
  * - mouse button state (fire / left-click)
- * - weapon switch / reload key edges (1, 2, R)
+ * - weapon switch / reload key edges
+ *
+ * Physical inputs are resolved through the shared {@link ActionMap}
+ * (`moveForward`, `jump`, `weaponSlot1`, `primaryAction`, …): nothing here
+ * depends on literal key codes, so the bindings are configurable.
  *
  * Real gameplay input is only active while the canvas has pointer lock;
  * while unlocked, both movement and look report zero so the player cannot
@@ -70,7 +63,11 @@ export class InputManager {
   private weaponSlot2Pressed = false;
   private reloadPressed = false;
 
-  public constructor(private readonly canvas: HTMLCanvasElement) {
+  /** The shared gameplay action map (also handed to the build/edit inputs). */
+  public readonly actions: ActionMap;
+
+  public constructor(private readonly canvas: HTMLCanvasElement, actions: ActionMap = new ActionMap()) {
+    this.actions = actions;
     canvas.addEventListener("click", this.requestPointerLock);
     canvas.addEventListener("mousedown", this.handleMouseDown);
     canvas.addEventListener("mouseup", this.handleMouseUp);
@@ -100,13 +97,21 @@ export class InputManager {
       this.movementOut.z = 0;
       return this.movementOut;
     }
-    this.movementOut.x = Number(this.heldCodes.has("KeyD")) - Number(this.heldCodes.has("KeyA"));
-    this.movementOut.z = Number(this.heldCodes.has("KeyS")) - Number(this.heldCodes.has("KeyW"));
+    this.movementOut.x = Number(this.isActionHeld("moveRight")) - Number(this.isActionHeld("moveLeft"));
+    this.movementOut.z = Number(this.isActionHeld("moveBackward")) - Number(this.isActionHeld("moveForward"));
     return this.movementOut;
   }
 
+  /** Whether any key bound to `action` is currently held. */
+  public isActionHeld(action: GameAction): boolean {
+    for (const code of this.actions.bindingsFor(action)) {
+      if (this.heldCodes.has(code)) return true;
+    }
+    return false;
+  }
+
   /**
-   * Whether the crouch key (C) is currently held while the pointer is locked.
+   * Whether a `crouch` binding is currently held while the pointer is locked.
    *
    * Like movement, crouch intent is only active under pointer lock so the
    * player cannot crouch while interacting with browser UI. The key is tracked
@@ -114,7 +119,7 @@ export class InputManager {
    * {@link clearInput}).
    */
   public isCrouchHeld(): boolean {
-    return this.heldCodes.has(CROUCH_CODE) && this.pointerLocked;
+    return this.isActionHeld("crouch") && this.pointerLocked;
   }
 
   public consumeLookDelta(): LookDelta {
@@ -230,20 +235,15 @@ export class InputManager {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (MOVEMENT_CODES.has(event.code) || event.code === CROUCH_CODE) {
-      this.heldCodes.add(event.code);
-    }
-    if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
-      this.jumpPressed = true;
-    }
-    if (this.pointerLocked && !event.repeat) {
-      if (event.code === WEAPON_SLOT_1_CODE) {
-        this.weaponSlot1Pressed = true;
-      } else if (event.code === WEAPON_SLOT_2_CODE) {
-        this.weaponSlot2Pressed = true;
-      } else if (event.code === RELOAD_CODE) {
-        this.reloadPressed = true;
-      }
+    const actions = this.actions.actionsFor(event.code);
+    if (actions.length === 0) return;
+    this.heldCodes.add(event.code);
+    if (!this.pointerLocked || event.repeat) return;
+    for (const action of actions) {
+      if (action === "jump") this.jumpPressed = true;
+      else if (action === "weaponSlot1") this.weaponSlot1Pressed = true;
+      else if (action === "weaponSlot2") this.weaponSlot2Pressed = true;
+      else if (action === "reload") this.reloadPressed = true;
     }
   };
 
@@ -258,13 +258,13 @@ export class InputManager {
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0 || !this.pointerLocked) return;
+    if (!this.pointerLocked || !this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = true;
     this.firePressed = true;
   };
 
   private readonly handleMouseUp = (event: MouseEvent): void => {
-    if (event.button !== 0) return;
+    if (!this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = false;
   };
 

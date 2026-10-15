@@ -1,26 +1,28 @@
 /**
- * Unit tests for {@link BuildEditController} — the presentation-only client
- * orchestrator for the server-authoritative piece-edit system.
+ * Unit tests for {@link BuildEditController} — the competitive edit flow on
+ * the canonical edit grid (presentation/input only; the server stays the
+ * authority).
  *
- * These pin the *authoritative route* and the *cleanup* contracts:
+ * Pins:
  *
- *  - a routed primary-button press/hold on the crosshair submits canonical
- *    `two-player:edit_grid_action` tile intents (`select` / `deselect`) with
- *    the mapped tile index — the controller never edits structures itself;
- *  - the pending state is applied optimistically on send and converges from
- *    the authoritative result broadcast (success) or rolls back
- *    (rejection, with a labelled banner);
- *  - `Enter` / `C` / `Backspace` submit `confirm` / `cancel` / `reset` only
- *    when the piece was actually changed, and confirm/cancel exit edit mode;
- *  - the optional confirm-on-release knob commits on the release edge;
- *  - round reset, disconnect, cancel, and dispose all clear the
- *    presentation state (mode, target, feedback, pending caches).
+ *  - the edit bind locks the owned piece under the crosshair into a local
+ *    draft; dragging the routed primary button across the canonical tiles
+ *    selects them **locally** — nothing is sent per tile or per hover;
+ *  - the drag selects every tile the crosshair path crosses, including tiles
+ *    crossed between two samples (fast drag / low frame rate), never toggles
+ *    a revisited tile back, and is not corrupted by leaving the grid;
+ *  - reset previews the default form immediately; confirm (or the edit bind
+ *    again) sends only the canonical difference over the existing
+ *    `two-player:edit_grid_action` route (restores before removals, or one
+ *    `reset`), then `confirm`, shown optimistically and rolled back on a
+ *    rejection;
+ *  - another player's piece is never targeted; an invalid floor pattern is
+ *    never sent; forced exits (round reset, disconnect, pointer unlock)
+ *    discard the draft.
  *
- * The real {@link BuildEditInputController} is driven through a fake
- * event-target environment, and a fake {@link BuildEditNetworkLike} stands in
- * for the network — so the whole client-side route (keys + routed button →
- * intent → wire message → result → feedback / convergence) is exercised
- * without a server.
+ * The real {@link BuildEditInputController} (standalone, default bindings:
+ * edit G, confirm Enter, reset T) is driven through fake event targets and a
+ * fake network.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type {
@@ -31,6 +33,7 @@ import type {
 import {
   BuildEditController,
   EDIT_GRID_ACTION_MESSAGE,
+  editDiffActions,
   type BuildEditFrameContext,
   type BuildEditNetworkLike,
 } from "./buildEditController";
@@ -138,782 +141,379 @@ function buildingOf(structures: StructureState[]): BuildingState {
   return { structures: map };
 }
 
-interface Setup {
-  key: FakeTarget;
-  network: FakeNetwork;
-  controller: BuildEditController;
-  setClock(v: number): void;
-  lock(): void;
-  unlock(): void;
+function floorPiece(id: string, ownerId = OWNER): StructureState {
+  return { structureId: id, buildType: "floor", grid: { x: 0, y: 0, z: -1 }, rotation: 0, ownerId, createdSequence: 0 };
 }
 
-function setup(
-  _building: BuildingState,
-  startClock = 0,
-  options?: { confirmOnRelease?: boolean },
-): Setup {
-  const canvas = {};
-  const { env, key } = makeEnv();
+const LH = 3.84;
+const CS = 5.12;
+/** Camera ray onto wall (0,0,-1)'s panel at tile `t` (col = t % 3, row 0 = top). */
+function wallAim(t: number): { aimOrigin: { x: number; y: number; z: number }; aimDirection: { x: number; y: number; z: number } } {
+  const col = t % 3;
+  const row = Math.floor(t / 3);
+  return { aimOrigin: { x: -CS / 2 + (col + 0.5) * (CS / 3), y: LH - (row + 0.5) * (LH / 3), z: 0 }, aimDirection: { x: 0, y: 0, z: -1 } };
+}
+/** Camera ray onto the wall panel plane at an arbitrary (x, y). */
+function wallPoint(x: number, y: number) {
+  return { aimOrigin: { x, y, z: 0 }, aimDirection: { x: 0, y: 0, z: -1 } };
+}
+/** Straight down onto floor (0,0,-1)'s quadrant `t` (col = X half, row = Z half). */
+function floorAim(t: number) {
+  const col = t % 2;
+  const row = Math.floor(t / 2);
+  return { aimOrigin: { x: (col - 0.5) * (CS / 2), y: 5, z: -CS + (row - 0.5) * (CS / 2) }, aimDirection: { x: 0, y: -1, z: 0 } };
+}
+
+function setup(structures: StructureState[] = [wall("w1")], options?: { confirmOnRelease?: boolean }) {
+  const { env, key, pointerLock } = makeEnv();
+  env.setLock(canvas);
+  const input = new BuildEditInputController(canvas as HTMLCanvasElement, env);
   const network = new FakeNetwork();
-  let clock = startClock;
-  const controller = new BuildEditController(
-    new BuildEditInputController(canvas as HTMLCanvasElement, env),
-    network,
-    () => clock,
-    options?.confirmOnRelease !== undefined
-      ? { confirmOnRelease: options.confirmOnRelease }
-      : undefined,
-  );
-  return {
-    key,
-    network,
-    controller,
-    setClock(v) {
-      clock = v;
-    },
-    lock() {
-      env.setLock(canvas);
-    },
-    unlock() {
-      env.setLock(null);
-    },
-  };
-}
-
-/**
- * A render frame aimed straight down -Z from (0, 2, 0) — the crosshair sits
- * on the centre tile (index 4) of a wall at grid (0,0,-1).
- */
-function frame(
-  building: BuildingState,
-  overrides: Partial<BuildEditFrameContext> = {},
-): BuildEditFrameContext {
-  return {
-    aimOrigin: { x: 0, y: 2, z: 0 },
-    aimDirection: { x: 0, y: 0, z: -1 },
+  const controller = new BuildEditController(input, network, () => 0, options);
+  let building = buildingOf(structures);
+  const ctx = (aim: ReturnType<typeof wallPoint>, routed: { pressed?: boolean; held?: boolean } = {}, extra: Partial<BuildEditFrameContext> = {}): BuildEditFrameContext => ({
+    ...aim,
     playerPosition: { x: 0, y: 0, z: 0 },
     building,
     sessionId: OWNER,
     connected: true,
     inRound: true,
-    editSelectPressed: false,
-    editSelectHeld: false,
-    ...overrides,
+    editSelectPressed: routed.pressed ?? false,
+    editSelectHeld: routed.held ?? false,
+    ...extra,
+  });
+  const press = (code: string) => key.dispatch("keydown", { code, repeat: false });
+  const frame = (aim: ReturnType<typeof wallPoint>, routed: { pressed?: boolean; held?: boolean } = {}, extra: Partial<BuildEditFrameContext> = {}) =>
+    controller.updateFrame(ctx(aim, routed, extra));
+  /** Edit bind, then one frame aiming at the piece (locks the draft). */
+  const enterEdit = (aim = wallAim(4)) => { press("KeyG"); frame(aim); };
+  /** A drag through the given aims: press at the first, hold through the rest, release. */
+  const drag = (aims: ReturnType<typeof wallPoint>[]) => {
+    aims.forEach((aim, i) => frame(aim, { pressed: i === 0, held: true }));
+    frame(aims[aims.length - 1]!, { held: false });
   };
+  const draftTiles = () => wallTiles(controller.getEditView()?.draftState ?? null);
+  const removed = () => (draftTiles() ?? []).flatMap((solid, i) => (solid ? [] : [i]));
+  const sent = () => network.sent.filter((m) => m.type === EDIT_GRID_ACTION_MESSAGE).map((m) => m.payload as Record<string, unknown>);
+  const setBuilding = (next: StructureState[]) => { building = buildingOf(next); };
+  live.push(() => { controller.dispose(); input.dispose(); });
+  return { controller, input, network, env, pointerLock, press, frame, enterEdit, drag, draftTiles, removed, sent, setBuilding };
 }
 
-/** Locks, enters edit mode, and runs one frame aimed at the structures. */
-function enterEditMode(s: Setup, building: BuildingState) {
-  s.lock();
-  s.key.dispatch("keydown", { code: "KeyF", repeat: false });
-  s.controller.updateFrame(frame(building));
-}
+const canvas = {};
+const live: Array<() => void> = [];
+afterEach(() => { while (live.length) live.pop()!(); });
 
-/** One routed primary-button press frame (click). */
-function clickFrame(building: BuildingState): BuildEditFrameContext {
-  return frame(building, { editSelectPressed: true, editSelectHeld: true });
-}
+describe("BuildEditController — locking the edit target", () => {
+  it("the edit bind locks the owned piece under the crosshair into an untouched draft (nothing sent)", () => {
+    const t = setup();
+    t.enterEdit();
+    expect(t.controller.getMode()).toBe(true);
+    expect(t.controller.getTarget()?.structureId).toBe("w1");
+    const view = t.controller.getEditView()!;
+    expect(view.changed).toBe(false);
+    expect(view.hoverTile).toBe(4);
+    expect(t.sent()).toEqual([]);
+  });
 
-/** A hold frame with no press edge. */
-function holdFrame(building: BuildingState): BuildEditFrameContext {
-  return frame(building, { editSelectHeld: true });
-}
+  it("keeps the locked piece while the crosshair moves off it", () => {
+    const t = setup();
+    t.enterEdit();
+    t.frame(wallPoint(40, 1));
+    expect(t.controller.getTarget()?.structureId).toBe("w1");
+    expect(t.controller.getEditView()?.hoverTile).toBeNull();
+  });
 
-afterEach(() => {
-  // Controllers are disposed inside each test; nothing global to reset.
+  it("never targets another player's piece (ownership): no draft, nothing sent", () => {
+    const t = setup([wall("theirs", undefined, { ownerId: "opponent" })]);
+    t.enterEdit();
+    expect(t.controller.getTarget()).toBeNull();
+    expect(t.controller.getEditView()).toBeNull();
+    t.drag([wallAim(4), wallAim(5)]);
+    t.press("Enter");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([]);
+  });
 });
 
-describe("BuildEditController — tile selection route", () => {
-  it("submits a canonical select intent for the crosshair tile (centre wall tile)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-
-    expect(s.network.sent).toHaveLength(1);
-    expect(s.network.sent[0]!.type).toBe(EDIT_GRID_ACTION_MESSAGE);
-    expect(s.network.sent[0]!.payload).toEqual({
-      structureId: "wall1",
-      action: "select",
-      tileIndex: 4,
-    });
-    // Optimistic pending state: the centre tile is now open.
-    const pending = s.controller.getPendingState();
-    expect(pending).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, true, false, true, true, true, true],
-    });
+describe("BuildEditController — drag selection (local, canonical tiles)", () => {
+  it("one tile: a press selects it locally; nothing is sent", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4)]);
+    expect(t.removed()).toEqual([4]);
+    expect(t.controller.getEditView()!.changed).toBe(true);
+    expect(t.controller.getPendingState()).toEqual(t.controller.getEditView()!.draftState);
+    expect(t.sent()).toEqual([]);
   });
 
-  it("re-clicking the same tile submits deselect (back to solid)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select tile 4
-    s.controller.updateFrame(clickFrame(building)); // same tile again → deselect
-
-    expect(s.network.sent).toHaveLength(2);
-    expect(s.network.sent[1]!.payload).toEqual({
-      structureId: "wall1",
-      action: "deselect",
-      tileIndex: 4,
-    });
-    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
+  it("two adjacent tiles: dragging across selects both", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4), wallAim(5)]);
+    expect(t.removed()).toEqual([4, 5]);
   });
 
-  it("maps the crosshair onto the aimed tile (top-left aim selects tile 0)", () => {
-    // Aim from above-left so the hit point lands in the top-left tile.
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(
-      frame(building, {
-        aimOrigin: { x: -2, y: 3.5, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        editSelectPressed: true,
-        editSelectHeld: true,
-      }),
-    );
-    // Hit at (−2, 3.5, −2.56): col 0, row 0 → tile 0.
-    expect(s.network.sent[0]!.payload).toEqual({
-      structureId: "wall1",
-      action: "select",
-      tileIndex: 0,
-    });
+  it("three tiles: a drag along the bottom row selects all three", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(6), wallAim(7), wallAim(8)]);
+    expect(t.removed()).toEqual([6, 7, 8]);
   });
 
-  it("hold-drag paints each new tile once (no re-apply on the same tile)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    // Press on the centre tile.
-    s.controller.updateFrame(clickFrame(building));
-    // Hold on the same tile — nothing new.
-    s.controller.updateFrame(holdFrame(building));
-    s.controller.updateFrame(holdFrame(building));
-    // Hold onto a different tile — a fresh toggle.
-    s.controller.updateFrame(
-      frame(building, {
-        aimOrigin: { x: 2, y: 2, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        editSelectHeld: true,
-      }),
-    );
-    expect(s.network.sent).toHaveLength(2);
-    expect(s.network.sent[1]!.payload).toEqual({
-      structureId: "wall1",
-      action: "select",
-      tileIndex: 5, // right column, middle row
-    });
-    // Release — no intent.
-    s.controller.updateFrame(frame(building));
-    expect(s.network.sent).toHaveLength(2);
+  it("fast drag: one frame from tile 3 straight to tile 5 also selects tile 4", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(3), wallAim(5)]);
+    expect(t.removed()).toEqual([3, 4, 5]);
   });
 
-  it("selects ramp halves with the rampVariant payload (no tileIndex)", () => {
-    const building = buildingOf([ramp("ramp1")]);
-    const s = setup(building);
-    // The ramp at grid (0,0,-1) spans x ∈ [-2.56, 7.68]; aim at its right
-    // (high) half: hit x=5 → local x=5 > 0 → right.
-    enterEditMode(s, building);
-    s.controller.updateFrame(
-      frame(building, {
-        aimOrigin: { x: 5, y: 2, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        editSelectPressed: true,
-        editSelectHeld: true,
-      }),
-    );
-    expect(s.network.sent[0]!.payload).toEqual({
-      structureId: "ramp1",
-      action: "select",
-      rampVariant: "half_right",
-    });
-    // Same half again → deselect back to full.
-    s.controller.updateFrame(
-      frame(building, {
-        aimOrigin: { x: 5, y: 2, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        editSelectPressed: true,
-        editSelectHeld: true,
-      }),
-    );
-    expect(s.network.sent[1]!.payload).toEqual({
-      structureId: "ramp1",
-      action: "deselect",
-      rampVariant: "half_right",
-    });
-    expect(s.controller.getPendingState()).toEqual({ kind: "ramp", variant: "full" });
+  it("low frame rate: two samples spanning the wall select every tile on the path", () => {
+    const t = setup();
+    t.enterEdit();
+    // Top-left to bottom-left in a single sample: crosses 0 → 3 → 6.
+    t.drag([wallAim(0), wallAim(6)]);
+    expect(t.removed()).toEqual([0, 3, 6]);
+    // A sample straight through the centre (exact corner crossing is
+    // covered by the supercover walk: no tile on the path is skipped).
+    const u = setup();
+    u.enterEdit();
+    u.drag([wallPoint(-2.4, 2.5), wallPoint(2.4, 2.5)]);
+    expect(u.removed()).toEqual([3, 4, 5]);
   });
 
-  it("does not send a tile intent for the remote player's structure", () => {
-    const building = buildingOf([
-      wall("theirs", { x: 0, y: 0, z: -1 }, { ownerId: "them" }),
+  it("revisiting a tile keeps it selected (the drag mode is fixed by the first tile)", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(3), wallAim(4), wallAim(3), wallAim(4)]);
+    expect(t.removed()).toEqual([3, 4]);
+  });
+
+  it("pressing a selected tile starts a restoring drag", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(3), wallAim(4), wallAim(5)]);
+    t.drag([wallAim(4), wallAim(5)]);
+    expect(t.removed()).toEqual([3]);
+  });
+
+  it("dragging outside the grid does not corrupt the selection", () => {
+    const t = setup();
+    t.enterEdit();
+    // Centre → out past the left edge (crossing tile 3) → far outside above →
+    // a frame where the ray misses the panel plane entirely → release.
+    t.frame(wallAim(4), { pressed: true, held: true });
+    t.frame(wallPoint(-6, 1.92), { held: true });
+    t.frame(wallPoint(-6, 9), { held: true });
+    t.frame({ aimOrigin: { x: 0, y: 2, z: 0 }, aimDirection: { x: 1, y: 0, z: 0 } }, { held: true });
+    t.frame(wallPoint(-6, 9), { held: false });
+    expect(t.removed()).toEqual([3, 4]);
+    // A press that starts outside the grid selects from the first tile reached.
+    t.frame(wallPoint(9, 0.64), { pressed: true, held: true });
+    t.frame(wallAim(8), { held: true });
+    t.frame(wallAim(8), { held: false });
+    expect(t.removed()).toEqual([3, 4, 8]);
+  });
+});
+
+describe("BuildEditController — confirm sends only the canonical difference", () => {
+  it("confirm sends the removals then confirm, exits edit, and shows the result optimistically", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4), wallAim(7)]);
+    t.press("Enter");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([
+      { structureId: "w1", action: "select", tileIndex: 4 },
+      { structureId: "w1", action: "select", tileIndex: 7 },
+      { structureId: "w1", action: "confirm" },
     ]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    // No owned structure under the crosshair → no target, no send.
-    s.controller.updateFrame(clickFrame(building));
-    expect(s.network.sent).toHaveLength(0);
-    expect(s.controller.getTarget()).toBeNull();
+    expect(t.controller.getMode()).toBe(false);
+    // Optimistic: the next time the piece is targeted it shows the doorway.
+    t.enterEdit();
+    expect(t.removed()).toEqual([4, 7]);
   });
 
-  it("does not send when disconnected or outside the round", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(frame(building, { connected: false, editSelectPressed: true, editSelectHeld: true }));
-    s.controller.updateFrame(frame(building, { inRound: false, editSelectPressed: true, editSelectHeld: true }));
-    expect(s.network.sent).toHaveLength(0);
+  it("the edit bind again confirms (commit exit)", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(1)]);
+    t.press("KeyG");
+    t.frame(wallAim(1));
+    expect(t.sent().map((m) => m.action)).toEqual(["select", "confirm"]);
+    expect(t.controller.getMode()).toBe(false);
   });
 
-  it("does not send when not in edit mode", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    s.lock();
-    // No edit mode toggle.
-    s.controller.updateFrame(clickFrame(building));
-    expect(s.network.sent).toHaveLength(0);
-    expect(s.controller.getTarget()).toBeNull();
-  });
-});
-
-describe("BuildEditController — terminal actions", () => {
-  it("confirm sends confirm only when the piece was changed, then exits edit mode", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // touch
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building));
-
-    expect(s.network.sent).toHaveLength(2);
-    expect(s.network.sent[1]!.payload).toEqual({ structureId: "wall1", action: "confirm" });
-    expect(s.controller.getMode()).toBe(false);
-  });
-
-  it("confirm exits edit mode without sending for an untouched piece", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building));
-
-    expect(s.network.sent).toHaveLength(0);
-    expect(s.controller.getMode()).toBe(false);
-  });
-
-  it("cancel sends cancel when touched, then exits edit mode", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // touch
-    s.key.dispatch("keydown", { code: "KeyC", repeat: false });
-    s.controller.updateFrame(frame(building));
-
-    expect(s.network.sent[1]!.payload).toEqual({ structureId: "wall1", action: "cancel" });
-    expect(s.controller.getMode()).toBe(false);
-  });
-
-  it("reset sends reset when touched and keeps edit mode on", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // touch
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-
-    expect(s.network.sent[1]!.payload).toEqual({ structureId: "wall1", action: "reset" });
-    expect(s.controller.getMode()).toBe(true);
-  });
-
-  it("resets the touched flag: a second reset without edits sends nothing", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // touch
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
-    });
-    // After the reset, the piece is default again — no new edits, so a
-    // confirm has nothing to send (only the select + reset went out).
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(s.network.sent).toHaveLength(2);
-    expect(s.controller.getMode()).toBe(false);
-  });
-
-  it("confirms in flight: an earlier tile select is still pending when confirm is sent", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select (unacked)
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building)); // confirm sent after select
-
-    const actions = s.network.sent.map((m) => (m.payload as { action: string }).action);
-    expect(actions).toEqual(["select", "confirm"]);
-  });
-});
-
-describe("BuildEditController — fast authoritative edit reset (repeat cycles)", () => {
-  it("snaps the pending state to the default immediately, before the result arrives", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select tile 4 (optimistic: open)
-    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
-
-    // Fast reset: the reset is applied optimistically the moment it is sent.
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-    // No result has arrived yet — the preview already shows the full/default
-    // canonical form (every tile solid).
-    expect(s.controller.getPendingState()).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, true, true, true, true, true, true],
-    });
-    // The reset intent was submitted (authoritative path unchanged).
-    expect(s.network.sent.at(-1)?.payload).toEqual({
-      structureId: "wall1",
-      action: "reset",
-    });
-
-    // The authoritative result converges to the same default state.
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
-    });
-    expect(s.controller.getPendingState()).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, true, true, true, true, true, true],
-    });
-  });
-
-  it("replicates identically across repeated edit → reset → edit cycles", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-
-    // Cycle 1: edit tile 4.
-    s.controller.updateFrame(clickFrame(building));
-    const cycle1Select = s.network.sent[0]?.payload;
-    const cycle1Pending = s.controller.getPendingState();
-
-    // Reset and let both in-flight actions resolve to the canonical default.
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
-    });
-    // Back to the canonical baseline — no tile open.
-    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
-
-    // Cycle 2: the same edit from the reset baseline must replicate exactly.
-    s.controller.updateFrame(clickFrame(building));
-    const cycle2Select = s.network.sent.at(-1)?.payload;
-    const cycle2Pending = s.controller.getPendingState();
-
-    // Identical wire intent and identical pending state for the same edit.
-    expect(cycle2Select).toEqual(cycle1Select);
-    expect(cycle2Select).toEqual({ structureId: "wall1", action: "select", tileIndex: 4 });
-    expect(cycle2Pending).toEqual(cycle1Pending);
-    expect(wallTiles(cycle2Pending)?.[4]).toBe(false);
-  });
-
-  it("snaps a ramp reset to the full variant immediately", () => {
-    const building = buildingOf([ramp("ramp1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    const aimAtRightHalf = (overrides: Partial<BuildEditFrameContext> = {}) =>
-      frame(building, {
-        aimOrigin: { x: 5, y: 2, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        ...overrides,
-      });
-    s.controller.updateFrame(aimAtRightHalf({ editSelectPressed: true, editSelectHeld: true }));
-    expect(s.controller.getPendingState()).toEqual({ kind: "ramp", variant: "half_right" });
-
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(aimAtRightHalf());
-    // Fast reset: the preview is immediately the full (canonical) ramp.
-    expect(s.controller.getPendingState()).toEqual({ kind: "ramp", variant: "full" });
-    expect(s.network.sent.at(-1)?.payload).toEqual({ structureId: "ramp1", action: "reset" });
-  });
-
-  it("rolls a rejected fast reset back to the authoritative state (no weakening)", () => {
-    // No static editGrid in the mirror: the authoritative state is driven
-    // purely by the accepted select result below, so the mirror sync cannot
-    // override it.
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select tile 4 (optimistic: open)
-    // The server accepts the select: authoritative state now has tile 4 open.
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-
-    // Fast reset is applied optimistically (default)...
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
-
-    // ...but the server rejects it, so the optimistic default is discarded and
-    // the pending state rolls back to the authoritative (tile 4 open) state.
-    s.network.emitResult({ structureId: "wall1", success: false, reason: "invalid_player_state" });
-    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
-    expect(s.controller.getFeedback()?.kind).toBe("rejected");
-  });
-
-  it("sends nothing and changes nothing for an untouched piece on reset", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(frame(building)); // no edits
-    s.key.dispatch("keydown", { code: "Backspace", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(s.network.sent).toHaveLength(0);
-    // The piece was never edited: the pending state is already the default.
-    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
-    // Reset keeps edit mode on (a further edit would continue immediately).
-    expect(s.controller.getMode()).toBe(true);
-  });
-});
-
-describe("BuildEditController — result convergence + feedback", () => {
-  it("converges the pending state from the success broadcast and stays silent for tile toggles", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // optimistic: tile 4 open
-    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
-
-    // The server confirms with its canonical post-action state.
-    const serverTiles = [true, true, true, true, false, true, true, true, true];
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: serverTiles },
-    });
-    // No feedback banner for plain tile toggles (the shape is the feedback).
-    // Advance past the shorter mode-banner TTL first: the "Edit mode on"
-    // notice from entering edit mode is still live at t=0, and a tile
-    // toggle must not add anything on top of it.
-    s.setClock(2_500);
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toBeNull();
-    // Pending now equals the authoritative state.
-    expect(s.controller.getPendingState()).toEqual({ kind: "wall", tiles: serverTiles });
-  });
-
-  it("shows accepted feedback for confirm and info feedback for cancel/reset", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building));
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-    expect(s.controller.getFeedback()).toEqual({
-      kind: "accepted",
-      message: "Edit confirmed",
-      structureId: "wall1",
-    });
-  });
-
-  it("rolls back the optimistic state and shows labelled rejection feedback", () => {
-    const building = buildingOf([
-      wall("wall1", { x: 0, y: 0, z: -1 }, {
-        editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, true, true, true] },
-      }),
+  it("restores are sent before removals", () => {
+    const t = setup([wall("w1", undefined, { editGrid: { kind: "wall", tiles: [false, true, true, true, true, true, true, true, true] } })]);
+    t.enterEdit();
+    t.drag([wallAim(0)]); // restore 0
+    t.drag([wallAim(8)]); // remove 8
+    t.press("Enter");
+    t.frame(wallAim(8));
+    expect(t.sent()).toEqual([
+      { structureId: "w1", action: "deselect", tileIndex: 0 },
+      { structureId: "w1", action: "select", tileIndex: 8 },
+      { structureId: "w1", action: "confirm" },
     ]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // optimistic: tile 4 open
-    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(false);
-
-    // The server rejects (e.g. the round just ended).
-    s.network.emitResult({ structureId: "wall1", success: false, reason: "invalid_player_state" });
-    const fb = s.controller.getFeedback();
-    expect(fb?.kind).toBe("rejected");
-    expect(fb?.message).toBe("Editing unavailable now");
-    // The pending state rolled back to the authoritative default.
-    expect(wallTiles(s.controller.getPendingState())?.[4]).toBe(true);
   });
 
-  it("keeps the optimistic state while earlier actions are still in flight", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select tile 4 (in flight)
-    // A second, different tile is selected before the first answer arrives.
-    s.controller.updateFrame(
-      frame(building, {
-        aimOrigin: { x: 2, y: 2, z: 0 },
-        aimDirection: { x: 0, y: 0, z: -1 },
-        editSelectPressed: true,
-        editSelectHeld: true,
-      }),
-    );
-    // The first result arrives — the second action is still pending, so the
-    // optimistic state (both tiles open) is kept.
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-    const pending = s.controller.getPendingState();
-    expect(pending?.kind).toBe("wall");
-    expect(wallTiles(pending)?.[4]).toBe(false);
-    expect(wallTiles(pending)?.[5]).toBe(false);
-    // The second result lands — convergence to the server state.
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, false, true, true, true] },
-    });
-    expect(s.controller.getPendingState()).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, true, false, false, true, true, true],
-    });
+  it("an unchanged draft sends nothing on confirm", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4)]);
+    t.drag([wallAim(4)]); // back to solid
+    t.press("Enter");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([]);
+    expect(t.controller.getMode()).toBe(false);
   });
 
-  it("adopts the replicated editGrid from the mirror (opponent's edits converge)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    // The mirrored state now carries an edit grid the opponent committed.
-    const updated = buildingOf([
-      wall("wall1", { x: 0, y: 0, z: -1 }, {
-        editGrid: { kind: "wall", tiles: [true, true, true, false, false, false, true, true, true] },
-      }),
+  it("a rejection rolls the optimistic result back with a reason banner", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4)]);
+    t.press("Enter");
+    t.frame(wallAim(4));
+    t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
+    expect(t.controller.getFeedback()).toMatchObject({ kind: "rejected", message: "Not your structure" });
+    t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
+    t.enterEdit();
+    expect(t.removed()).toEqual([]); // back to the authoritative full wall
+  });
+
+  it("a confirmed edit converges on the authoritative results (accepted banner)", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4)]);
+    t.press("Enter");
+    t.frame(wallAim(4));
+    const window: StructureEditState = { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] };
+    t.network.emitResult({ structureId: "w1", success: true, editState: window });
+    t.network.emitResult({ structureId: "w1", success: true, editState: window });
+    expect(t.controller.getFeedback()).toMatchObject({ kind: "accepted", message: "Edit confirmed" });
+  });
+});
+
+describe("BuildEditController — reset", () => {
+  it("reset previews the default form immediately; confirm sends one reset", () => {
+    const t = setup([wall("w1", undefined, { editGrid: { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] } })]);
+    t.enterEdit();
+    expect(t.removed()).toEqual([4, 7]);
+    t.press("KeyT");
+    t.frame(wallAim(4));
+    expect(t.removed()).toEqual([]); // predicted reset, before any round trip
+    expect(t.sent()).toEqual([]);
+    expect(t.controller.getEditView()!.changed).toBe(true);
+    t.press("Enter");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([
+      { structureId: "w1", action: "reset" },
+      { structureId: "w1", action: "confirm" },
     ]);
-    s.controller.updateFrame(frame(updated));
-    expect(s.controller.getPendingState()).toEqual({
-      kind: "wall",
-      tiles: [true, true, true, false, false, false, true, true, true],
-    });
   });
 
-  it("ignores a result for a structure with no local in-flight action (opponent's)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.network.emitResult({
-      structureId: "wall1",
-      success: false,
-      reason: "not_owned",
-    });
-    // No banner for someone else's rejection.
-    expect(s.controller.getFeedback()?.kind).not.toBe("rejected");
-  });
-
-  it("ignores malformed result payloads", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    s.network.emitResult({ success: true }); // missing structureId
-    s.network.emitResult(null);
-    expect(s.controller.getFeedback()).toBeNull();
+  it("reset on an untouched default piece sends nothing", () => {
+    const t = setup();
+    t.enterEdit();
+    t.press("KeyT");
+    t.frame(wallAim(4));
+    t.press("Enter");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([]);
   });
 });
 
-describe("BuildEditController — confirm on release", () => {
-  it("commits on the release edge when the option is enabled", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building, 0, { confirmOnRelease: true });
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building)); // select tile 4
-    s.controller.updateFrame(holdFrame(building)); // still held
-    s.controller.updateFrame(frame(building)); // release
-    const actions = s.network.sent.map((m) => (m.payload as { action: string }).action);
-    expect(actions).toEqual(["select", "confirm"]);
-    expect(s.controller.getMode()).toBe(false);
+describe("BuildEditController — validity, ramps, gating, forced exits", () => {
+  it("an empty floor pattern is invalid: shown, never sent, and edit mode stays on", () => {
+    const t = setup([floorPiece("f1")]);
+    t.press("KeyG");
+    t.frame(floorAim(0));
+    t.drag([floorAim(0), floorAim(1), floorAim(3), floorAim(2)]);
+    expect(t.controller.getEditView()!.invalidReason).toBe("Floor cannot be fully opened");
+    t.press("Enter");
+    t.frame(floorAim(0));
+    expect(t.sent()).toEqual([]);
+    expect(t.controller.getMode()).toBe(true);
+    expect(t.controller.getFeedback()).toMatchObject({ kind: "rejected" });
+    // Restoring one quadrant makes it valid: restore first, then removals.
+    t.drag([floorAim(3)]);
+    t.press("Enter");
+    t.frame(floorAim(0));
+    expect(t.sent().map((m) => [m.action, m.tileIndex])).toEqual([["select", 0], ["select", 1], ["select", 2], ["confirm", undefined]]);
   });
 
-  it("does not commit on release when the option is disabled", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building, 0, { confirmOnRelease: false });
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.controller.updateFrame(holdFrame(building));
-    s.controller.updateFrame(frame(building)); // release
-    const actions = s.network.sent.map((m) => (m.payload as { action: string }).action);
-    expect(actions).toEqual(["select"]);
-    expect(s.controller.getMode()).toBe(true);
-  });
-});
-
-describe("BuildEditController — edit-mode enter/exit feedback", () => {
-  it("shows an info banner when edit mode is entered and exited", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building, 0);
-    s.lock();
-    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toEqual({
-      kind: "info",
-      message: "Edit mode on",
-    });
-
-    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toEqual({
-      kind: "info",
-      message: "Edit mode off",
-    });
-
-    // The info banner expires on its (shorter) TTL.
-    s.setClock(2_000);
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toBeNull();
+  it("a ramp press picks the width half under the crosshair; confirm sends that variant", () => {
+    const t = setup([ramp("r1")]);
+    t.press("KeyG");
+    // Ramp (rotation 0) at grid (0,0,-1): the climber's left half is +Z.
+    const down = (z: number) => ({ aimOrigin: { x: 2.56, y: 6, z }, aimDirection: { x: 0, y: -1, z: 0 } });
+    t.frame(down(-5.12 + 1.28));
+    t.frame(down(-5.12 + 1.28), { pressed: true, held: true });
+    t.frame(down(-5.12 + 1.28), { held: false });
+    expect(t.controller.getEditView()!.draftState).toEqual({ kind: "ramp", variant: "half_left" });
+    t.press("Enter");
+    t.frame(down(-5.12 + 1.28));
+    expect(t.sent()).toEqual([
+      { structureId: "r1", action: "select", rampVariant: "half_left" },
+      { structureId: "r1", action: "confirm" },
+    ]);
   });
 
-  it("does not clobber a live accepted/rejected banner with an exit notice", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building, 0);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building)); // confirm sent + exit
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-    expect(s.controller.getFeedback()?.kind).toBe("accepted");
-
-    // The confirm exit happened inside the result banner's TTL; the verdict
-    // stays on screen.
-    expect(s.controller.getFeedback()).toEqual({
-      kind: "accepted",
-      message: "Edit confirmed",
-      structureId: "wall1",
-    });
+  it("nothing is selected or sent while disconnected or out of round", () => {
+    for (const extra of [{ connected: false }, { inRound: false }]) {
+      const t = setup();
+      t.press("KeyG");
+      t.frame(wallAim(4), {}, extra);
+      t.frame(wallAim(4), { pressed: true, held: true }, extra);
+      t.press("Enter");
+      t.frame(wallAim(4), {}, extra);
+      expect(t.sent()).toEqual([]);
+    }
   });
 
-  it("shows no exit banner for a forced exit (round reset / disconnect)", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
+  it("forced exits discard the draft: round reset, disconnect, pointer unlock", () => {
+    for (const exit of ["reset", "disconnect", "unlock"] as const) {
+      const t = setup();
+      t.enterEdit();
+      t.drag([wallAim(4)]);
+      if (exit === "reset") t.controller.reset();
+      else if (exit === "disconnect") t.controller.clearOnDisconnect();
+      else { t.env.setLock(null); t.pointerLock.dispatch("pointerlockchange", {}); }
+      t.frame(wallAim(4));
+      expect(t.sent(), exit).toEqual([]);
+      expect(t.controller.getMode(), exit).toBe(false);
+    }
+  });
 
-    s.controller.reset();
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toBeNull();
+  it("the edit target being destroyed drops the draft", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(4)]);
+    t.setBuilding([]);
+    t.frame(wallAim(4));
+    expect(t.controller.getEditView()).toBeNull();
+    expect(t.controller.getFeedback()).toMatchObject({ message: "Edit target lost" });
+  });
 
-    enterEditMode(s, building);
-    s.controller.clearOnDisconnect();
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toBeNull();
+  it("confirm-on-release (option) applies the drag when the button is released", () => {
+    const t = setup(undefined, { confirmOnRelease: true });
+    t.enterEdit();
+    t.drag([wallAim(6), wallAim(7)]);
+    expect(t.sent().map((m) => m.action)).toEqual(["select", "select", "confirm"]);
+    expect(t.controller.getMode()).toBe(false);
   });
 });
 
-describe("BuildEditController — feedback expiry (injectable clock)", () => {
-  it("keeps result feedback until its TTL elapses, then clears it", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building, 0);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.key.dispatch("keydown", { code: "Enter", repeat: false });
-    s.controller.updateFrame(frame(building)); // sent at t=0
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    }); // feedbackUntil = 3000
-    expect(s.controller.getFeedback()?.kind).toBe("accepted");
-
-    s.setClock(2_999);
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()?.kind).toBe("accepted");
-
-    s.setClock(3_000);
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getFeedback()).toBeNull();
+describe("editDiffActions", () => {
+  const full = (): StructureEditState => ({ kind: "wall", tiles: Array(9).fill(true) });
+  it("is empty for equal states and a single reset for the default target", () => {
+    expect(editDiffActions("wall", full(), full())).toEqual([]);
+    const edited: StructureEditState = { kind: "wall", tiles: [false, ...Array(8).fill(true)] };
+    expect(editDiffActions("wall", edited, full())).toEqual([{ action: "reset" }]);
   });
-});
-
-describe("BuildEditController — cleanup triggers", () => {
-  it("resets (round reset / rematch): exits mode, clears target + feedback + caches", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-    expect(s.controller.getTarget()).not.toBeNull();
-
-    s.controller.reset();
-    expect(s.controller.getMode()).toBe(false);
-    expect(s.controller.getTarget()).toBeNull();
-    expect(s.controller.getFeedback()).toBeNull();
-    // The pending state is gone (no cache, back to the default derivation).
-    s.lock();
-    s.key.dispatch("keydown", { code: "KeyF", repeat: false });
-    s.controller.updateFrame(frame(building));
-    expect(wallTiles(s.controller.getPendingState())?.every(Boolean)).toBe(true);
-  });
-
-  it("clears on disconnect: exits mode, clears target + feedback", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(clickFrame(building));
-    s.network.emitResult({
-      structureId: "wall1",
-      success: true,
-      editState: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] },
-    });
-
-    s.controller.clearOnDisconnect();
-    expect(s.controller.getMode()).toBe(false);
-    expect(s.controller.getTarget()).toBeNull();
-    expect(s.controller.getFeedback()).toBeNull();
-  });
-
-  it("cancel() clears the target and feedback while keeping the mode", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.updateFrame(frame(building));
-    expect(s.controller.getTarget()).not.toBeNull();
-
-    s.controller.cancel();
-    expect(s.controller.getTarget()).toBeNull();
-    expect(s.controller.getFeedback()).toBeNull();
-    // Mode stays on (the player is still in edit mode).
-    expect(s.controller.getMode()).toBe(true);
-  });
-
-  it("dispose() unsubscribes: later results are ignored", () => {
-    const building = buildingOf([wall("wall1")]);
-    const s = setup(building);
-    enterEditMode(s, building);
-    s.controller.dispose();
-    s.network.emitResult({ structureId: "wall1", success: true });
-    expect(s.controller.getFeedback()).toBeNull();
-    // A frame after dispose reports no target.
-    expect(s.controller.updateFrame(frame(building))).toBeNull();
+  it("ramp: a half variant is one select; full is a reset", () => {
+    expect(editDiffActions("ramp", { kind: "ramp", variant: "full" }, { kind: "ramp", variant: "half_right" })).toEqual([{ action: "select", rampVariant: "half_right" }]);
+    expect(editDiffActions("ramp", { kind: "ramp", variant: "half_right" }, { kind: "ramp", variant: "full" })).toEqual([{ action: "reset" }]);
   });
 });

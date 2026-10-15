@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { InputManager } from "./InputManager";
+import { ActionMap } from "./actionBindings";
 
 type Listener = (event: unknown) => void;
 
@@ -92,6 +93,30 @@ describe("InputManager pointer-lock look", () => {
   function mouseMove(movementX: number, movementY: number): void {
     windowTarget.dispatch("mousemove", { movementX, movementY });
   }
+
+  it("resolves movement, jump, weapon edges and the primary button through the action map (rebindable)", () => {
+    const actions = new ActionMap({ moveForward: ["KeyI"], jump: ["KeyJ"], weaponSlot2: ["KeyK"], primaryAction: ["Mouse2"] });
+    input = new InputManager(canvas as unknown as HTMLCanvasElement, actions);
+    lockCanvas();
+    windowTarget.dispatch("keydown", { code: "KeyW", repeat: false }); // unbound now
+    expect(input.getMovementInput()).toEqual({ x: 0, z: 0 });
+    windowTarget.dispatch("keydown", { code: "KeyI", repeat: false });
+    expect(input.getMovementInput()).toEqual({ x: 0, z: -1 });
+    windowTarget.dispatch("keyup", { code: "KeyI" });
+    expect(input.getMovementInput()).toEqual({ x: 0, z: 0 });
+    windowTarget.dispatch("keydown", { code: "KeyJ", repeat: false });
+    expect(input.pollJumpPressed()).toBe(true);
+    windowTarget.dispatch("keydown", { code: "KeyK", repeat: false });
+    expect(input.consumeWeaponSlot2Pressed()).toBe(true);
+    canvas.dispatch("mousedown", { button: 0 });
+    expect(input.consumeFirePressed()).toBe(false); // Mouse0 is not the primary any more
+    canvas.dispatch("mousedown", { button: 2 });
+    expect(input.consumeFirePressed()).toBe(true);
+    expect(input.isFiring()).toBe(true);
+    canvas.dispatch("mouseup", { button: 2 });
+    expect(input.isFiring()).toBe(false);
+    expect(input.actions).toBe(actions);
+  });
 
   it("returns the accumulated non-zero look while locked, then zero on the next call", () => {
     input = new InputManager(canvas as unknown as HTMLCanvasElement);

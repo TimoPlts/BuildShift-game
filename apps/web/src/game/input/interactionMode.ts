@@ -1,37 +1,39 @@
 /**
- * Centralized interaction-mode ownership (overhaul task 12).
+ * Centralized interaction-mode ownership.
  *
- * The build layer (KeyB) and the build-edit layer (KeyF) each used to own an
- * independent boolean flag, so both could be active at once and the
- * build -> edit -> build -> weapon transition loop left stale intents behind
- * (e.g. "confirm then shotgun": confirm closed edit mode, but build mode kept
- * owning Digit1/Digit2, so the number keys picked floor instead of the
- * shotgun). This coordinator is the single owner of both layer intents:
+ * Single owner of the two layer intents — the build layer and the build-edit
+ * layer — so the input controllers can never disagree about what the primary
+ * button and the contextual keys mean:
  *
- *   - `edit` sits on top of `build`: F toggles the edit layer (over weapon or
- *     over build); B toggles the build layer, and while the edit layer is on
- *     top B reveals the build layer (edit off, build on) — the fast
- *     "build -> edit -> build" step.
- *   - The effective mode is always the topmost active layer:
- *     `edit > build > weapon`.
- *   - Confirm/cancel (`exitToWeapon`) drops both layers at once, so the
- *     primary button and the number keys mean combat actions immediately.
- *   - Round reset / disconnect / dispose tear down only what the caller owns
- *     (`clearEdit` keeps the build layer; `clearAll` drops both), so no stale
- *     intent survives a transition.
+ *   - `edit` sits on top of `build`; the effective mode is always the topmost
+ *     active layer: `edit > build > weapon`.
+ *   - Direct transitions (competitive building): a build-piece bind enters
+ *     the build layer from any mode (`selectBuild`), a weapon-slot bind
+ *     returns to weapon mode from any mode (`selectWeapon`), the edit bind
+ *     toggles the edit layer (`toggleEdit`). No mode key is required first.
+ *   - Leaving the edit layer through one of those player actions (another
+ *     bind, the edit bind again, confirm) is a **commit** exit: the edit the
+ *     player made is applied. Leaving it through a forced teardown (round
+ *     reset, disconnect, pointer unlock, cancel) is a **discard** exit. The
+ *     exit kind is latched here, so the edit controller applies or drops its
+ *     local draft no matter which key listener observed the key first.
  *
  * The coordinator is a pure state machine: it owns **no browser listeners**.
- * Each input controller keeps its own single listener set and routes its key
- * presses here, so wiring one shared coordinator into both systems cannot
+ * Each input controller keeps its own single listener set and routes its
+ * actions here, so wiring one shared coordinator into both systems cannot
  * create duplicate listeners.
  */
 
 /** Effective interaction mode: the topmost active layer. */
 export type InteractionMode = "weapon" | "build" | "edit";
 
+/** How the edit layer was last left (`null` once consumed / never left). */
+export type EditExitKind = "commit" | "discard";
+
 export class InteractionModeCoordinator {
   private buildIntent = false;
   private editIntent = false;
+  private editExit: EditExitKind | null = null;
 
   /**
    * The effective mode. `buildIntent` may remain true while `editIntent` is
@@ -54,47 +56,83 @@ export class InteractionModeCoordinator {
     return this.mode === "edit";
   }
 
+  /** A build-piece bind: enter (or stay in) the build layer from any mode. */
+  selectBuild(): void {
+    this.leaveEdit("commit");
+    this.buildIntent = true;
+  }
+
+  /** A weapon-slot bind: return to weapon mode from any mode. */
+  selectWeapon(): void {
+    this.leaveEdit("commit");
+    this.buildIntent = false;
+  }
+
   /**
-   * KeyB toggle. While the edit layer is on top, B reveals the build layer
-   * (edit off, build on) — the fast "build -> edit -> build" step. Otherwise
-   * it flips the build layer (weapon <-> build).
+   * The optional legacy build toggle. While the edit layer is on top it
+   * reveals the build layer (edit committed, build on); otherwise it flips the
+   * build layer (weapon <-> build).
    */
   toggleBuild(): void {
     if (this.editIntent) {
-      this.editIntent = false;
+      this.leaveEdit("commit");
       this.buildIntent = true;
       return;
     }
     this.buildIntent = !this.buildIntent;
   }
 
-  /** KeyF toggle: flips the edit layer (over weapon, or over build). */
+  /**
+   * The edit bind: enters the edit layer (over weapon or build), or — while
+   * editing — commits the edit and returns to the layer beneath.
+   */
   toggleEdit(): void {
-    this.editIntent = !this.editIntent;
+    if (this.editIntent) {
+      this.leaveEdit("commit");
+      return;
+    }
+    this.editIntent = true;
+    this.editExit = null;
   }
 
   /**
-   * Drop only the edit layer, preserving the build layer beneath it. Used by
-   * round reset / disconnect / dispose: the player's build context (mode +
-   * selected piece) survives exactly as before the coordinator existed.
+   * Drop only the edit layer **without applying** the edit, preserving the
+   * build layer beneath it (round reset / disconnect / dispose / cancel).
    */
   clearEdit(): void {
-    this.editIntent = false;
+    this.leaveEdit("discard");
   }
 
   /**
-   * Commit-exit from editing (confirm/cancel): drop both layers, returning
-   * to weapon mode so the primary button and the number keys are combat
-   * actions immediately — "confirm then shotgun" works.
+   * Commit-exit from editing (confirm): apply the edit and drop both layers,
+   * returning to weapon mode so the primary button means fire immediately.
    */
   exitToWeapon(): void {
-    this.editIntent = false;
+    this.leaveEdit("commit");
     this.buildIntent = false;
   }
 
-  /** Drop every layer intent (pointer unlock, tab hidden, dispose). */
+  /** Drop every layer intent without applying an edit (pointer unlock, tab hidden, dispose). */
   clearAll(): void {
-    this.editIntent = false;
+    this.leaveEdit("discard");
     this.buildIntent = false;
+  }
+
+  /**
+   * How the edit layer was left since the last call (`null` when it was not
+   * left). Consumed once per frame by the edit controller.
+   */
+  consumeEditExit(): EditExitKind | null {
+    const exit = this.editExit;
+    this.editExit = null;
+    return exit;
+  }
+
+  private leaveEdit(kind: EditExitKind): void {
+    if (!this.editIntent) return;
+    this.editIntent = false;
+    // A discard never downgrades to commit within one frame, and a later
+    // commit never overrides an earlier discard of the same session.
+    if (this.editExit !== "discard") this.editExit = kind;
   }
 }

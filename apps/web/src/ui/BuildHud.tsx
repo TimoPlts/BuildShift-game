@@ -27,6 +27,7 @@ import {
   type GridPosition,
 } from "@buildshift/protocol";
 import { getStructureConfig } from "@buildshift/game-config";
+import { actionLabel } from "../game/input/actionBindings";
 
 /**
  * Explicit props for the build HUD.
@@ -65,15 +66,14 @@ const BUILD_TYPE_ICONS: Record<BuildType, string> = {
 };
 
 /**
- * The number-key hint for each build type. Mirrors `BUILD_TYPE_KEYS` in the
- * building input controller (1=wall, 2=floor, 3=ramp, 4=cone) so the HUD
- * never advertises a key the controller does not bind.
+ * The dedicated build-bind hint for each build type, read from the gameplay
+ * action bindings so the HUD never advertises a key the input does not bind.
  */
 const BUILD_TYPE_KEY_HINTS: Record<BuildType, string> = {
-  wall: "1",
-  floor: "2",
-  ramp: "3",
-  cone: "4",
+  wall: actionLabel("buildWall"),
+  floor: actionLabel("buildFloor"),
+  ramp: actionLabel("buildRamp"),
+  cone: actionLabel("buildCone"),
 };
 
 /**
@@ -117,7 +117,8 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
       <div className="build-hud build-hud--inactive">
         <span className="build-hud__mode-label">BUILD MODE OFF</span>
         <span className="build-hud__toggle-hint">
-          Press <kbd>B</kbd> to build
+          Press <kbd>{BUILD_TYPE_KEY_HINTS.wall}</kbd> <kbd>{BUILD_TYPE_KEY_HINTS.floor}</kbd>{" "}
+          <kbd>{BUILD_TYPE_KEY_HINTS.ramp}</kbd> <kbd>{BUILD_TYPE_KEY_HINTS.cone}</kbd> to build
         </span>
       </div>
     );
@@ -194,13 +195,13 @@ export function BuildHud(props: BuildHudProps): JSX.Element {
       {/* ── Contextual control hint (rotate / place-or-aim / exit) ── */}
       <div className="build-hud__hint">
         <span>
-          <kbd>Q</kbd>/<kbd>E</kbd> rotate
+          <kbd>{actionLabel("buildRotateRight")}</kbd> rotate
         </span>
         <span aria-hidden="true">·</span>
         <span>{placementHint(placementValid)}</span>
         <span aria-hidden="true">·</span>
         <span>
-          <kbd>B</kbd> exit
+          <kbd>{actionLabel("weaponSlot1")}</kbd>/<kbd>{actionLabel("weaponSlot2")}</kbd> weapons
         </span>
       </div>
     </div>

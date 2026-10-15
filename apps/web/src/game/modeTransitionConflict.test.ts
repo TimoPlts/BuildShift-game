@@ -1,32 +1,29 @@
 /**
- * Mode-transition conflict lifecycle tests (overhaul task 12).
+ * Mode-transition lifecycle tests for the competitive control scheme.
  *
  * Wires the PRODUCTION components exactly the way the GameRuntime does — one
- * shared {@link InteractionModeCoordinator} owned by the runtime and threaded
- * into BOTH the building system and the build-edit system — and simulates the
- * runtime's per-frame contract:
+ * shared {@link InteractionModeCoordinator} threaded into BOTH the building
+ * system and the build-edit system, default action bindings — and simulates
+ * the runtime's per-frame contract:
  *
  *   route = routePrimaryAction(build, edit, fireEdge, fireHeld)   [gated]
  *   weapon actions     only in effective weapon mode + IN_PROGRESS
  *   updateBuildingFrame(connected, inRound, buildPlaceHeld | press)
  *   updateBuildEditFrame(route.editSelect*)
  *
- * Invariants pinned by the mission flow "place then edit, confirm then
- * shotgun, repeat edit/reset/edit":
+ * Pinned (default binds: Q wall, F floor, E ramp, Z cone, G edit, T reset,
+ * 1/2 weapons, R reload / rotate):
  *
- *  - no duplicate listeners: both input controllers share one key /
- *    pointer-lock / visibility surface and each registers exactly ONE
- *    listener per event type; the coordinator registers none;
- *  - no shots in build/edit: the weapon path never acts while build or edit
- *    is the topmost layer;
- *  - no placement in weapon or edit mode: placement intents come out of
- *    effective build mode only, and only while the round is IN_PROGRESS;
- *  - "confirm then shotgun": confirm (Enter) clears the build layer too, so
- *    Digit2 is a weapon switch immediately — not a floor piece selection;
- *  - "repeat edit/reset/edit": reset keeps edit mode on a shared baseline and
- *    the next edit works; the mode loop stays stable;
- *  - no stale edges: latches are drained every frame, so nothing latched
- *    during countdown / another mode can fire after a transition.
+ *  - dedicated build binds: one key goes weapon → building with that piece,
+ *    no mode key first; switching pieces keeps turbo placing while the
+ *    primary stays held (no release needed);
+ *  - the competitive flow wall → ramp → edit (drag) → shotgun (commits the
+ *    edit) → shoot → edit → reset → confirm works without any action
+ *    firing, placing, or editing in the wrong mode;
+ *  - rapid weapon → wall → weapon → ramp → edit alternation loses no input
+ *    and leaves no stray action; R reloads only in weapon mode and rotates
+ *    only while building;
+ *  - no duplicate listeners, no stale edges, pointer unlock discards.
  */
 import { describe, expect, it } from "vitest";
 import { BUILD_EVENTS, type StructureState } from "@buildshift/protocol";
@@ -83,8 +80,6 @@ interface Vec3 {
 
 /** Aim straight down from above the origin — a valid placement preview. */
 const PLACE_AIM = { origin: { x: 0, y: 5, z: 0 }, dir: { x: 0, y: -1, z: 0 } };
-/** Aim at the centre tile (index 4) of a wall at grid (0,0,-1). */
-const EDIT_AIM = { origin: { x: 0, y: 2, z: 0 }, dir: { x: 0, y: 0, z: -1 } };
 
 /** A wall the local session owns (the edit target). */
 function wallState(id: string): StructureState {
@@ -281,199 +276,204 @@ function createFixture() {
   };
 }
 
-describe("mode-transition conflict lifecycle (shared coordinator)", () => {
+/** Aim straight down at the centre of ground cell (x, z). */
+const aimCell = (x: number, z: number) => ({ origin: { x: x * 5.12 + 2.56, y: 5, z: z * 5.12 + 2.56 }, dir: { x: 0, y: -1, z: 0 } });
+/** Aim at wall s1 (grid (0,0,-1)) tile `t` along its panel normal. */
+const editAim = (t: number) => ({
+  origin: { x: -5.12 / 2 + ((t % 3) + 0.5) * (5.12 / 3), y: 3.84 - (Math.floor(t / 3) + 0.5) * (3.84 / 3), z: 0 },
+  dir: { x: 0, y: 0, z: -1 },
+});
+
+describe("competitive mode transitions (shared coordinator, default binds)", () => {
   it("registers no duplicate listeners on the shared input surfaces", () => {
     const fixture = createFixture();
-    // Both controllers are wired into the SAME surfaces (as in the runtime,
-    // where both listen on window/document). Each event type has exactly one
-    // listener per controller — two total, no third from the coordinator.
     expect(fixture.key.count("keydown")).toBe(2);
     expect(fixture.pointerLock.count("pointerlockchange")).toBe(2);
     expect(fixture.visibility.count("visibilitychange")).toBe(2);
-    // Tearing one system down removes exactly its listeners.
     fixture.buildInput.dispose();
     expect(fixture.key.count("keydown")).toBe(1);
     expect(fixture.pointerLock.count("pointerlockchange")).toBe(1);
     fixture.dispose();
   });
 
-  it("place then edit: placement stops, no shots, the primary becomes tile selection", () => {
+  it.each([
+    ["KeyQ", "wall"],
+    ["KeyF", "floor"],
+    ["KeyE", "ramp"],
+    ["KeyZ", "cone"],
+  ] as const)("weapon → %s with one key: building with that piece, preview and placement immediately", (code, piece) => {
     const fixture = createFixture();
     fixture.lock();
-
-    // B: build mode. Hold the primary aimed at the grid: turbo placement.
-    fixture.press("KeyB");
-    fixture.frame({ fireHeld: true, now: 0 });
-    expect(fixture.placementCount()).toBe(1);
-    // A fresh cell (the first intent's footprint is pending, so the same
-    // cell's preview is invalid until the server answers).
-    fixture.frame({
-      fireHeld: true,
-      now: PLACEMENT_REQUEST_INTERVAL_MS,
-      aim: { origin: { x: 5.12, y: 5, z: 0 }, dir: { x: 0, y: -1, z: 0 } },
-    });
-    expect(fixture.placementCount()).toBe(2);
-
-    // F: edit mode (build underneath). The SAME held primary must NOT place
-    // again and must NOT fire — it belongs to the edit layer.
-    fixture.press("KeyF");
-    expect(fixture.mode.mode).toBe("edit");
-    const before = fixture.placementCount();
-    fixture.frame({
-      firePressed: true,
-      fireHeld: true,
-      aim: EDIT_AIM,
-      now: 2 * PLACEMENT_REQUEST_INTERVAL_MS,
-    });
-    expect(fixture.placementCount()).toBe(before); // no placement in edit
-    // The primary press became an edit tile action on the targeted wall.
-    expect(fixture.editActionCount()).toBe(1);
-    const editAction = fixture.sent.find(
-      (m) => m.type === EDIT_GRID_ACTION_MESSAGE,
-    );
-    expect(editAction?.payload).toEqual(
-      expect.objectContaining({ structureId: "s1", tileIndex: 4 }),
-    );
-    // No weapon action happened in any of this (rifle ammo untouched: no
-    // fire intent ever reached the weapon path in build/edit).
-    expect(fixture.weaponSwitchCount()).toBe(0);
-    fixture.dispose();
-  });
-
-  it("confirm then shotgun: confirm clears the build layer, Digit2 switches immediately", () => {
-    const fixture = createFixture();
-    fixture.lock();
-
-    // Build mode: Digit2 is a PIECE selection (floor), never a weapon switch.
-    fixture.press("KeyB");
-    fixture.press("Digit2");
-    expect(fixture.buildInput.getSelectedBuildType()).toBe("floor");
-    expect(fixture.weapon.activeWeapon).toBe("assault_rifle");
-    expect(fixture.weaponSwitchCount()).toBe(0);
-    fixture.frame({ fireHeld: true, now: 0 });
-    expect(fixture.placementCount()).toBe(1);
-
-    // Edit, change a tile, then confirm (Enter).
-    fixture.press("KeyF");
-    fixture.frame({ firePressed: true, fireHeld: true, aim: EDIT_AIM });
-    expect(fixture.editActionCount()).toBe(1);
-    fixture.press("Enter");
-    fixture.frame({ aim: EDIT_AIM }); // confirm is consumed on the targeted piece
-    // Confirm committed the edit and returned to WEAPON mode — the build
-    // layer is gone, so the number keys are combat actions at once.
     expect(fixture.mode.mode).toBe("weapon");
-    expect(fixture.buildInput.isBuildModeActive()).toBe(false);
-
-    // "Then shotgun": Digit2 switches the weapon (and does not select floor).
-    fixture.press("Digit2");
-    fixture.frame();
-    expect(fixture.weapon.activeWeapon).toBe("shotgun");
-    expect(fixture.weaponSwitchCount()).toBe(1);
-    expect(fixture.buildInput.getSelectedBuildType()).toBe("floor"); // unchanged
-
-    // And Digit1 back to the rifle.
-    fixture.press("Digit1");
-    fixture.frame();
-    expect(fixture.weapon.activeWeapon).toBe("assault_rifle");
-    expect(fixture.weaponSwitchCount()).toBe(2);
-
-    // Re-entering build mode, Digit2 is a piece selection again (no switch).
-    fixture.press("KeyB");
-    fixture.press("Digit2");
-    fixture.frame();
-    expect(fixture.buildInput.getSelectedBuildType()).toBe("floor");
-    expect(fixture.weaponSwitchCount()).toBe(2);
-    fixture.dispose();
-  });
-
-  it("repeat edit / reset / edit: reset keeps the mode, the next edit works", () => {
-    const fixture = createFixture();
-    fixture.lock();
-
-    fixture.press("KeyB"); // build
-    fixture.press("KeyF"); // edit (build underneath)
-    expect(fixture.mode.mode).toBe("edit");
-
-    // Edit: toggle the centre tile.
-    fixture.frame({ firePressed: true, fireHeld: true, aim: EDIT_AIM });
-    expect(fixture.editActionCount()).toBe(1);
-
-    // Reset (Backspace): stays in edit mode, sends the reset terminal ...
-    fixture.press("Backspace");
-    fixture.frame({ aim: EDIT_AIM });
-    expect(fixture.mode.mode).toBe("edit");
-    const reset = fixture.sent.filter(
-      (m) =>
-        m.type === EDIT_GRID_ACTION_MESSAGE &&
-        (m.payload as { action?: string })?.action === "reset",
-    );
-    expect(reset).toHaveLength(1);
-
-    // ... and the next edit works on the (optimistically) reset baseline.
-    fixture.frame({ firePressed: true, fireHeld: true, aim: EDIT_AIM });
-    expect(fixture.editActionCount()).toBe(3); // toggle + reset + toggle
-
-    // F back to build: placement resumes. B back to weapon: nothing.
-    fixture.press("KeyF");
+    fixture.press(code);
     expect(fixture.mode.mode).toBe("build");
-    fixture.frame({ firePressed: true, fireHeld: true, now: 0 });
-    expect(fixture.placementCount()).toBe(1);
-    fixture.press("KeyB");
-    expect(fixture.mode.mode).toBe("weapon");
-    fixture.frame({ firePressed: true, fireHeld: true, now: PLACEMENT_REQUEST_INTERVAL_MS });
-    expect(fixture.placementCount()).toBe(1); // no placement in weapon mode
+    expect(fixture.buildInput.getSelectedBuildType()).toBe(piece);
+    fixture.frame({ aim: aimCell(-1, 0) });
+    expect(fixture.building.getPreview().present).toBe(true);
+    expect(fixture.building.getPreview().valid).toBe(true);
+    fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-1, 0) });
+    const placed = fixture.sent.filter((m) => m.type === BUILD_EVENTS.PLACEMENT_REQUEST).map((m) => (m.payload as { buildType: string }).buildType);
+    expect(placed).toEqual([piece]);
+    expect(fixture.weapon.currentAmmo).toBe(30); // no shot
     fixture.dispose();
   });
 
-  it("drains every latch each frame: no stale shot / switch / placement across transitions", () => {
+  it("hold the primary: wall → ramp → floor → cone binds keep turbo placing without a release", () => {
     const fixture = createFixture();
     fixture.lock();
-
-    // COUNTDOWN: the primary is held, a slot is pressed, build is armed.
-    fixture.press("KeyB");
-    fixture.press("Digit2");
-    fixture.frame({
-      firePressed: true,
-      fireHeld: true,
-      inRound: false,
-      now: 0,
+    // The button is already down (firing) when the first build bind lands.
+    fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-2, 0) });
+    const rifleAmmo = fixture.weapon.currentAmmo;
+    const plan: Array<[string, string, { origin: Vec3; dir: Vec3 }]> = [
+      ["KeyQ", "wall", aimCell(-2, 0)],
+      ["KeyE", "ramp", aimCell(0, 0)],
+      ["KeyF", "floor", aimCell(-1, 1)],
+      ["KeyZ", "cone", aimCell(2, 1)],
+    ];
+    plan.forEach(([code, , aim], i) => {
+      fixture.press(code);
+      fixture.frame({ fireHeld: true, aim, now: (i + 1) * PLACEMENT_REQUEST_INTERVAL_MS });
     });
-    expect(fixture.placementCount()).toBe(0); // no placement outside the round
-    expect(fixture.weaponSwitchCount()).toBe(0); // slot drained, not acted
-    expect(fixture.weapon.activeWeapon).toBe("assault_rifle");
-
-    // ROUND START, still holding everything: the edge is GONE (it was
-    // consumed every frame during countdown) but the held state persists.
-    fixture.frame({ fireHeld: true, inRound: true, now: PLACEMENT_REQUEST_INTERVAL_MS });
-    // In build mode the held primary places (build owns it) — and no stale
-    // weapon slot / fire edge fired: exactly one placement, zero switches.
-    expect(fixture.placementCount()).toBe(1);
-    expect(fixture.weaponSwitchCount()).toBe(0);
-    expect(fixture.weapon.activeWeapon).toBe("assault_rifle");
-
-    // Weapon mode: a fresh press fires exactly once; the earlier stale
-    // countdown press never resurfaces.
-    fixture.press("KeyB");
-    fixture.frame({ firePressed: true, fireHeld: true });
-    fixture.frame({ fireHeld: true }); // held: no second edge
-    // (Ammo decremented exactly once — tryFire ran on the press edge only.)
-    const fullAmmo = 30; // assault-rifle magazine
-    expect(fixture.weapon.currentAmmo).toBe(fullAmmo - 1);
+    const placed = fixture.sent.filter((m) => m.type === BUILD_EVENTS.PLACEMENT_REQUEST).map((m) => (m.payload as { buildType: string }).buildType);
+    expect(placed).toEqual(["wall", "ramp", "floor", "cone"]);
+    // The held primary never fired once building started.
+    expect(fixture.weapon.currentAmmo).toBe(rifleAmmo);
     fixture.dispose();
   });
 
-  it("pointer unlock clears both layers through the shared coordinator", () => {
+  it("wall → ramp → edit (drag) → shotgun → shoot → edit → reset → confirm", () => {
     const fixture = createFixture();
     fixture.lock();
-    fixture.press("KeyB");
-    fixture.press("KeyF");
+    const placements = () => fixture.sent.filter((m) => m.type === BUILD_EVENTS.PLACEMENT_REQUEST).length;
+    const edits = () => fixture.sent.filter((m) => m.type === EDIT_GRID_ACTION_MESSAGE).map((m) => m.payload as Record<string, unknown>);
+
+    fixture.press("KeyQ");
+    fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-2, 0), now: 0 });
+    fixture.press("KeyE");
+    fixture.frame({ fireHeld: true, aim: aimCell(0, 0), now: PLACEMENT_REQUEST_INTERVAL_MS });
+    fixture.frame({ fireHeld: false, aim: aimCell(0, 0), now: 2 * PLACEMENT_REQUEST_INTERVAL_MS });
+    expect(placements()).toBe(2);
+
+    // Edit the owned wall: drag a doorway (centre → bottom-centre).
+    fixture.press("KeyG");
     expect(fixture.mode.mode).toBe("edit");
-    fixture.unlock();
-    // Both controllers react to the same pointerlockchange event and route
-    // to the shared coordinator — the result is weapon mode, once.
+    fixture.frame({ aim: editAim(4) });
+    fixture.frame({ firePressed: true, fireHeld: true, aim: editAim(4) });
+    fixture.frame({ fireHeld: true, aim: editAim(7) });
+    fixture.frame({ fireHeld: false, aim: editAim(7) });
+    expect(placements()).toBe(2); // the primary selected tiles, never placed
+    expect(fixture.weapon.currentAmmo).toBe(30); // ... and never fired
+    expect(edits()).toEqual([]); // the drag is local until confirmed
+
+    // Shotgun: leaves edit (committing the doorway) and switches at once.
+    fixture.press("Digit2");
+    fixture.frame({ aim: editAim(7) });
     expect(fixture.mode.mode).toBe("weapon");
-    expect(fixture.buildInput.isBuildModeActive()).toBe(false);
-    expect(fixture.editInput.isEditModeActive()).toBe(false);
+    expect(fixture.weapon.activeWeapon).toBe("shotgun");
+    expect(edits()).toEqual([
+      { structureId: "s1", action: "select", tileIndex: 4 },
+      { structureId: "s1", action: "select", tileIndex: 7 },
+      { structureId: "s1", action: "confirm" },
+    ]);
+
+    // Shoot: the first click after the edit fires the shotgun once.
+    const shells = fixture.weapon.currentAmmo;
+    fixture.frame({ firePressed: true, fireHeld: true, aim: editAim(4) });
+    fixture.frame({ fireHeld: false, aim: editAim(4) });
+    expect(fixture.weapon.currentAmmo).toBe(shells - 1);
+    expect(placements()).toBe(2);
+
+    // Edit again → reset (predicted at once) → confirm with the edit bind.
+    fixture.press("KeyG");
+    fixture.frame({ aim: editAim(4) });
+    const view = fixture.edit.getEditView()!;
+    expect(view.draftState).toEqual({ kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] });
+    fixture.press("KeyT");
+    fixture.frame({ aim: editAim(4) });
+    expect(fixture.edit.getEditView()!.draftState).toEqual({ kind: "wall", tiles: Array(9).fill(true) });
+    fixture.press("KeyG");
+    fixture.frame({ aim: editAim(4) });
+    expect(edits().slice(3)).toEqual([
+      { structureId: "s1", action: "reset" },
+      { structureId: "s1", action: "confirm" },
+    ]);
+    expect(fixture.mode.mode).toBe("weapon");
+    expect(fixture.weapon.currentAmmo).toBe(shells - 1); // no stray shot
+    fixture.dispose();
+  });
+
+  it("rapid weapon → wall → weapon → ramp → edit alternation: every bind lands, nothing strays", () => {
+    const fixture = createFixture();
+    fixture.lock();
+    const steps: Array<[string, string, string | null]> = [
+      ["KeyQ", "build", "wall"],
+      ["Digit1", "weapon", null],
+      ["KeyE", "build", "ramp"],
+      ["Digit2", "weapon", null],
+      ["KeyQ", "build", "wall"],
+      ["KeyG", "edit", null],
+      ["Digit1", "weapon", null],
+      ["KeyZ", "build", "cone"],
+      ["KeyG", "edit", null],
+      ["KeyG", "build", null], // edit again returns to the build layer beneath
+    ];
+    for (const [code, expected, piece] of steps) {
+      fixture.press(code);
+      fixture.frame({ aim: editAim(4) });
+      expect(fixture.mode.mode, code).toBe(expected);
+      if (piece !== null) expect(fixture.buildInput.getSelectedBuildType(), code).toBe(piece);
+    }
+    expect(fixture.weapon.activeWeapon).toBe("assault_rifle");
+    expect(fixture.weaponSwitchCount()).toBe(2); // → shotgun, → rifle
+    expect(fixture.placementCount()).toBe(0);
+    expect(fixture.editActionCount()).toBe(0); // untouched edits send nothing
+    expect(fixture.weapon.currentAmmo).toBe(30);
+    fixture.dispose();
+  });
+
+  it("R reloads only in weapon mode and rotates only while building", () => {
+    const fixture = createFixture();
+    fixture.lock();
+    fixture.frame({ firePressed: true, aim: aimCell(-1, 0) }); // spend a round
+    fixture.press("KeyR");
+    fixture.frame();
+    expect(fixture.weapon.isReloading).toBe(true);
+    expect(fixture.buildInput.getRotation()).toBe(0);
+    fixture.weapon.reset();
+    fixture.press("KeyQ");
+    fixture.press("KeyR");
+    fixture.frame();
+    expect(fixture.buildInput.getRotation()).toBe(1);
+    expect(fixture.weapon.isReloading).toBe(false);
+    fixture.dispose();
+  });
+
+  it("drains every latch each frame: nothing latched out of round fires after the round starts", () => {
+    const fixture = createFixture();
+    fixture.lock();
+    fixture.press("Digit2");
+    fixture.frame({ inRound: false, firePressed: true, fireHeld: true });
+    fixture.press("KeyQ");
+    fixture.frame({ inRound: false, firePressed: true, fireHeld: true });
+    fixture.frame({ aim: aimCell(-1, 0) });
+    expect(fixture.weaponSwitchCount()).toBe(0);
+    expect(fixture.placementCount()).toBe(0);
+    expect(fixture.weapon.currentAmmo).toBe(30);
+    fixture.dispose();
+  });
+
+  it("pointer unlock clears both layers and discards an unconfirmed edit", () => {
+    const fixture = createFixture();
+    fixture.lock();
+    fixture.press("KeyQ");
+    fixture.press("KeyG");
+    fixture.frame({ aim: editAim(4) });
+    fixture.frame({ firePressed: true, fireHeld: true, aim: editAim(4) });
+    fixture.frame({ fireHeld: false, aim: editAim(4) });
+    fixture.unlock();
+    fixture.frame({ aim: editAim(4) });
+    expect(fixture.mode.mode).toBe("weapon");
+    expect(fixture.editActionCount()).toBe(0);
     fixture.dispose();
   });
 });

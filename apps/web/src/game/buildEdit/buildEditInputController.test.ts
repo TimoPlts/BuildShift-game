@@ -17,6 +17,7 @@
  *  - releasing pointer lock or hiding the tab drops every latched intent and
  *    exits edit mode.
  */
+import { ActionMap } from "../input/actionBindings";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   BuildEditInputController,
@@ -84,7 +85,8 @@ describe("BuildEditInputController", () => {
 
   function setup() {
     const { env, targets } = makeEnv();
-    controller = new BuildEditInputController(canvas as HTMLCanvasElement, env);
+    // editCancel is unbound by default; bind it here to cover the latch.
+    controller = new BuildEditInputController(canvas as HTMLCanvasElement, env, undefined, new ActionMap({ editCancel: ["KeyC"] }));
     return { env, targets };
   }
 
@@ -97,16 +99,16 @@ describe("BuildEditInputController", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
     expect(controller!.isEditModeActive()).toBe(false);
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     expect(controller!.isEditModeActive()).toBe(true);
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     expect(controller!.isEditModeActive()).toBe(false);
   });
 
   it("ignores edit keys while not pointer-locked", () => {
     const { targets } = setup();
     // No pointer lock.
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     expect(controller!.isEditModeActive()).toBe(false);
   });
 
@@ -121,7 +123,7 @@ describe("BuildEditInputController", () => {
     expect(controller!.consumeCancelPressed()).toBe(false);
     expect(controller!.consumeResetPressed()).toBe(false);
 
-    targets.key.dispatch("keydown", key("KeyF")); // enter edit mode
+    targets.key.dispatch("keydown", key("KeyG")); // enter edit mode
     targets.key.dispatch("keydown", key("Enter"));
     targets.key.dispatch("keydown", key("KeyC"));
     targets.key.dispatch("keydown", key("Backspace"));
@@ -137,7 +139,7 @@ describe("BuildEditInputController", () => {
   it("ignores key auto-repeat", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
-    targets.key.dispatch("keydown", key("KeyF")); // enter edit mode
+    targets.key.dispatch("keydown", key("KeyG")); // enter edit mode
     targets.key.dispatch("keydown", key("Enter"));
     targets.key.dispatch("keydown", key("Enter", true)); // repeat — ignored
     expect(controller!.consumeConfirmPressed()).toBe(true);
@@ -149,7 +151,7 @@ describe("BuildEditInputController", () => {
     env.setLock(canvas);
     controller!.latchEditSelect(false, false);
     // Enter edit mode (F) before feeding routed select state.
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     // Press frame: edge + hold.
     controller!.latchEditSelect(true, true);
     expect(controller!.consumeEditSelectPressed()).toBe(true);
@@ -174,7 +176,7 @@ describe("BuildEditInputController", () => {
     expect(controller!.consumeEditSelectPressed()).toBe(false);
     expect(controller!.isEditSelectHeld()).toBe(false);
     // Entering edit mode afterwards never emits a phantom press or release.
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     controller!.latchEditSelect(false, false);
     expect(controller!.consumeEditSelectPressed()).toBe(false);
     expect(controller!.consumeEditSelectReleased()).toBe(false);
@@ -186,7 +188,7 @@ describe("BuildEditInputController", () => {
   it("exits edit mode and drops latches when pointer lock is released", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
-    targets.key.dispatch("keydown", key("KeyF")); // enter edit mode
+    targets.key.dispatch("keydown", key("KeyG")); // enter edit mode
     targets.key.dispatch("keydown", key("Enter")); // latch confirm
     controller!.latchEditSelect(true, true); // latch select press
     expect(controller!.isEditModeActive()).toBe(true);
@@ -205,7 +207,7 @@ describe("BuildEditInputController", () => {
   it("drops every intent when the tab is hidden", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     targets.key.dispatch("keydown", key("KeyC"));
     env.setHidden(true);
     targets.visibility.dispatch("visibilitychange", {});
@@ -216,7 +218,7 @@ describe("BuildEditInputController", () => {
   it("exits edit mode and drops latches on the explicit exitEditMode() call", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     expect(controller!.isEditModeActive()).toBe(true);
     targets.key.dispatch("keydown", key("Backspace"));
     controller!.exitEditMode();
@@ -224,11 +226,35 @@ describe("BuildEditInputController", () => {
     expect(controller!.consumeResetPressed()).toBe(false);
   });
 
+  it("latches how edit mode was left: the edit bind again and other binds commit, forced exits discard", () => {
+    const { env, targets } = setup();
+    env.setLock(canvas);
+    expect(controller!.consumeEditExit()).toBeNull();
+    targets.key.dispatch("keydown", key("KeyG"));
+    targets.key.dispatch("keydown", key("KeyG")); // edit again = confirm
+    expect(controller!.isEditModeActive()).toBe(false);
+    expect(controller!.consumeEditExit()).toBe("commit");
+    expect(controller!.consumeEditExit()).toBeNull();
+    for (const code of ["Digit2", "KeyQ", "KeyF", "KeyE", "KeyZ"]) {
+      targets.key.dispatch("keydown", key("KeyG"));
+      targets.key.dispatch("keydown", key(code)); // weapon / build bind
+      expect(controller!.isEditModeActive(), code).toBe(false);
+      expect(controller!.consumeEditExit(), code).toBe("commit");
+    }
+    targets.key.dispatch("keydown", key("KeyG"));
+    controller!.exitEditMode();
+    expect(controller!.consumeEditExit()).toBe("discard");
+    targets.key.dispatch("keydown", key("KeyG"));
+    env.setLock(null);
+    targets.pointerLock.dispatch("pointerlockchange", {});
+    expect(controller!.consumeEditExit()).toBe("discard");
+  });
+
   it("ignores keys after dispose and removes its listeners", () => {
     const { env, targets } = setup();
     env.setLock(canvas);
     controller!.dispose();
-    targets.key.dispatch("keydown", key("KeyF"));
+    targets.key.dispatch("keydown", key("KeyG"));
     expect(controller!.isEditModeActive()).toBe(false);
   });
 });

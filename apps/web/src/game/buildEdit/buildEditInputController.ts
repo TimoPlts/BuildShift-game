@@ -7,13 +7,16 @@
  * edit legality, and never creates/edits structures. The
  * {@link BuildEditController} consumes these signals.
  *
- * Controls:
+ * Controls (gameplay actions, resolved through the shared {@link ActionMap};
+ * see `DEFAULT_ACTION_BINDINGS` for the default keys):
  *
- *  - `F`          toggle edit mode on/off (latched while pointer-locked)
- *  - `Enter`      confirm the edit (latched only in edit mode)
- *  - `C`          cancel the edit (latched only in edit mode)
- *  - `Backspace`  reset the piece to its default form (latched only in edit
- *                 mode)
+ *  - `edit`         enter edit mode; pressed again while editing it confirms
+ *                   (commit-exit back to the layer beneath)
+ *  - `editConfirm`  confirm the edit (latched only in edit mode)
+ *  - `editReset`    reset the pending edit to the default form (latched only
+ *                   in edit mode; the controller previews it immediately)
+ *  - `editCancel`   discard the pending edit (unbound by default)
+ *  - leaving edit through a build-piece or weapon bind also commits the edit
  *
  * The crosshair tile selection itself comes from the shared left mouse
  * button. Its browser state is owned by the centralized {@link InputManager};
@@ -28,16 +31,15 @@
  *    every latched intent, so a stale key or click can never produce an edit
  *    intent after the player is no longer in the gameplay view.
  *
- * Mode ownership (overhaul task 12): when constructed with a shared
- * `InteractionModeCoordinator`, KeyF toggles the edit layer on the
- * coordinator (not a private flag) and `isEditModeActive()` reports the
- * coordinator's effective mode — so build and edit can never be "active" at
- * once. There are two exit paths with different layer semantics:
- *   - {@link exitEditMode} clears only the edit layer (round reset / disconnect:
- *     the player's build context survives), and
- *   - {@link commitEditExit} clears edit **and** the build layer beneath it
- *     (confirm / cancel: the primary button and number keys are combat
- *     actions immediately — "confirm then shotgun").
+ * Mode ownership: when constructed with a shared `InteractionModeCoordinator`,
+ * the edit bind toggles the edit layer on the coordinator (not a private
+ * flag) and `isEditModeActive()` reports the coordinator's effective mode — so
+ * build and edit can never be "active" at once. Every exit is latched as a
+ * commit or a discard ({@link consumeEditExit}):
+ *   - {@link exitEditMode} / {@link cancelEditExit} discard (round reset,
+ *     disconnect, cancel — the build layer beneath survives), and
+ *   - {@link commitEditExit} commits and clears the build layer beneath it
+ *     (confirm: the primary button is a combat action immediately).
  * Without a coordinator both fall back to the local flag (legacy behavior).
  * This controller's browser listeners are unchanged — the coordinator is a
  * pure state machine with none of its own.
@@ -47,19 +49,20 @@
  * without a real DOM.
  */
 
-import type { InteractionModeCoordinator } from "../input/interactionMode";
+import type { EditExitKind, InteractionModeCoordinator } from "../input/interactionMode";
+import { ActionMap, DEFAULT_ACTION_BINDINGS } from "../input/actionBindings";
 
 /** The key that toggles edit mode. */
-export const EDIT_MODE_TOGGLE_KEY = "KeyF";
+export const EDIT_MODE_TOGGLE_KEY = DEFAULT_ACTION_BINDINGS.edit[0]!;
 
 /** The key that confirms the edit. */
-export const CONFIRM_EDIT_KEY = "Enter";
+export const CONFIRM_EDIT_KEY = DEFAULT_ACTION_BINDINGS.editConfirm[0]!;
 
-/** The key that cancels the edit. */
-export const CANCEL_EDIT_KEY = "KeyC";
+/** The key that cancels the edit (unbound by default: `null`). */
+export const CANCEL_EDIT_KEY: string | null = DEFAULT_ACTION_BINDINGS.editCancel[0] ?? null;
 
-/** The key that resets the piece to its default form. */
-export const RESET_EDIT_KEY = "Backspace";
+/** The key that resets the pending edit to the piece's default form. */
+export const RESET_EDIT_KEY = DEFAULT_ACTION_BINDINGS.editReset[0]!;
 
 /** The minimum keyboard event shape the controller reads. */
 interface KeyboardLikeEvent {
@@ -128,15 +131,20 @@ export class BuildEditInputController {
   private prevSelectHeld = false;
   private disposed = false;
   private readonly mode: InteractionModeCoordinator | null;
+  private readonly actions: ActionMap;
+  /** How the edit layer was last left (standalone mode, no coordinator). */
+  private localExit: EditExitKind | null = null;
 
   public constructor(
     canvas: HTMLCanvasElement,
     env?: BuildEditInputEnvironment,
     mode?: InteractionModeCoordinator,
+    actions?: ActionMap,
   ) {
     this.canvas = canvas;
     this.env = env ?? defaultBuildEditInputEnvironment(canvas);
     this.mode = mode ?? null;
+    this.actions = actions ?? new ActionMap();
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
@@ -252,9 +260,22 @@ export class BuildEditInputController {
     if (this.mode) {
       this.mode.clearEdit();
     } else {
-      this.editModeActive = false;
+      this.leaveLocal("discard");
     }
     this.clearLatches();
+  }
+
+  /**
+   * How the edit layer was left since the last call: `"commit"` (the player
+   * left through an action — the edit bind again, confirm, a build-piece or
+   * weapon bind — so the edit is applied), `"discard"` (forced teardown or
+   * cancel — the edit is dropped), or `null`.
+   */
+  public consumeEditExit(): EditExitKind | null {
+    if (this.mode) return this.mode.consumeEditExit();
+    const exit = this.localExit;
+    this.localExit = null;
+    return exit;
   }
 
   /**
@@ -270,9 +291,17 @@ export class BuildEditInputController {
     if (this.mode) {
       this.mode.exitToWeapon();
     } else {
-      this.editModeActive = false;
+      this.leaveLocal("commit");
     }
     this.clearLatches();
+  }
+
+  /**
+   * Cancel-exit from editing: drops the edit layer **without applying** the
+   * pending edit (the build layer beneath survives) and every latched intent.
+   */
+  public cancelEditExit(): void {
+    this.exitEditMode();
   }
 
   /** Removes all listeners and drops every latched intent. */
@@ -314,33 +343,46 @@ export class BuildEditInputController {
       return;
     }
 
-    if (e.code === EDIT_MODE_TOGGLE_KEY) {
-      if (this.mode) {
-        this.mode.toggleEdit();
-      } else {
-        this.editModeActive = !this.editModeActive;
+    for (const action of this.actions.actionsFor(e.code)) {
+      switch (action) {
+        case "edit":
+          if (this.mode) {
+            this.mode.toggleEdit();
+          } else if (this.editModeActive) {
+            this.leaveLocal("commit");
+          } else {
+            this.editModeActive = true;
+            this.localExit = null;
+          }
+          // Entering fresh: reset the hold bookkeeping so a button that was
+          // already held from another layer never reads as a release edge.
+          this.prevSelectHeld = false;
+          this.selectReleased = false;
+          break;
+        // Standalone mode only (with a coordinator the building input routes
+        // these binds): leaving edit through another bind commits the edit.
+        case "buildWall":
+        case "buildFloor":
+        case "buildRamp":
+        case "buildCone":
+        case "weaponSlot1":
+        case "weaponSlot2":
+          if (!this.mode && this.editModeActive) this.leaveLocal("commit");
+          break;
+        // The terminal actions only latch in edit mode (out of edit mode they
+        // have no build meaning and are deliberately ignored).
+        case "editConfirm":
+          if (this.isEditModeActive()) this.confirmPressed = true;
+          break;
+        case "editCancel":
+          if (this.isEditModeActive()) this.cancelPressed = true;
+          break;
+        case "editReset":
+          if (this.isEditModeActive()) this.resetPressed = true;
+          break;
+        default:
+          break;
       }
-      // Entering fresh: reset the hold bookkeeping so a button that was
-      // already held from another layer never reads as a release edge.
-      this.prevSelectHeld = false;
-      this.selectReleased = false;
-      return;
-    }
-    // The terminal keys only latch in edit mode (out of edit mode they have
-    // no build meaning and are deliberately ignored).
-    if (!this.isEditModeActive()) {
-      return;
-    }
-    if (e.code === CONFIRM_EDIT_KEY) {
-      this.confirmPressed = true;
-      return;
-    }
-    if (e.code === CANCEL_EDIT_KEY) {
-      this.cancelPressed = true;
-      return;
-    }
-    if (e.code === RESET_EDIT_KEY) {
-      this.resetPressed = true;
     }
   };
 
@@ -369,9 +411,15 @@ export class BuildEditInputController {
     if (this.mode) {
       this.mode.clearAll();
     } else {
-      this.editModeActive = false;
+      this.leaveLocal("discard");
     }
     this.clearLatches();
+  }
+
+  private leaveLocal(kind: EditExitKind): void {
+    if (!this.editModeActive) return;
+    this.editModeActive = false;
+    if (this.localExit !== "discard") this.localExit = kind;
   }
 
   /** Drops the latched key/select intents (independent of the layer flags). */
