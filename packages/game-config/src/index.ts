@@ -21,6 +21,8 @@ export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableAr
 export type { ArenaCollider } from "./arena.js";
 export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
 export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
+export { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection, WALL_HIGH_FRACTION } from "./surfacePlacement.js";
+export type { StructureSurfaceHit, SurfacePlacement } from "./surfacePlacement.js";
 
 export {
   SHOTGUN,

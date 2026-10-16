@@ -8,9 +8,14 @@
  * as visual feedback only* — whether the placement looks valid:
  *
  *   Camera aim ray
- *      → intersect the ground build plane
- *      → the build plane of the player's layer → the tile containing the hit
- *      → normalize the selected rotation (walls: snap to the aimed edge)
+ *      → the nearest existing structure face on the ray (edit-aware canonical
+ *        geometry), if it is nearer than the player's layer plane:
+ *        hit point + face normal → the adjacent slot to build FROM that
+ *        surface (shared `resolveSurfacePlacement`: wall above a wall, air
+ *        floor beside a floor, floor/ramp past a ramp's high end, …)
+ *      → otherwise the build plane of the player's layer → the tile
+ *        containing the hit (walls: snap to the aimed edge)
+ *      → normalize the selected rotation
  *      → validate rotation / build bounds / range / slot occupancy
  *
  * The server performs the final validation and is the only authority on
@@ -21,6 +26,9 @@
 import {
   BUILD_GRID,
   buildCellAt,
+  raycastStructureSurface,
+  resolveSurfacePlacement,
+  structureCuboids,
   structureSlots,
   wallEdgeRotation,
   isValidPlacementRotation,
@@ -28,10 +36,12 @@ import {
   isWithinBuildBounds,
   normalizePlacementRotation,
 } from "@buildshift/game-config";
+import type { StructureCuboid } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
   GridRotation,
+  StructureEditState,
 } from "@buildshift/protocol";
 import { gridToWorldAnchor } from "./gridSnap";
 
@@ -49,7 +59,7 @@ export function buildLayerAt(y: number): number {
  * valid.
  */
 export type PlacementInvalidReason =
-  /** The aim ray does not intersect the ground build plane ahead of the camera (e.g. aiming up or along the horizon). */
+  /** The aim ray hits neither an existing structure nor the player's layer build plane ahead of the camera (e.g. aiming up at open sky). */
   | "no_candidate"
   /** The snapped anchor is farther than `BUILD_RANGE.maxPlacementDistance` from the player. */
   | "out_of_range"
@@ -73,6 +83,8 @@ export interface OccupiedStructure {
   grid: GridPosition;
   /** Placement rotation (a rotated ramp occupies cells along Z); default 0. */
   rotation?: GridRotation;
+  /** The authoritative edit state (edited pieces are targeted by their remaining geometry). */
+  editGrid?: StructureEditState;
 }
 
 /** Everything the preview calculation needs for one frame. */
@@ -122,6 +134,27 @@ export interface PlacementPreview {
  * in front of the camera.
  */
 export const MIN_AIM_DOWNGRADE = 1e-4;
+
+/**
+ * How far along the aim ray (from the camera) existing structure faces are
+ * considered as build surfaces. Generous: the shared range rule still
+ * decides validity from the player's position.
+ */
+export const SURFACE_TARGET_DISTANCE = 40;
+
+/** Canonical collision geometry per occupied snapshot (the store caches the array until it mutates). */
+const surfaceGeometryCache = new WeakMap<readonly OccupiedStructure[], { buildType: BuildType; grid: GridPosition; rotation: number; cuboids: StructureCuboid[] }[]>();
+function surfaceGeometry(occupied: readonly OccupiedStructure[]) {
+  let geometry = surfaceGeometryCache.get(occupied);
+  if (!geometry) {
+    geometry = occupied.map((o) => {
+      const input = { buildType: o.buildType, grid: o.grid, rotation: o.rotation ?? 0, editGrid: o.editGrid };
+      return { ...input, cuboids: structureCuboids(input) };
+    });
+    surfaceGeometryCache.set(occupied, geometry);
+  }
+  return geometry;
+}
 
 /**
  * The preview shown when the player is not in build mode: no candidate,
@@ -186,10 +219,32 @@ export function computePlacementPreview(
   //    ramp / the floor the player is on), so floors at the top of a ramp
   //    and floors in the air are targetable. The ray hits the plane at
   //    t = (planeY − origin.y) / dir.y, positive when it points down enough.
+  //    An existing structure face nearer than that plane takes precedence:
+  //    the player builds FROM that surface.
   const layer = buildLayerAt(playerPosition.y);
   const planeY = layer * BUILD_GRID.layerHeight;
   const dirY = aimDirection.y;
-  if (!Number.isFinite(dirY) || dirY >= -MIN_AIM_DOWNGRADE) {
+  const planeT = Number.isFinite(dirY) && dirY < -MIN_AIM_DOWNGRADE ? (planeY - aimOrigin.y) / dirY : NaN;
+  const planeHit = Number.isFinite(planeT) && planeT >= 0;
+  const surface = occupied.length
+    ? raycastStructureSurface(aimOrigin, aimDirection, planeHit ? Math.min(planeT, SURFACE_TARGET_DISTANCE) : SURFACE_TARGET_DISTANCE, surfaceGeometry(occupied))
+    : null;
+
+  let grid: GridPosition;
+  if (surface) {
+    const resolved = resolveSurfacePlacement(surface, buildType, rotation, aimDirection);
+    grid = resolved.grid as GridPosition;
+    rotation = resolved.rotation as GridRotation;
+  } else if (planeHit) {
+    const hitX = aimOrigin.x + aimDirection.x * planeT;
+    const hitZ = aimOrigin.z + aimDirection.z * planeT;
+    // The tile whose canonical geometry contains the hit point.
+    grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
+    if (buildType === "wall") {
+      // Walls are edge pieces: snap to the aimed tile's nearest edge.
+      rotation = wallEdgeRotation(grid, hitX, hitZ) as GridRotation;
+    }
+  } else {
     return {
       present: true,
       valid: false,
@@ -198,27 +253,6 @@ export function computePlacementPreview(
       rotation,
       anchorWorld: null,
     };
-  }
-
-  const t = (planeY - aimOrigin.y) / dirY;
-  if (!Number.isFinite(t) || t < 0) {
-    return {
-      present: true,
-      valid: false,
-      reason: "no_candidate",
-      grid: null,
-      rotation,
-      anchorWorld: null,
-    };
-  }
-
-  const hitX = aimOrigin.x + aimDirection.x * t;
-  const hitZ = aimOrigin.z + aimDirection.z * t;
-  // The tile whose canonical geometry contains the hit point.
-  const grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
-  if (buildType === "wall") {
-    // Walls are edge pieces: snap to the aimed tile's nearest edge.
-    rotation = wallEdgeRotation(grid, hitX, hitZ) as GridRotation;
   }
   const anchorWorld = gridToWorldAnchor(grid);
 

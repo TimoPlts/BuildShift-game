@@ -1,5 +1,5 @@
 import type { LocalMovementInput } from "@buildshift/simulation";
-import { ActionMap, mouseBindingCode, type GameAction } from "./actionBindings";
+import { ActionMap, attachMouseBindPresses, mouseBindingCode, type GameAction } from "./actionBindings";
 
 /**
  * Pointer-lock look-input guard. A single mousemove whose movement is
@@ -57,6 +57,9 @@ export interface WeaponInputFrame {
   isFiring: boolean;
 }
 
+/** Mouse events whose default action can be the side buttons' back/forward navigation. */
+const NAVIGATION_MOUSE_EVENTS = ["mousedown", "mouseup", "auxclick"] as const;
+
 /**
  * Owns every browser input signal used by the local game loop:
  *
@@ -104,12 +107,15 @@ export class InputManager {
 
   /** The shared gameplay action map (also handed to the build/edit inputs). */
   public readonly actions: ActionMap;
+  private readonly detachMouseBinds: () => void;
 
   public constructor(private readonly canvas: HTMLCanvasElement, actions: ActionMap = new ActionMap()) {
     this.actions = actions;
     canvas.addEventListener("click", this.requestPointerLock);
     canvas.addEventListener("mousedown", this.handleMouseDown);
     canvas.addEventListener("mouseup", this.handleMouseUp);
+    for (const type of NAVIGATION_MOUSE_EVENTS) window.addEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    this.detachMouseBinds = attachMouseBindPresses(window, this.handleMouseBindPress, this.handleMouseBindRelease);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("blur", this.clearInput);
@@ -284,6 +290,8 @@ export class InputManager {
     this.canvas.removeEventListener("click", this.requestPointerLock);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
     this.canvas.removeEventListener("mouseup", this.handleMouseUp);
+    for (const type of NAVIGATION_MOUSE_EVENTS) window.removeEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    this.detachMouseBinds();
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.clearInput);
@@ -339,6 +347,27 @@ export class InputManager {
   private readonly handleMouseUp = (event: MouseEvent): void => {
     if (!this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = false;
+  };
+
+  /** Other mouse binds (side buttons, …) drive actions exactly like keys. */
+  private readonly handleMouseBindPress = (code: string): void => {
+    if (this.actions.matches("primaryAction", code)) return;
+    this.handleKeyDown({ code, repeat: false } as KeyboardEvent);
+  };
+
+  private readonly handleMouseBindRelease = (code: string): void => {
+    this.heldCodes.delete(code);
+  };
+
+  /**
+   * The side buttons (DOM buttons 3/4) are the browser's back/forward: while
+   * the game holds pointer lock (or the press lands on the game canvas) their
+   * default action is cancelled so a build bind never navigates away.
+   */
+  private readonly suppressSideButtonNavigation = (event: Event): void => {
+    const button = (event as MouseEvent).button;
+    if (button !== 3 && button !== 4) return;
+    if (this.pointerLocked || event.target === this.canvas) event.preventDefault();
   };
 
   private readonly handlePointerLockChange = (): void => {

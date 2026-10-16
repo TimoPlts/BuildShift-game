@@ -184,24 +184,32 @@ export function rayStructureIntersection(
   direction: { x: number; y: number; z: number },
   maxDistance: number,
   cuboids: readonly StructureCuboid[],
-): { distance: number; point: { x: number; y: number; z: number } } | null {
+): { distance: number; point: { x: number; y: number; z: number }; normal: { x: number; y: number; z: number } } | null {
   const length = Math.hypot(direction.x, direction.y, direction.z);
   if (length < 1e-12) return null;
   let best = maxDistance / length;
   let found = false;
+  let bestAxis: "x" | "y" | "z" = "y";
+  let bestSign = 1;
   for (const { center, halfExtents } of cuboids) {
     let entry = 0;
     let exit = best;
+    // The face the ray enters through (its outward normal is the hit normal).
+    let entryAxis: "x" | "y" | "z" | null = null;
+    let entrySign = 1;
     for (const axis of ["x", "y", "z"] as const) {
       const d = direction[axis];
       const low = center[axis] - halfExtents[axis];
       const high = center[axis] + halfExtents[axis];
       if (Math.abs(d) < 1e-12) {
-        if (origin[axis] < low || origin[axis] > high) { exit = -1; break; }
+        // Parallel to this axis: inside the slab (1 nm tolerance closes float
+        // seams between abutting boxes, e.g. adjacent ramp steps).
+        if (origin[axis] < low - 1e-9 || origin[axis] > high + 1e-9) { exit = -1; break; }
       } else {
         const a = (low - origin[axis]) / d;
         const b = (high - origin[axis]) / d;
-        entry = Math.max(entry, Math.min(a, b));
+        const near = Math.min(a, b);
+        if (near > entry) { entry = near; entryAxis = axis; entrySign = d > 0 ? -1 : 1; }
         exit = Math.min(exit, Math.max(a, b));
         if (entry > exit) break;
       }
@@ -209,6 +217,14 @@ export function rayStructureIntersection(
     if (entry <= exit && exit >= 0 && entry <= best) {
       best = entry;
       found = true;
+      // Starting inside the box: report the face opposing the ray's dominant axis.
+      if (entryAxis === null) {
+        const ax = Math.abs(direction.x), ay = Math.abs(direction.y), az = Math.abs(direction.z);
+        entryAxis = ax >= ay && ax >= az ? "x" : ay >= az ? "y" : "z";
+        entrySign = direction[entryAxis] > 0 ? -1 : 1;
+      }
+      bestAxis = entryAxis;
+      bestSign = entrySign;
     }
   }
   if (!found) return null;
@@ -219,6 +235,7 @@ export function rayStructureIntersection(
       y: origin.y + direction.y * best,
       z: origin.z + direction.z * best,
     },
+    normal: { x: bestAxis === "x" ? bestSign : 0, y: bestAxis === "y" ? bestSign : 0, z: bestAxis === "z" ? bestSign : 0 },
   };
 }
 

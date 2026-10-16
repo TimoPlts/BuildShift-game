@@ -41,7 +41,27 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, createWriteStream, mkdirSync } from "node:fs";
-import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, structureSlots, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+
+/**
+ * Presses one bind with REAL browser input: keyboard codes through the
+ * keyboard, and the side mouse buttons ("Mouse3" = Mouse Button 4 / back,
+ * "Mouse4" = Mouse Button 5 / forward — the default wall / ramp binds)
+ * through Chromium's input pipeline (CDP `Input.dispatchMouseEvent`, the same
+ * path `page.mouse` uses; Playwright's mouse API has no back/forward button).
+ */
+const cdpSessions = new WeakMap<Page, Promise<import("@playwright/test").CDPSession>>();
+async function pressKey(page: Page, code: string): Promise<void> {
+  const side = code === "Mouse3" ? { button: "back", buttons: 8 } : code === "Mouse4" ? { button: "forward", buttons: 16 } : null;
+  if (!side) return page.keyboard.press(code);
+  let session = cdpSessions.get(page);
+  if (!session) { session = page.context().newCDPSession(page); cdpSessions.set(page, session); }
+  const cdp = await session;
+  const vp = page.viewportSize() ?? { width: 800, height: 600 };
+  const at = { x: Math.round(vp.width / 2), y: Math.round(vp.height / 2) };
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...at, button: side.button as "back", buttons: side.buttons, clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, button: side.button as "back", buttons: 0, clickCount: 1 });
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -410,7 +430,7 @@ async function isEliminated(page: Page): Promise<boolean> {
  * Send a weapon switch command by pressing the slot key.
  */
 async function switchWeapon(page: Page, slotKey: "Digit1" | "Digit2"): Promise<void> {
-  await page.keyboard.press(slotKey);
+  await pressKey(page, slotKey);
 }
 
 /**
@@ -522,7 +542,7 @@ async function buildModeActive(page: Page): Promise<boolean> {
  */
 async function ensureCombatMode(page: Page): Promise<void> {
   if (await buildModeActive(page)) {
-    await page.keyboard.press("KeyB");
+    await pressKey(page, "KeyB");
     await new Promise((r) => setTimeout(r, 300));
   }
 }
@@ -629,7 +649,7 @@ async function holdFireUntilRoundOver(
       const ammo = await getMagazineAmmo(pageA);
       if (ammo <= 2) {
         // Reload is not sequence-gated.
-        await pageA.keyboard.press("KeyR").catch(() => {});
+        await pressKey(pageA, "KeyR").catch(() => {});
         await sleep(2_500);
       } else if (
         now - lastDamageAt > 6_000 &&
@@ -1130,7 +1150,7 @@ test.describe("Production browser smoke", () => {
     const ammoBeforeReload = await getMagazineAmmo(pageA!);
 
     // Trigger reload.
-    await pageA!.keyboard.press("KeyR");
+    await pressKey(pageA!, "KeyR");
 
     // Wait for reload to complete (assault rifle reload is ~1.8s).
     // The reload track element appears during reload and disappears when done.
@@ -1185,7 +1205,7 @@ test.describe("Production browser smoke", () => {
   test("build-mode fire suppression: fire does not consume ammo in build mode", async () => {
     expect(pageA).not.toBeNull();
     // Enter building with the dedicated wall bind.
-    await pageA!.keyboard.press("KeyQ");
+    await pressKey(pageA!, "Mouse3");
     await sleep(300);
     expect(await buildModeActive(pageA!)).toBe(true);
 
@@ -1199,7 +1219,7 @@ test.describe("Production browser smoke", () => {
     expect(ammoAfter).toBe(ammoBefore);
 
     // A weapon bind leaves building at once.
-    await pageA!.keyboard.press("Digit1");
+    await pressKey(pageA!, "Digit1");
     await sleep(300);
     expect(await buildModeActive(pageA!)).toBe(false);
   });
@@ -1209,7 +1229,7 @@ test.describe("Production browser smoke", () => {
     expect(pageB).not.toBeNull();
 
     // The dedicated ramp bind enters building with the ramp selected.
-    await pageA!.keyboard.press("KeyE");
+    await pressKey(pageA!, "Mouse4");
     await sleep(200);
 
     // Place the structure (left click in build mode places).
@@ -1217,7 +1237,7 @@ test.describe("Production browser smoke", () => {
     await sleep(1_000);
 
     // Back to the weapon.
-    await pageA!.keyboard.press("Digit1");
+    await pressKey(pageA!, "Digit1");
     await sleep(200);
 
     // Verify both pages are still connected and in progress.
@@ -1286,21 +1306,21 @@ test.describe("Production browser smoke", () => {
     // may be accepted or rejected by range/energy rules — either way the
     // clients must stay connected and in the same phase. Also exercise the
     // rotate binds (R / X) while building.
-    for (const typeKey of ["KeyQ", "KeyF", "KeyE", "KeyZ"] as const) {
-      await pageA!.keyboard.press(typeKey);
+    for (const typeKey of ["Mouse3", "KeyQ", "Mouse4", "KeyF"] as const) {
+      await pressKey(pageA!, typeKey);
       await sleep(200);
       expect(await buildModeActive(pageA!)).toBe(true);
       await fireWeapon(pageA!); // in build mode this is the place press
       await sleep(400);
     }
-    await pageA!.keyboard.press("KeyR");
+    await pressKey(pageA!, "KeyR");
     await sleep(150);
-    await pageA!.keyboard.press("KeyX");
+    await pressKey(pageA!, "KeyX");
     await sleep(150);
 
     // The weapon bind leaves building and keeps the assault rifle for the
     // later combat tests.
-    await pageA!.keyboard.press("Digit1");
+    await pressKey(pageA!, "Digit1");
     await sleep(300);
     expect(await getWeaponName(pageA!)).toBe("Assault Rifle");
     expect(await buildModeActive(pageA!)).toBe(false);
@@ -1325,12 +1345,12 @@ test.describe("Production browser smoke", () => {
     // target a structure, so the confirm may be a no-op — the assertion is
     // that the edit path does not crash, drop, or desync either client. The
     // edit bind again leaves edit mode if Enter had nothing to confirm.
-    await pageA!.keyboard.press("KeyG");
+    await pressKey(pageA!, "KeyE");
     await sleep(300);
-    await pageA!.keyboard.press("Enter");
+    await pressKey(pageA!, "Enter");
     await sleep(1_000);
     if (await pageA!.locator(".build-edit-hud__title").count() > 0) {
-      await pageA!.keyboard.press("KeyG");
+      await pressKey(pageA!, "KeyE");
       await sleep(300);
     }
     expect(await pageA!.locator(".build-edit-hud__title").count()).toBe(0);
@@ -1412,7 +1432,7 @@ test.describe("Production browser smoke", () => {
     // mode key first).
     await look(0, conePitchPx); // pitch down ≈ 12°
     await look(-YAW_QUARTER_PX, 0); // yaw +90° → face +X
-    await a.keyboard.press("KeyZ"); // cone (enters building)
+    await pressKey(a, "KeyF"); // cone (enters building)
     await sleep(200);
     expect(await buildModeActive(a)).toBe(true);
     await fireWeapon(a);
@@ -1420,13 +1440,13 @@ test.describe("Production browser smoke", () => {
 
     await look(0, floorPitchPx - conePitchPx); // onto the floor pitch
     await look(-YAW_QUARTER_PX, 0); // yaw +180° → face +Z (away from the opponent)
-    await a.keyboard.press("KeyF"); // floor, far +Z cell
+    await pressKey(a, "KeyQ"); // floor, far +Z cell
     await sleep(200);
     await fireWeapon(a);
     await sleep(400);
 
     await look(0, wallPitchPx - floorPitchPx); // onto the wall pitch
-    await a.keyboard.press("KeyQ"); // wall, near +Z cell (no yaw change)
+    await pressKey(a, "Mouse3"); // wall, near +Z cell (no yaw change)
     await sleep(200);
     await fireWeapon(a);
     await sleep(500);
@@ -1449,7 +1469,7 @@ test.describe("Production browser smoke", () => {
         return send(type, payload);
       };
     });
-    await a.keyboard.press("KeyG");
+    await pressKey(a, "KeyE");
     await sleep(500);
     const target = await a.evaluate(
       () => document.querySelector(".build-edit-hud__target")?.textContent ?? "",
@@ -1470,7 +1490,7 @@ test.describe("Production browser smoke", () => {
     // Select, then reset (T): the default form is previewed immediately.
     await fireWeapon(a);
     await sleep(300);
-    await a.keyboard.press("KeyT");
+    await pressKey(a, "KeyT");
     await sleep(300);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
     expect(await editMessages()).toBe(0);
@@ -1479,13 +1499,13 @@ test.describe("Production browser smoke", () => {
     //    the server confirms it; Enter returns to weapon mode.
     await fireWeapon(a);
     await sleep(300);
-    await a.keyboard.press("Enter");
+    await pressKey(a, "Enter");
     await expect(a.locator(".build-edit-hud__feedback--accepted")).toContainText("Edit confirmed", { timeout: 5_000 });
     expect(await editMessages()).toBe(2); // the tile change + confirm
     expect(await buildModeActive(a)).toBe(false);
 
     // ── Then shotgun: the weapon bind switches at once and the next click fires.
-    await a.keyboard.press("Digit2");
+    await pressKey(a, "Digit2");
     await sleep(500);
     expect(await getWeaponName(a)).toBe("Shotgun");
     const sgAmmoBefore = await getMagazineAmmo(a);
@@ -1496,18 +1516,18 @@ test.describe("Production browser smoke", () => {
 
     // ── Edit → reset → confirm (edit bind again): the piece shows its applied
     //    edit, reset previews the default at once, and confirming restores it.
-    await a.keyboard.press("KeyG");
+    await pressKey(a, "KeyE");
     await sleep(500);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 1\/(?:9|4)$/);
-    await a.keyboard.press("KeyT");
+    await pressKey(a, "KeyT");
     await sleep(200);
     expect(await a.locator(".build-edit-hud__tiles").textContent()).toMatch(/^Tiles open: 0\/(?:9|4)$/);
-    await a.keyboard.press("KeyG");
+    await pressKey(a, "KeyE");
     await expect.poll(editMessages, { timeout: 5_000 }).toBe(4); // reset + confirm
     await expect(a.locator(".build-edit-hud__feedback--accepted")).toContainText("Edit confirmed", { timeout: 5_000 });
 
     // Restore the assault rifle for the combat tests that follow.
-    await a.keyboard.press("Digit1");
+    await pressKey(a, "Digit1");
     await sleep(300);
     expect(await getWeaponName(a)).toBe("Assault Rifle");
 
@@ -1526,11 +1546,11 @@ test.describe("Production browser smoke", () => {
     //    tests, since a client can only submit edits for its own aimed
     //    piece.)
     await ensurePointerLock(b);
-    await b.keyboard.press("KeyG");
+    await pressKey(b, "KeyE");
     await sleep(500);
     expect(await b.locator(".build-edit-hud__none").count()).toBe(1);
     expect(await b.locator(".build-edit-hud__target").count()).toBe(0);
-    await b.keyboard.press("KeyG");
+    await pressKey(b, "KeyE");
     await sleep(300);
 
     // ── No disconnect / freeze / duplicate listeners: both clients agree on
@@ -3098,7 +3118,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await aim.at(cellCentre(0, -1));
       const ammo = await getMagazineAmmo(a);
       expect(await buildModeActive(a)).toBe(false);
-      await a.keyboard.press("KeyQ"); // weapon → building with the wall, one key
+      await pressKey(a, "Mouse3"); // weapon → building with the wall, one key
       await expect(a.locator(".build-hud__selected")).toContainText("Wall", { timeout: 5_000 });
       await expect(a.locator(".build-hud__validity--valid")).toHaveCount(1, { timeout: 5_000 });
       expect(await buildModeActive(a)).toBe(true);
@@ -3122,12 +3142,15 @@ test.describe("Physical edited-geometry acceptance", () => {
       await aim.at(edgeAim(0, -1, 0));
       await setPrimaryFire(a, true);
       try {
-        await a.keyboard.press("KeyQ");
+        await pressKey(a, "Mouse3");
         await waitStructure(a, (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 0, "held wall");
-        const ammoInBuild = await getMagazineAmmo(a);
+        // Let the authoritative ammo of the rifle shots fired before the bind land.
+        let settled = await getMagazineAmmo(a);
+        await expect.poll(async () => { await sleep(400); const now = await getMagazineAmmo(a); const same = now === settled; settled = now; return same; }, { timeout: 5_000 }).toBe(true);
+        const ammoInBuild = settled;
         // Same crosshair, next binds: each piece takes its own slot of the tile.
-        for (const [code, type] of [["KeyE", "ramp"], ["KeyF", "floor"], ["KeyZ", "cone"]] as const) {
-          await a.keyboard.press(code);
+        for (const [code, type] of [["Mouse4", "ramp"], ["KeyQ", "floor"], ["KeyF", "cone"]] as const) {
+          await pressKey(a, code);
           await waitStructure(a, (s) => s.buildType === type && s.grid.x === 0 && s.grid.z === -1, `held ${type}`);
           step(`${type} placed in the same tile while LMB held`);
         }
@@ -3155,7 +3178,7 @@ test.describe("Physical edited-geometry acceptance", () => {
     const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 3");
     try {
       await aim.at(wallTile(1, 0, 3));
-      await a.keyboard.press("KeyG");
+      await pressKey(a, "KeyE");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       // One held drag: press on tile 3, one look jump to tile 5 (crossing 4).
       await setPrimaryFire(a, true);
@@ -3166,7 +3189,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 3/9", { timeout: 5_000 });
       expect(await editSends(a)).toEqual([]); // the drag is local
       step("drag 3 → 5 selected 3 tiles locally");
-      await a.keyboard.press("Enter");
+      await pressKey(a, "Enter");
       const window: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, false, false, false, true, true, true] };
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: window }, "dragged window");
       expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "select", "select", "confirm"]);
@@ -3180,7 +3203,7 @@ test.describe("Physical edited-geometry acceptance", () => {
     const { context, a, b, aId, id, aim, step } = await openWallEditDuel("input 4");
     try {
       await aim.at(wallTile(1, 0, 4));
-      await a.keyboard.press("KeyG");
+      await pressKey(a, "KeyE");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       await setPrimaryFire(a, true);
       await sleep(150);
@@ -3188,7 +3211,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await sleep(300);
       await setPrimaryFire(a, false);
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
-      await a.keyboard.press("Enter");
+      await pressKey(a, "Enter");
       const doorway: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] };
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: doorway }, "dragged doorway");
       step("doorway confirmed");
@@ -3211,12 +3234,12 @@ test.describe("Physical edited-geometry acceptance", () => {
     try {
       const full: AcceptanceEditGrid = { kind: "wall", tiles: Array(9).fill(true) };
       await aim.at(wallTile(1, 0, 1));
-      await a.keyboard.press("KeyG");
+      await pressKey(a, "KeyE");
       await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
       await fireWeapon(a); // select tile 1 (local)
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 1/9", { timeout: 5_000 });
       // Shotgun: leaves edit, committing the edit, and switches at once.
-      await a.keyboard.press("Digit2");
+      await pressKey(a, "Digit2");
       await expect.poll(() => getWeaponName(a), { timeout: 5_000 }).toBe("Shotgun");
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: { kind: "wall", tiles: [true, false, true, true, true, true, true, true, true] } }, "edit committed by the shotgun bind");
       step("edit → shotgun committed the edit");
@@ -3226,11 +3249,11 @@ test.describe("Physical edited-geometry acceptance", () => {
       await expect.poll(() => getMagazineAmmo(a), { timeout: 5_000 }).toBeLessThan(shells);
       step("shotgun fired");
       // Edit again → reset (predicted at once) → confirm.
-      await a.keyboard.press("KeyG");
+      await pressKey(a, "KeyE");
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 1/9", { timeout: 5_000 });
-      await a.keyboard.press("KeyT");
+      await pressKey(a, "KeyT");
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 0/9", { timeout: 2_000 });
-      await a.keyboard.press("Enter");
+      await pressKey(a, "Enter");
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: full }, "reset confirmed");
       expect((await editSends(a)).map((m) => m.action)).toEqual(["select", "confirm", "reset", "confirm"]);
       step("edit → reset → confirm restored the full wall");
@@ -3245,25 +3268,25 @@ test.describe("Physical edited-geometry acceptance", () => {
       const ammo = await getMagazineAmmo(a);
       const before = (await structuresOf(a)).length;
       // Back-to-back key presses, no waits.
-      for (const code of ["Digit1", "KeyQ", "Digit1", "KeyE", "KeyG"]) await a.keyboard.press(code);
+      for (const code of ["Digit1", "Mouse3", "Digit1", "Mouse4", "KeyE"]) await pressKey(a, code);
       await expect.poll(() => editModeOn(a), { timeout: 5_000 }).toBe(true);
       // The edit bind again returns to the build layer beneath with the ramp.
-      await a.keyboard.press("KeyG");
+      await pressKey(a, "KeyE");
       await expect.poll(() => buildModeActive(a), { timeout: 5_000 }).toBe(true);
       await expect(a.locator(".build-hud__selected")).toContainText("Ramp");
-      await a.keyboard.press("Digit2");
+      await pressKey(a, "Digit2");
       await expect.poll(() => getWeaponName(a), { timeout: 5_000 }).toBe("Shotgun");
       expect(await buildModeActive(a)).toBe(false);
       // Step by step, every bind lands immediately.
       const steps: Array<[string, () => Promise<boolean>]> = [
-        ["KeyQ", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Wall")],
+        ["Mouse3", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Wall")],
         ["Digit1", async () => !(await buildModeActive(a)) && (await getWeaponName(a)) === "Assault Rifle"],
-        ["KeyE", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Ramp")],
-        ["KeyG", () => editModeOn(a)],
+        ["Mouse4", async () => (await buildModeActive(a)) && (await a.locator(".build-hud__selected").textContent())!.includes("Ramp")],
+        ["KeyE", () => editModeOn(a)],
         ["Digit1", async () => !(await editModeOn(a)) && !(await buildModeActive(a))],
       ];
       for (const [code, check] of steps) {
-        await a.keyboard.press(code);
+        await pressKey(a, code);
         await expect.poll(check, { message: code, timeout: 3_000 }).toBe(true);
       }
       // Nothing strayed: no placement, no shot from the rifle, no edit sent.
@@ -3287,7 +3310,7 @@ test.describe("Physical edited-geometry acceptance", () => {
   /** Real dedicated bind + click at a world aim point; resolves when the server has the piece. */
   async function buildAt(a: Page, aim: CrosshairAim, code: string, point: { x: number; y: number; z: number }, expectPiece: (s: Placed) => boolean, label: string) {
     await aim.at(point);
-    await a.keyboard.press(code);
+    await pressKey(a, code);
     await sleep(120);
     await fireWeapon(a);
     await waitStructure(a, expectPiece, label).catch(async (error) => {
@@ -3316,12 +3339,12 @@ test.describe("Physical edited-geometry acceptance", () => {
       const perTurn = Math.round((2 * Math.PI) / LOOK_SENSITIVITY);
       // Four fast turns (right, left, right, left), ~143 px per event, with
       // build / edit / weapon binds pressed mid-turn.
-      const modes = ["KeyQ", "KeyG", "KeyG", "Digit1", "KeyE", "Digit2"];
+      const modes = ["Mouse3", "KeyE", "KeyE", "Digit1", "Mouse4", "Digit2"];
       for (let turn = 0; turn < 4; turn++) {
         const dir = turn % 2 === 0 ? 1 : -1;
         for (let i = 0; i < perTurn / 143; i++) {
           await lookBy(a, dir * 143, 0);
-          if (i % 7 === 3) await a.keyboard.press(modes[(turn * 3 + i) % modes.length]!);
+          if (i % 7 === 3) await pressKey(a, modes[(turn * 3 + i) % modes.length]!);
           await sleep(6);
         }
       }
@@ -3343,9 +3366,9 @@ test.describe("Physical edited-geometry acceptance", () => {
   /** Real-input one-tile ramp (rotation 3: climbs toward −Z, the W direction) at tile (1,-1). */
   async function placeRampReal(a: Page, aim: CrosshairAim) {
     await aim.at(cellCentre(1, -1));
-    await a.keyboard.press("KeyE");
+    await pressKey(a, "Mouse4");
     await sleep(120);
-    await a.keyboard.press("KeyX"); // rotate left: 0 → 3
+    await pressKey(a, "KeyX"); // rotate left: 0 → 3
     await sleep(120);
     await fireWeapon(a);
     await waitStructure(a, (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === 3, "real-input ramp");
@@ -3365,7 +3388,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       step(`footprint x ${span("x")} z ${span("z")}`);
       expect(span("x")).toEqual([0.5 * CS, 1.5 * CS]);
       expect(span("z").map((v) => +v.toFixed(6))).toEqual([-1.5 * CS, -0.5 * CS]);
-      await a.keyboard.press("Digit1");
+      await pressKey(a, "Digit1");
       await aim.to(0, 0);
       // Underside: along lane x = 10.24 to under the high end, then strafe −X across under it.
       await holdKey(a, "scenario B", "KeyA", "p.x >= arg.x", { x: 2 * CS }, "to the side lane");
@@ -3394,23 +3417,6 @@ test.describe("Physical edited-geometry acceptance", () => {
     } finally { await context.close(); }
   });
 
-  test("scenario C — ramp box: one ramp and walls on all four of its edges coexist (real input)", { timeout: 120_000 }, async () => {
-    test.setTimeout(120_000);
-    const { context, a, aId, step } = await openFreshDuel("scenario C", { width: 480, height: 270 });
-    try {
-      await recordRejections(a);
-      const aim = new CrosshairAim(a);
-      await placeRampReal(a, aim);
-      for (const r of [0, 1, 2, 3]) {
-        await buildAt(a, aim, "KeyQ", edgeAim(1, -1, r), (s) => s.buildType === "wall" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === r, `wall on edge r${r}`);
-        step(`wall r${r} placed around the ramp`);
-      }
-      const box = (await structuresOf(a)).filter((s) => s.ownerId === aId && s.grid.x === 1 && s.grid.z === -1);
-      expect(box.map((s) => `${s.buildType}${s.buildType === "wall" ? s.rotation : ""}`).sort()).toEqual(["ramp", "wall0", "wall1", "wall2", "wall3"]);
-      expect(await rejections(a)).toEqual([]);
-    } finally { await context.close(); }
-  });
-
   test("scenarios D + E — ramp → next-layer floor → three air floors, walked across (real input)", { timeout: 120_000 }, async () => {
     test.setTimeout(120_000);
     const { context, a, aId, step } = await openFreshDuel("scenario DE", { width: 480, height: 270 });
@@ -3423,7 +3429,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await aim.to(0, 0);
       await holdKey(a, "scenario D", "KeyW", "p.y >= 3.6", {}, "climb to the top", true);
       await settleInputs(a, 10);
-      await buildAt(a, aim, "KeyF", cellCentre(1, -2, 1), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 1 && s.grid.z === -2, "floor at the ramp top");
+      await buildAt(a, aim, "KeyQ", cellCentre(1, -2, 1), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 1 && s.grid.z === -2, "floor at the ramp top");
       await aim.to(0, 0);
       await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
       await holdKey(a, "scenario D", "KeyW", "p.z <= arg.z", { z: -2 * CS + 0.6 }, "walk from the ramp onto the floor");
@@ -3431,9 +3437,10 @@ test.describe("Physical edited-geometry acceptance", () => {
       const onFloor = await authPose(a);
       step(`ramp → floor ${JSON.stringify(onFloor)}`);
       expect(onFloor.y).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4);
+      await a.evaluate(() => { (window as any).__poseTrace.length = 0; }); // the air-floor walk alone
       // E: three air floors toward −X, each built then walked onto (D strafes −X at yaw 0).
       for (const gx of [0, -1, -2]) {
-        await buildAt(a, aim, "KeyF", cellCentre(gx, -2, 1), (s) => s.buildType === "floor" && s.grid.x === gx && s.grid.y === 1 && s.grid.z === -2, `air floor x=${gx}`);
+        await buildAt(a, aim, "KeyQ", cellCentre(gx, -2, 1), (s) => s.buildType === "floor" && s.grid.x === gx && s.grid.y === 1 && s.grid.z === -2, `air floor x=${gx}`);
         await aim.to(0, 0);
         await holdKey(a, "scenario E", "KeyD", "p.x <= arg.x", { x: gx * CS }, `walk onto air floor x=${gx}`);
         await settleInputs(a, 10);
@@ -3442,33 +3449,51 @@ test.describe("Physical edited-geometry acceptance", () => {
         expect(pose.y).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4);
       }
       const path = tracePoints(await poseTrace(a, 4000));
-      expect(Math.min(...path.map((p) => p.y))).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4); // never fell
+      const lowest = path.reduce((m, p) => (p.y < m.y ? p : m), path[0]!);
+      step(`lowest traced pose ${JSON.stringify(lowest)} of ${path.length}`);
+      expect(lowest.y).toBeCloseTo(BUILD_GRID.layerHeight + 0.15, 4); // never fell
       expect((await structuresOf(a)).filter((s) => s.ownerId === aId && s.buildType === "floor")).toHaveLength(4);
       expect(await rejections(a)).toEqual([]);
     } finally { await context.close(); }
   });
 
-  test("scenario F — held LMB: wall → ramp → wall → floor → wall → ramp, no overlap rejection (real binds)", { timeout: 120_000 }, async () => {
+  test("scenario F — LMB held through each bind switch: wall → ramp → wall → floor → wall → ramp, no overlap rejection (real binds)", { timeout: 120_000 }, async () => {
     test.setTimeout(120_000);
     const { context, a, aId, step } = await openFreshDuel("scenario F", { width: 480, height: 270 });
     try {
       await recordRejections(a);
       const aim = new CrosshairAim(a);
+      // A wall is identified by its canonical edge slot (an edge can be named from either tile).
+      const onWallSlot = (gx: number, gz: number, r: number) => (s: Placed) =>
+        s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: gx, y: 0, z: gz }, r)[0];
       const plan: Array<[string, string, { x: number; y: number; z: number }, (s: Placed) => boolean]> = [
-        ["KeyQ", "wall", edgeAim(0, -1, 0), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 0],
-        ["KeyE", "ramp", cellCentre(0, -1), (s) => s.buildType === "ramp" && s.grid.x === 0 && s.grid.z === -1],
-        ["KeyQ", "wall", edgeAim(0, -1, 1), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 1],
-        ["KeyF", "floor", cellCentre(0, -1), (s) => s.buildType === "floor" && s.grid.x === 0 && s.grid.z === -1],
-        ["KeyQ", "wall", edgeAim(0, -1, 3), (s) => s.buildType === "wall" && s.grid.x === 0 && s.grid.z === -1 && s.rotation === 3],
-        ["KeyE", "ramp", cellCentre(1, -1), (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1],
+        ["Mouse3", "wall", edgeAim(0, -1, 0), onWallSlot(0, -1, 0)],
+        ["Mouse4", "ramp", cellCentre(0, -1), (s) => s.buildType === "ramp" && s.grid.x === 0 && s.grid.z === -1],
+        ["Mouse3", "wall", edgeAim(0, -1, 1), onWallSlot(0, -1, 1)],
+        // (The ramp owns tile (0,-1)'s surface — aiming at or past it builds FROM it — so the floor takes an unobstructed tile.)
+        ["KeyQ", "floor", cellCentre(1, -2), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 0 && s.grid.z === -2],
+        ["Mouse3", "wall", edgeAim(0, -1, 3), onWallSlot(0, -1, 3)],
+        ["Mouse4", "ramp", cellCentre(1, -1), (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1],
       ];
-      await aim.at(plan[0]![2]);
-      await setPrimaryFire(a, true);
       try {
         for (const [code, type, point, match] of plan) {
-          await a.keyboard.press(code); // switch first: the old piece's slot on this aim is already taken
+          // Converge the crosshair on the target with the primary up (the
+          // iterative aim passes intermediate aims), then look up into open
+          // sky by an exact amount (no candidate), hold the primary, switch
+          // piece there, and look back down by exactly the same amount: the
+          // held primary places the new piece once, on the target.
+          await setPrimaryFire(a, false);
           await aim.at(point);
-          await waitStructure(a, match, `held ${type}`);
+          const target = { yaw: aim.yaw, pitch: aim.pitch };
+          await aim.to(target.yaw, 0.7);
+          await sleep(100);
+          await setPrimaryFire(a, true);
+          await pressKey(a, code);
+          await sleep(100);
+          await aim.to(target.yaw, target.pitch);
+          await waitStructure(a, match, `held ${type}`).catch(async (error) => {
+            throw new Error(`held ${type}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await rejections(a) })}`, { cause: error });
+          });
           step(`${type} placed`);
         }
       } finally {
@@ -3477,6 +3502,187 @@ test.describe("Physical edited-geometry acceptance", () => {
       const mine = (await structuresOf(a)).filter((s) => s.ownerId === aId);
       expect(mine).toHaveLength(6);
       expect((await rejections(a)).filter((r) => r.reason === "overlap")).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  // ─── Building FROM existing surfaces (real input, shared surface → slot rule) ──
+
+  /** Real bind + click with the crosshair on a world point of an EXISTING piece's surface. */
+  async function buildFromSurface(a: Page, aim: CrosshairAim, code: string, surfacePoint: { x: number; y: number; z: number }, expectPiece: (s: Placed) => boolean, label: string) {
+    await buildAt(a, aim, code, surfacePoint, expectPiece, label);
+  }
+  const isPiece = (type: string, gx: number, gy: number, gz: number, rotation?: number) => (s: Placed) =>
+    s.buildType === type && s.grid.x === gx && s.grid.y === gy && s.grid.z === gz && (rotation === undefined || s.rotation === rotation);
+
+  test("surface A — stacked walls: aim at a wall's upper face → the wall above, twice (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("surface A", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await buildAt(a, aim, "Mouse3", edgeAim(1, -1, 0), isPiece("wall", 1, 0, -1, 0), "ground wall");
+      const face = wallEdgeCenter({ x: 1, y: 0, z: -1 }, 0).z + 0.384; // the wall's face toward the player
+      for (const layer of [1, 2]) {
+        // The upper part of the wall below (80 % up its face) — no sky aiming.
+        await buildFromSurface(a, aim, "Mouse3", { x: CS + 0.4, y: (layer - 1) * LH + 0.8 * LH, z: face }, isPiece("wall", 1, layer, -1, 0), `wall stacked on layer ${layer}`);
+        step(`wall stacked on layer ${layer}`);
+      }
+      const walls = (await structuresOf(a)).filter((s) => s.ownerId === aId && s.buildType === "wall");
+      expect(walls.map((s) => s.grid.y).sort()).toEqual([0, 1, 2]);
+      expect(new Set(walls.map((s) => `${s.grid.x},${s.grid.z},${s.rotation}`)).size).toBe(1); // one edge, three layers
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("surface B + C — ramp → floor from its high end, walked onto → three air floors from each floor's outer edge (real input)", { timeout: 150_000 }, async () => {
+    test.setTimeout(150_000);
+    const { context, a, aId, step } = await openFreshDuel("surface BC", { width: 480, height: 270 });
+    try {
+      await installPoseTrace(a);
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim); // tile (1,-1), rises toward −Z
+      // C: climb part way, then aim at the ramp's high end → the next-layer floor past it.
+      await aim.to(0, 0);
+      await holdKey(a, "surface C", "KeyW", "p.y >= 1.6", {}, "climb part way", true);
+      await settleInputs(a, 10);
+      await buildFromSurface(a, aim, "KeyQ", { x: CS + 0.3, y: 0.9 * LH, z: -1.5 * CS + 0.5 }, isPiece("floor", 1, 1, -2), "floor from the ramp's high end");
+      step("floor placed from the ramp's high end");
+      await aim.to(0, 0);
+      await holdKey(a, "surface C", "KeyW", "p.z <= arg.z", { z: -2 * CS + 0.6 }, "walk from the ramp onto the floor");
+      await settleInputs(a, 10);
+      const onFloor = await authPose(a);
+      step(`on the floor ${JSON.stringify(onFloor)}`);
+      expect(onFloor.y).toBeCloseTo(LH + 0.15, 4);
+      await a.evaluate(() => { (window as any).__poseTrace.length = 0; }); // the air-floor walk alone
+      // B: each floor's outer (−X) edge → the next air floor; walk onto it; three times.
+      for (const gx of [0, -1, -2]) {
+        await buildFromSurface(a, aim, "KeyQ", { x: (gx + 1) * CS - 2.0, y: LH + 0.15, z: -2 * CS + 0.4 }, isPiece("floor", gx, 1, -2), `air floor x=${gx} from the floor's edge`);
+        await aim.to(0, 0);
+        // Onto the near (+X) half of the new floor: its outer edge stays a natural look ahead.
+        await holdKey(a, "surface B", "KeyD", "p.x <= arg.x", { x: gx * CS + 1.0 }, `walk onto air floor x=${gx}`);
+        await settleInputs(a, 10);
+        const pose = await authPose(a);
+        step(`on air floor ${gx}: ${JSON.stringify(pose)}`);
+        expect(pose.y).toBeCloseTo(LH + 0.15, 4);
+      }
+      const path = tracePoints(await poseTrace(a, 4000));
+      expect(Math.min(...path.map((p) => p.y))).toBeCloseTo(LH + 0.15, 4); // never fell
+      expect((await structuresOf(a)).filter((s) => s.ownerId === aId && s.buildType === "floor")).toHaveLength(4);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("surface D — ramp → ramp: aim at the high end → the next ramp continues upward; climbed (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, step } = await openFreshDuel("surface D", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim); // rotation 3
+      await pressKey(a, "KeyX"); // a different selected rotation: the continuation still follows the ramp
+      await buildFromSurface(a, aim, "Mouse4", { x: CS + 0.3, y: 0.85 * LH, z: -1.5 * CS + 0.6 }, isPiece("ramp", 1, 1, -2, 3), "ramp continuing the ramp");
+      step("second ramp continues the first");
+      await pressKey(a, "Digit1");
+      await aim.to(0, 0);
+      await holdKey(a, "surface D", "KeyW", "p.y >= arg.y", { y: LH + 2.5 }, "climb both ramps", true);
+      await settleInputs(a, 10);
+      const pose = await authPose(a);
+      step(`climbed to ${JSON.stringify(pose)}`);
+      expect(pose.y).toBeGreaterThan(LH + 2.5);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("surface E (ramp box, was scenario C) — aiming at the ramp near each side puts a wall on that edge; all coexist (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("surface E", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim); // tile (1,-1), low end at z = −CS/2 (toward the player), high end at −1.5·CS
+      // Surface points on the ramp's slabs near each side (ramp height ∝ distance from the low end).
+      const onRamp = (x: number, z: number) => ({ x, y: (((-0.5 * CS) - z) / CS) * LH, z });
+      const plan: Array<[number, { x: number; y: number; z: number }]> = [
+        [0, onRamp(CS + 0.3, -1.5 * CS + 0.45)], // far (high) end
+        [1, onRamp(CS + 2.1, -CS)], // +X side
+        [3, onRamp(CS - 2.1, -CS)], // −X side
+        [2, onRamp(CS - 0.3, -0.5 * CS - 0.5)], // near (low) end — last: its wall would hide the ramp
+      ];
+      for (const [r, point] of plan) {
+        await buildFromSurface(a, aim, "Mouse3", point, isPiece("wall", 1, 0, -1, r), `wall r${r} from the ramp`);
+        step(`wall r${r} from the ramp surface`);
+      }
+      const box = (await structuresOf(a)).filter((s) => s.ownerId === aId && s.grid.x === 1 && s.grid.z === -1);
+      expect(box.map((s) => `${s.buildType}${s.buildType === "wall" ? s.rotation : ""}`).sort()).toEqual(["ramp", "wall0", "wall1", "wall2", "wall3"]);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("surface F — side-button binds: Mouse 4 wall, Mouse 5 ramp, F cone, E edit; no navigation, no shot, no stray build", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("surface F", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      await recordEditSends(a);
+      const aim = new CrosshairAim(a);
+      const url = a.url();
+      const history = await a.evaluate(() => history.length);
+      const ammo = await getMagazineAmmo(a);
+      const mine = async () => (await structuresOf(a)).filter((s) => s.ownerId === aId);
+      const selected = async () => (await buildModeActive(a)) ? (await a.locator(".build-hud__selected").textContent()) ?? "" : "";
+      // Presses alone select (and preview) — they never place, fire, or navigate.
+      await aim.at(cellCentre(1, -1));
+      for (const [code, piece] of [["Mouse3", "Wall"], ["Mouse4", "Ramp"], ["KeyF", "Cone"], ["Mouse3", "Wall"]] as const) {
+        await pressKey(a, code);
+        await expect.poll(selected, { message: code, timeout: 3_000 }).toContain(piece);
+        await expect(a.locator(".build-hud__validity--valid")).toBeVisible({ timeout: 3_000 });
+      }
+      await sleep(300);
+      expect(await mine()).toEqual([]);
+      step("Mouse4 / Mouse5 / F select wall / ramp / cone with a live preview; nothing placed");
+      // Each bind then places with the primary.
+      await buildAt(a, aim, "Mouse3", edgeAim(1, -1, 0), isPiece("wall", 1, 0, -1, 0), "Mouse 4 wall");
+      await buildAt(a, aim, "Mouse4", cellCentre(0, -1), isPiece("ramp", 0, 0, -1), "Mouse 5 ramp");
+      await buildAt(a, aim, "KeyF", cellCentre(-1, 0), isPiece("cone", -1, 0, 0), "F cone"); // a tile the ramp does not hide
+      step("Mouse4 wall, Mouse5 ramp, F cone placed");
+      // E: the edit layer over the aimed own piece.
+      await aim.at({ x: CS, y: LH / 2, z: wallEdgeCenter({ x: 1, y: 0, z: -1 }, 0).z });
+      await pressKey(a, "KeyE");
+      await expect.poll(() => editModeOn(a), { timeout: 3_000 }).toBe(true);
+      await pressKey(a, "KeyE");
+      await expect.poll(() => editModeOn(a), { timeout: 3_000 }).toBe(false);
+      step("E opens and closes the edit layer");
+      // The primary held through side-button switches: converge on the target
+      // with the primary up, then (in open sky, exact look deltas) hold it,
+      // press the side button, and look back — one placement per switch.
+      // (Leaving edit with E returned to the build layer: the held primary never fires.)
+      expect(await buildModeActive(a)).toBe(true);
+      const heldPlace = async (code: string, point: { x: number; y: number; z: number }, match: (s: Placed) => boolean, label: string) => {
+        await setPrimaryFire(a, false);
+        await aim.at(point);
+        const target = { yaw: aim.yaw, pitch: aim.pitch };
+        await aim.to(target.yaw, 0.7);
+        await sleep(100);
+        await setPrimaryFire(a, true);
+        await pressKey(a, code);
+        await sleep(100);
+        await aim.to(target.yaw, target.pitch);
+        await waitStructure(a, match, label);
+      };
+      const wallSlot = (gx: number, gz: number, r: number) => (s: Placed) =>
+        s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: gx, y: 0, z: gz }, r)[0];
+      try {
+        await heldPlace("Mouse4", cellCentre(1, 1), isPiece("ramp", 1, 0, 1), "held Mouse 5 ramp");
+        await heldPlace("Mouse3", edgeAim(-1, 1, 2), wallSlot(-1, 1, 2), "held → Mouse 4 wall");
+      } finally { await setPrimaryFire(a, false); }
+      step("held primary: Mouse5 ramp → Mouse4 wall without a release");
+      expect(a.url()).toBe(url);
+      expect(await a.evaluate(() => history.length)).toBe(history);
+      expect(await getMagazineAmmo(a)).toBe(ammo);
+      expect((await mine()).map((s) => s.buildType).sort()).toEqual(["cone", "ramp", "ramp", "wall", "wall"]);
+      expect(await editSends(a)).toEqual([]);
+      expect(await rejections(a)).toEqual([]);
     } finally { await context.close(); }
   });
 

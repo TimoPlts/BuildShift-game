@@ -205,24 +205,25 @@ describe("placement preview correction on server rejection", () => {
     fixture.setBuildMode(true);
 
     // Select ramp (E). A ramp occupies one tile's ramp slot.
-    fixture.selectPiece("KeyE");
+    fixture.selectPiece("Mouse4");
 
     // Place a ramp at cell 0.
     fixture.frame(0, true, { gridX: 0 });
     expect(fixture.store.pendingCount).toBe(1);
 
-    // While pending, another ramp on the same tile shows overlap; the next
-    // tile is free (one-tile ramps).
+    // While pending, the pending ramp is already a build surface: aiming at
+    // it continues it one layer up (its own tile's ramp slot is taken).
     fixture.frame(50, false, { gridX: 0 });
-    expect(fixture.controller.getPreview().reason).toBe("overlap");
+    expect(fixture.controller.getPreview().grid?.y).toBe(1);
     fixture.frame(60, false, { gridX: 1 });
     expect(fixture.controller.getPreview().valid).toBe(true);
 
-    // Server rejects the ramp: the slot is free again.
+    // Server rejects the ramp: the surface is gone and its ground slot is free again.
     fixture.reject(0, "overlap");
     expect(fixture.store.pendingCount).toBe(0);
     fixture.frame(100, false, { gridX: 0 });
     expect(fixture.controller.getPreview().valid).toBe(true);
+    expect(fixture.controller.getPreview().grid).toEqual({ x: 0, y: 0, z: 0 });
 
     fixture.dispose();
   });

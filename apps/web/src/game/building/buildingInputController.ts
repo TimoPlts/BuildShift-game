@@ -37,7 +37,7 @@
  */
 import type { BuildType, GridRotation } from "@buildshift/protocol";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
-import { ActionMap, BUILD_PIECE_ACTIONS, DEFAULT_ACTION_BINDINGS } from "../input/actionBindings";
+import { ActionMap, BUILD_PIECE_ACTIONS, DEFAULT_ACTION_BINDINGS, attachMouseBindPresses, pressedBindingCode } from "../input/actionBindings";
 
 /** The default key of the optional legacy build-mode toggle. */
 export const BUILD_MODE_TOGGLE_KEY = DEFAULT_ACTION_BINDINGS.buildToggle[0]!;
@@ -56,12 +56,6 @@ const BUILD_PIECE_TYPE: Readonly<Record<(typeof BUILD_PIECE_ACTIONS)[number][0],
 
 /** The default key that rotates the placement clockwise (build mode only). */
 export const ROTATE_RIGHT_KEY = DEFAULT_ACTION_BINDINGS.buildRotateRight[0]!;
-
-/** The minimum building-input event shape the controller reads. */
-interface KeyboardLikeEvent {
-  code: string;
-  repeat: boolean;
-}
 
 /** A minimal DOM event target (window or document). */
 export interface InputEventTarget {
@@ -115,6 +109,7 @@ export class BuildingInputController {
   private buildModeActive = false;
   private selectedBuildType: BuildType = "wall";
   private rotation: GridRotation = 0;
+  private readonly detachMouseBinds: () => void;
   private disposed = false;
   private readonly mode: InteractionModeCoordinator | null;
   private readonly actions: ActionMap;
@@ -130,6 +125,8 @@ export class BuildingInputController {
     this.mode = mode ?? null;
     this.actions = actions ?? new ActionMap();
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
+    // Mouse binds (e.g. the side buttons) drive the same actions as keys.
+    this.detachMouseBinds = attachMouseBindPresses(this.env.keyTarget, (code) => this.handleKeyDown({ code, repeat: false }));
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -167,6 +164,7 @@ export class BuildingInputController {
     }
     this.disposed = true;
     this.env.keyTarget.removeEventListener("keydown", this.handleKeyDown);
+    this.detachMouseBinds();
     this.env.pointerLockTarget.removeEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -188,8 +186,8 @@ export class BuildingInputController {
     if (this.disposed || this.env.isHidden()) {
       return;
     }
-    const e = event as KeyboardLikeEvent;
-    if (typeof e?.code !== "string" || e.repeat) {
+    const code = pressedBindingCode(event);
+    if (code === null) {
       return;
     }
     // Gameplay building intent only while the canvas holds pointer lock —
@@ -199,7 +197,7 @@ export class BuildingInputController {
       return;
     }
 
-    for (const action of this.actions.actionsFor(e.code)) {
+    for (const action of this.actions.actionsFor(code)) {
       switch (action) {
         case "buildToggle":
           if (this.mode) this.mode.toggleBuild();

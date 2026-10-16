@@ -35,6 +35,29 @@ import { TwoPlayerMovementRoom } from "../../../game-server/src/rooms/TwoPlayerM
 import { PlayerInputQueue, INPUT_QUEUE_LIMIT } from "../../../game-server/src/rooms/lifecycle/playerInputQueue.ts";
 import { oc } from "../../../game-server/src/state/buildingState.ts";
 
+/**
+ * Presses one bind with REAL browser input, per the current default action
+ * map (Mouse Button 4 wall, Mouse Button 5 ramp, Q floor, F cone, E edit):
+ * keyboard codes through the keyboard, and the side mouse buttons ("Mouse3" =
+ * Mouse Button 4 / back, "Mouse4" = Mouse Button 5 / forward) through
+ * Chromium's input pipeline (CDP `Input.dispatchMouseEvent`; Playwright's
+ * mouse API has no back/forward button).
+ */
+const bindSessions = new WeakMap<Page, Promise<CDPSession>>();
+async function pressBind(page: Page, code: string): Promise<void> {
+  const side = code === "Mouse3" ? { button: "back" as const, buttons: 8 } : code === "Mouse4" ? { button: "forward" as const, buttons: 16 } : null;
+  if (!side) return page.keyboard.press(code);
+  let session = bindSessions.get(page);
+  if (!session) { session = page.context().newCDPSession(page); bindSessions.set(page, session); }
+  const cdp = await session;
+  // At the pointer's current spot ((0,0): the harness never moves the real
+  // mouse) — pressing elsewhere would first emit a mousemove, i.e. a look
+  // delta that turns the camera under the (fake) pointer lock.
+  const at = { x: 0, y: 0 };
+  await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...at, button: side.button, buttons: side.buttons, clickCount: 1 });
+  await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, button: side.button, buttons: 0, clickCount: 1 });
+}
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "../../../..");
 const WEB_DIST = path.join(ROOT, "apps/web/dist");
@@ -404,14 +427,14 @@ const buildModeOn = (p: Player) => p.page.evaluate(() => /Build:\s*on/i.test(doc
 const editModeOn = (p: Player) => p.page.evaluate(() => document.querySelector(".build-edit-hud__title") !== null);
 /** Leave the edit layer (G toggles it) and the build layer (legacy B toggle). */
 async function combatMode(p: Player) {
-  for (let i = 0; i < 3 && await editModeOn(p); i++) { await p.page.keyboard.press("KeyG"); await sleep(200); }
+  for (let i = 0; i < 3 && await editModeOn(p); i++) { await pressBind(p.page, "KeyE"); await sleep(200); }
   if (await editModeOn(p)) fail(`${p.name} could not leave the edit layer`);
-  if (await buildModeOn(p)) { await p.page.keyboard.press("KeyB"); await sleep(250); }
+  if (await buildModeOn(p)) { await pressBind(p.page, "KeyB"); await sleep(250); }
   if (await buildModeOn(p)) fail(`${p.name} could not leave build mode`);
 }
 async function equip(room: AnyRoom, p: Player, weapon: "assault_rifle" | "shotgun") {
   await combatMode(p);
-  await p.page.keyboard.press(weapon === "assault_rifle" ? "Digit1" : "Digit2");
+  await pressBind(p.page, weapon === "assault_rifle" ? "Digit1" : "Digit2");
   await waitUntil(() => room.wps.get(p.sid)?.equippedWeaponId === weapon, 3_000, `${p.name} equip ${weapon}`);
 }
 
@@ -421,7 +444,7 @@ async function holdUntil(room: AnyRoom, p: Player, key: string, predicate: strin
   await p.page.keyboard.down(key);
   let jumping = true;
   const jumper = (async () => {
-    while (opts.jumpEveryMs && jumping) { await sleep(opts.jumpEveryMs); if (jumping) await p.page.keyboard.press("Space").catch(() => {}); }
+    while (opts.jumpEveryMs && jumping) { await sleep(opts.jumpEveryMs); if (jumping) await pressBind(p.page, "Space").catch(() => {}); }
   })();
   try {
     await p.page.waitForFunction(({ predicate, arg }) => {
@@ -518,7 +541,7 @@ function freeFor(room: AnyRoom, buildType: string, g: Grid, rotation: number) {
 }
 const cellOf = (x: number, z: number) => ({ x: Math.round(x / CS), z: Math.round(z / CS) });
 
-const counters = { accepted: 0, rejected: 0, editCycles: 0, realInputEdits: 0, destructionCycles: 0, contestedAttempts: 0, contestedResolved: 0, editShotgunReset: 0, turboPlacements: 0, roundsCompleted: 0, rematches: 0 };
+const counters = { laneCleared: 0, accepted: 0, rejected: 0, editCycles: 0, realInputEdits: 0, destructionCycles: 0, contestedAttempts: 0, contestedResolved: 0, editShotgunReset: 0, turboPlacements: 0, roundsCompleted: 0, rematches: 0 };
 
 /** Ground-row cells between the two players (kept clear for the kill line). */
 function corridor(room: AnyRoom, A: Player, B: Player) {
@@ -582,8 +605,21 @@ async function movementPhase(room: AnyRoom, p: Player) {
   return { lane, conePeak: over.maxY, conePeakBack: back.maxY, floorY: top.y };
 }
 
-/** Step back under the next-layer floor (crouched W). */
+/**
+ * Step back under the next-layer floor (crouched W). Surface-aware turbo
+ * building places pieces FROM the faces it hits, so real-input turbo pieces
+ * can chain into the ground tile under the player's floor (the walk-back
+ * path); those are cleared first through the authoritative destroy path.
+ */
 async function movementFinish(room: AnyRoom, p: Player) {
+  const lane = `${p.sign},0,2`;
+  for (const [id, st] of [...room.bld.structures] as [string, any][]) {
+    if (st.grid.y !== 0 || !tilesOf(st.buildType, st.grid, st.rotation).includes(lane)) continue;
+    if (st.buildType === "floor") continue; // walkable
+    room.ks(id, "");
+    counters.laneCleared++;
+  }
+  await sleep(200);
   await setLook(p, 0, 0);
   await holdUntil(room, p, "KeyW", "p.z <= 10.4", {}, { crouch: true });
   await settle(room, p);
@@ -644,61 +680,75 @@ async function buildBurst(room: AnyRoom, p: Player, reserved: Set<string>, targe
   return { placed: mine.length, editCycles: done };
 }
 
+/** Turbo / edit look yaw (from the floor's far side toward the outer column's z = 1 tile). */
+const TURBO_YAW = 0.45;
+
 /** Real-input turbo building + rapid piece switching + real-input edit/reset. */
 async function realInputBuild(room: AnyRoom, p: Player) {
   const before = placements.filter(r => r.sid === p.sid && r.accepted).length;
   await combatMode(p);
   // From beyond the floor's far edge (z ≈ 13.4) look diagonally back into the
-  // outer build column (A: +X/−Z, B: −X/−Z): the aimed cells are (±2, 0, 1..2),
+  // outer build column (A: +X/−Z, B: −X/−Z): the aimed cells are (±2, 0, 1),
   // clear of both movement lanes and of the line between the players.
-  // A shallow pitch: placement targets the layer plane along the aim ray, so
-  // a steep look would land in the builder's own lane tile.
-  await setLook(p, p.sign * Math.PI / 4, -0.12);
-  await p.page.keyboard.press("KeyQ"); // dedicated wall bind enters building
+  // Surface-aware building places pieces FROM the faces it hits — faces
+  // toward the player put them one tile nearer, i.e. into (±1, 0, 1), which
+  // stays off the walk back under the floor (tile z = 2).
+  // Pitch tuned to the camera pivot (feet + 1.6 m): placement targets the
+  // layer plane along the aim ray — shallower lands outside the build bounds
+  // (x = ±3), steeper in the builder's own lane tile.
+  await setLook(p, p.sign * TURBO_YAW, -0.17);
+  await pressBind(p.page, "Mouse3"); // dedicated wall bind (Mouse Button 4) enters building
   await sleep(250);
   check(await buildModeOn(p), `${p.name} build mode did not activate`);
+  log(`${p.name} turbo start: look ${JSON.stringify(lastLook.get(p.sid))} hud ${(await p.page.evaluate(() => document.querySelector(".build-hud")?.textContent ?? "")).replace(/\s+/g, " ")}`);
   await mouse(p, true);
-  // Wall/floor/cone binds + rotations while the primary stays held (ramps
-  // are exercised by the burst and movement). Rotate right/left net to zero.
-  const keys = ["KeyF", "KeyR", "KeyQ", "KeyZ", "KeyX", "KeyF", "KeyQ", "KeyR", "KeyZ", "KeyX"];
+  // Every piece bind + rotations while the primary stays held — current
+  // defaults: Q floor, Mouse3 (Mouse Button 4) wall, F cone, Mouse4 (Mouse
+  // Button 5) ramp; R / X rotate. Rotate right/left net to zero; the look
+  // alternates over an even count, so it nets to zero too.
+  const keys = ["KeyQ", "KeyR", "Mouse3", "KeyF", "Mouse4", "KeyX", "KeyQ", "Mouse3", "KeyR", "KeyF", "Mouse4", "KeyX"];
   for (const [i, k] of keys.entries()) {
-    await p.page.keyboard.press(k);
+    await pressBind(p.page, k);
     await look(p, (i % 2 ? 1 : -1) * 70, 0);
     await sleep(220);
   }
   await mouse(p, false);
   await sleep(300);
-  const turbo = placements.filter(r => r.sid === p.sid && r.accepted).length - before;
+  const turboRecords = placements.filter(r => r.sid === p.sid && r.accepted).slice(before);
+  const turbo = turboRecords.length;
+  log(`${p.name} turbo pieces: ${JSON.stringify(turboRecords.reduce((m: Record<string, number>, r) => ({ ...m, [r.buildType]: (m[r.buildType] ?? 0) + 1 }), {}))}`);
   log(`${p.name} after turbo: overlay ${(await p.page.evaluate(() => (document.querySelector(".devdiag-overlay")?.textContent ?? "").slice(0, 300))).replace(/\s+/g, " ")}`);
   counters.turboPlacements += turbo;
-  // Real-input edit layer: G over the aimed own piece, LMB selects a tile
-  // locally, Enter confirms (the change goes out), then G, T (reset preview),
-  // Enter confirms the reset; G leaves the edit layer if it is still active.
+  check(turbo > 0, `${p.name} real-input turbo placed nothing (binds / aim lost)`);
+  // Real-input edit layer: E over the aimed own piece, LMB selects a tile
+  // locally, Enter confirms (the change goes out), then E, T (reset preview),
+  // Enter confirms the reset; E leaves the edit layer if it is still active.
   const editsBefore = edits.filter(e => e.sid === p.sid && e.ok).length;
-  await p.page.keyboard.press("KeyQ");
-  await setLook(p, p.sign * Math.PI / 4, -0.1);
+  await pressBind(p.page, "Mouse3"); // wall (Mouse Button 4): back in the build layer before editing
+  await setLook(p, p.sign * TURBO_YAW, -0.15);
   const targeted = () => p.page.evaluate(() => document.querySelector(".build-edit-hud__target") !== null);
   let noTarget = 0;
   for (let i = 0; i < 4; i++) {
-    if (!(await editModeOn(p))) { await p.page.keyboard.press("KeyG"); await sleep(250); }
+    if (!(await editModeOn(p))) { await pressBind(p.page, "KeyE"); await sleep(250); }
     check(await editModeOn(p), `${p.name} edit layer did not open`);
     if (await targeted()) {
       await mouse(p, true); await sleep(60); await mouse(p, false); // select the aimed tile (local)
       await sleep(200);
-      await p.page.keyboard.press("Enter"); // confirm: the tile change goes out
+      await pressBind(p.page, "Enter"); // confirm: the tile change goes out
       await sleep(300);
-      await p.page.keyboard.press("KeyG");
+      await pressBind(p.page, "KeyE");
       await sleep(250);
-      await p.page.keyboard.press("KeyT"); // reset preview
+      await pressBind(p.page, "KeyT"); // reset preview
       await sleep(150);
-      await p.page.keyboard.press("Enter"); // confirm the reset
+      await pressBind(p.page, "Enter"); // confirm the reset
       await sleep(200);
     } else noTarget++;
-    if (await editModeOn(p)) { await p.page.keyboard.press("KeyG"); await sleep(200); }
+    if (await editModeOn(p)) { await pressBind(p.page, "KeyE"); await sleep(200); }
     await look(p, (i % 2 ? 1 : -1) * 60, 0);
   }
   const realEdits = edits.filter(e => e.sid === p.sid && e.ok).length - editsBefore;
   counters.realInputEdits += realEdits;
+  check(realEdits > 0, `${p.name} real-input edit layer confirmed nothing`);
   if (noTarget) log(`${p.name} real-input edit: ${noTarget}/4 attempts had no aimed own piece`);
   // Leave any edit layer (G toggles), then build mode.
   await combatMode(p);
@@ -746,7 +796,7 @@ async function destructionCycles(room: AnyRoom, A: Player, B: Player, cycles: nu
         if (st && durAfterFirstShots === undefined && st.currentDurability < d0) durAfterFirstShots = st.currentDurability;
         if (!st) return true;
         const slot = room.wps.get(shooter.sid)?.slots.get(weapon);
-        if (slot && slot.magazineAmmo === 0 && !slot.reloading) void shooter.page.keyboard.press("KeyR");
+        if (slot && slot.magazineAmmo === 0 && !slot.reloading) void pressBind(shooter.page, "KeyR");
         return false;
       }, 25_000, `cycle ${c} destruction`);
     } catch (e) {
@@ -813,7 +863,7 @@ async function killPhase(room: AnyRoom, A: Player, B: Player) {
   try {
     while (room.state.matchPhase === "IN_PROGRESS" && performance.now() - start < 60_000) {
       const slot = room.wps.get(A.sid)?.slots.get("assault_rifle");
-      if (slot && slot.magazineAmmo === 0 && !slot.reloading) await A.page.keyboard.press("KeyR");
+      if (slot && slot.magazineAmmo === 0 && !slot.reloading) await pressBind(A.page, "KeyR");
       await sleep(400);
       await aimAt(room, A, target());
     }
@@ -910,7 +960,7 @@ async function main() {
       const startTick = room.tc;
       const seqA0 = room.state.players.get(A.sid).lastProcessedSequence;
       // Real jump (both players) + a placement, right at round start.
-      await Promise.all([A.page.keyboard.press("Space"), B.page.keyboard.press("Space")]);
+      await Promise.all([pressBind(A.page, "Space"), pressBind(B.page, "Space")]);
       const immediate = await place(room, A, "wall", { x: 2, y: 0, z: 0 }, 1).catch(e => ({ accepted: false, reason: String(e) }));
       const jumped = await waitUntil(() => room.state.players.get(A.sid).y > 0.3 && room.state.players.get(B.sid).y > 0.3 ? room.tc : undefined, 3_000, "immediate jump").catch(() => undefined);
       check(jumped !== undefined, "real jump at round start not simulated by the server");

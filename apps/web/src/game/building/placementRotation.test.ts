@@ -120,13 +120,17 @@ describe("placement preview rotation (shared canonical rule)", () => {
 
   it("checks overlap by canonical slot: a ramp's tile still takes walls, floors and a cone; only another ramp conflicts", () => {
     const ramp: OccupiedStructure = { buildType: "ramp", grid: { x: 0, y: 0, z: 0 }, rotation: 1 };
-    expect(previewAt("ramp", 0, { x: 0, z: 0 }, [ramp]).reason).toBe("overlap");
+    // Aiming at the ramp builds from its surface: a ramp continues past the
+    // high end one layer up (rising the same way) — unless that slot is taken.
+    const continued = previewAt("ramp", 0, { x: 0, z: 0 }, [ramp]);
+    expect([continued.valid, continued.grid, continued.rotation]).toEqual([true, { x: 0, y: 1, z: 1 }, 1]);
+    expect(previewAt("ramp", 0, { x: 0, z: 0 }, [ramp, { buildType: "ramp", grid: { x: 0, y: 1, z: 1 }, rotation: 3 }]).reason).toBe("overlap");
     for (const type of ["wall", "floor", "cone"] as const) expect(previewAt(type, 0, { x: 0, z: 0 }, [ramp]).valid, type).toBe(true);
     expect(previewAt("ramp", 0, { x: 0, z: 1 }, [ramp]).valid).toBe(true); // one tile only
     // A wall already on the aimed edge — named from the neighbour tile — conflicts.
     const cs = BUILD_GRID.cellSize;
     const wallOnSharedEdge: OccupiedStructure = { buildType: "wall", grid: { x: 0, y: 0, z: -1 }, rotation: 2 };
-    const p = computePlacementPreview({ aimOrigin: { x: 0, y: 5, z: -cs / 2 + 0.3 }, aimDirection: { x: 0, y: -1, z: 0 }, playerPosition: { x: 0, y: 0, z: 0 }, buildType: "wall", rotation: 0, occupied: [wallOnSharedEdge] });
+    const p = computePlacementPreview({ aimOrigin: { x: 0, y: 5, z: -cs / 2 + 0.5 }, aimDirection: { x: 0, y: -1, z: 0 }, playerPosition: { x: 0, y: 0, z: 0 }, buildType: "wall", rotation: 0, occupied: [wallOnSharedEdge] }); // just clear of the panel (its top would stack a wall above)
     expect(p.rotation).toBe(0);
     expect(p.reason).toBe("overlap");
   });
@@ -181,7 +185,7 @@ describe("rotation binds, turbo and piece switching", () => {
 
   it("turbo keeps placing while rotating, each ramp request carrying the current rotation", () => {
     const f = createFixture();
-    f.key("KeyE"); // ramp (walls take their rotation from the aimed edge instead)
+    f.key("Mouse4"); // ramp (walls take their rotation from the aimed edge instead)
     const cells = [-2, -1, 0, 1, 2];
     for (const [i, x] of cells.entries()) {
       if (i > 0) f.key("KeyR");
@@ -195,7 +199,7 @@ describe("rotation binds, turbo and piece switching", () => {
   it("switching wall → floor → ramp → cone after rotating sends the canonical rotation for each piece", () => {
     const f = createFixture();
     f.key("KeyR"); // rotation 1 selected
-    const plan: Array<[string, BuildType, number]> = [["KeyQ", "wall", -2], ["KeyF", "floor", -1], ["KeyE", "ramp", 0], ["KeyZ", "cone", 2]];
+    const plan: Array<[string, BuildType, number]> = [["Mouse3", "wall", -2], ["KeyQ", "floor", -1], ["Mouse4", "ramp", 0], ["KeyF", "cone", 2]];
     for (const [code, , x] of plan) { f.key(code); f.frame(x, 0, true); }
     // The wall snaps to the aimed edge (aim at the tile centre → its −Z edge);
     // the ramp keeps the selected rotation; floor / cone normalize to 0.

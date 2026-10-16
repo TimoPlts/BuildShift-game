@@ -32,7 +32,7 @@ describe("BuildHud", () => {
     expect(html).toContain("build-hud--inactive");
     // The inactive state tells the player the dedicated build binds.
     expect(html).toContain("Press");
-    for (const key of ["Q", "F", "E", "Z"]) expect(html).toContain(`<kbd>${key}</kbd>`);
+    for (const key of ["M4", "Q", "M5", "F"]) expect(html).toContain(`<kbd>${key}</kbd>`);
     expect(html).toContain("to build");
     // No selector chips or control hint while the mode is off.
     expect(html).not.toContain("build-hud__types");
@@ -61,8 +61,8 @@ describe("BuildHud", () => {
     expect(html).toContain("Ramp");
     expect(html).toContain("Cone");
     // …each with the default dedicated bind from the action map
-    // (Q=wall, F=floor, E=ramp, Z=cone).
-    for (const key of ["Q", "F", "E", "Z"]) {
+    // (M4=wall, Q=floor, M5=ramp, F=cone).
+    for (const key of ["M4", "Q", "M5", "F"]) {
       expect(html).toMatch(new RegExp(`build-hud__type-key[^>]*>\\s*${key}\\s*<`));
     }
     // The wall chip is the selected one.

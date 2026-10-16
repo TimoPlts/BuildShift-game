@@ -114,7 +114,13 @@ describe("placementPreview", () => {
       occupied: [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 } }],
     }));
     expect(p.valid).toBe(true);
-    expect(computePlacementPreview(mi({ buildType: "floor", occupied: [{ buildType: "floor", grid: { x: 0, y: 0, z: 0 } }] })).reason).toBe("overlap");
+    // Aiming at an existing floor builds FROM it (the neighbour across its
+    // nearest edge); that neighbour's floor slot taken too → overlap.
+    const floor = { buildType: "floor" as const, grid: { x: 0, y: 0, z: 0 } };
+    const next = computePlacementPreview(mi({ buildType: "floor", occupied: [floor] }));
+    expect(next.valid).toBe(true);
+    expect(next.grid).toEqual({ x: 0, y: 0, z: -1 });
+    expect(computePlacementPreview(mi({ buildType: "floor", occupied: [floor, { buildType: "floor", grid: { x: 0, y: 0, z: -1 } }] })).reason).toBe("overlap");
   });
   it("valid with many disjoint occupied structures", () => {
     // 40 floors in a row away from the candidate at (0,0,0).

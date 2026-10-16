@@ -186,7 +186,7 @@ function setup(structures: StructureState[] = [wall("w1")], options?: { confirmO
   const frame = (aim: ReturnType<typeof wallPoint>, routed: { pressed?: boolean; held?: boolean } = {}, extra: Partial<BuildEditFrameContext> = {}) =>
     controller.updateFrame(ctx(aim, routed, extra));
   /** Edit bind, then one frame aiming at the piece (locks the draft). */
-  const enterEdit = (aim = wallAim(4)) => { press("KeyG"); frame(aim); };
+  const enterEdit = (aim = wallAim(4)) => { press("KeyE"); frame(aim); };
   /** A drag through the given aims: press at the first, hold through the rest, release. */
   const drag = (aims: ReturnType<typeof wallPoint>[]) => {
     aims.forEach((aim, i) => frame(aim, { pressed: i === 0, held: true }));
@@ -338,7 +338,7 @@ describe("BuildEditController — confirm sends only the canonical difference", 
     const t = setup();
     t.enterEdit();
     t.drag([wallAim(1)]);
-    t.press("KeyG");
+    t.press("KeyE");
     t.frame(wallAim(1));
     expect(t.sent().map((m) => m.action)).toEqual(["select", "confirm"]);
     expect(t.controller.getMode()).toBe(false);
@@ -427,7 +427,7 @@ describe("BuildEditController — reset", () => {
 describe("BuildEditController — validity, ramps, gating, forced exits", () => {
   it("an empty floor pattern is invalid: shown, never sent, and edit mode stays on", () => {
     const t = setup([floorPiece("f1")]);
-    t.press("KeyG");
+    t.press("KeyE");
     t.frame(floorAim(0));
     t.drag([floorAim(0), floorAim(1), floorAim(3), floorAim(2)]);
     expect(t.controller.getEditView()!.invalidReason).toBe("Floor cannot be fully opened");
@@ -445,7 +445,7 @@ describe("BuildEditController — validity, ramps, gating, forced exits", () => 
 
   it("a ramp press picks the width half under the crosshair; confirm sends that variant", () => {
     const t = setup([ramp("r1")]);
-    t.press("KeyG");
+    t.press("KeyE");
     // Ramp (rotation 0) at grid (0,0,-1): the climber's left half is +Z.
     const down = (z: number) => ({ aimOrigin: { x: 2.56, y: 6, z }, aimDirection: { x: 0, y: -1, z: 0 } });
     t.frame(down(-5.12 + 1.28));
@@ -463,7 +463,7 @@ describe("BuildEditController — validity, ramps, gating, forced exits", () => 
   it("nothing is selected or sent while disconnected or out of round", () => {
     for (const extra of [{ connected: false }, { inRound: false }]) {
       const t = setup();
-      t.press("KeyG");
+      t.press("KeyE");
       t.frame(wallAim(4), {}, extra);
       t.frame(wallAim(4), { pressed: true, held: true }, extra);
       t.press("Enter");

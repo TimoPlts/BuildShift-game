@@ -242,7 +242,7 @@ export class BuildingStateStore {
     if (this.cachedOccupied === null) {
       const occupied: OccupiedStructure[] = [];
       for (const structure of this.structures.values()) {
-        occupied.push({ buildType: structure.buildType, grid: structure.grid, rotation: structure.rotation });
+        occupied.push({ buildType: structure.buildType, grid: structure.grid, rotation: structure.rotation, ...(structure.editGrid ? { editGrid: structure.editGrid } : {}) });
       }
       for (const intent of this.pending.values()) {
         occupied.push({ buildType: intent.buildType, grid: intent.grid, rotation: intent.rotation });

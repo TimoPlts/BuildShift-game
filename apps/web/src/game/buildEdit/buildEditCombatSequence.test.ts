@@ -273,9 +273,9 @@ function createFixture(): Fixture {
 
 /** Wall bind (enters building) then the edit bind, one frame per step. */
 function enterBuildEdit(f: Fixture): void {
-  f.keyDown("KeyQ");
+  f.keyDown("Mouse3");
   f.frame();
-  f.keyDown("KeyG");
+  f.keyDown("KeyE");
   f.frame();
 }
 
@@ -459,12 +459,12 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     ]);
 
     // Cycle 2: edit → reset (predicted) → confirm with the edit bind again.
-    f.keyDown("KeyG");
+    f.keyDown("KeyE");
     f.frame();
     expect(f.editController.getPendingState()).toEqual({ kind: "wall", tiles: WINDOW_TILES });
     f.keyDown("KeyT");
     f.frame();
-    f.keyDown("KeyG");
+    f.keyDown("KeyE");
     f.frame();
     land(FULL_TILES, 2);
     expect(payloads().slice(2, 4)).toEqual([
@@ -473,7 +473,7 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     ]);
 
     // Cycle 3: the identical edit from the reset baseline replicates exactly.
-    f.keyDown("KeyG");
+    f.keyDown("KeyE");
     f.frame();
     editCentreTile(f);
     f.keyDown("Enter");
@@ -514,7 +514,7 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     f.lock();
     f.keyDown("Digit2"); // weapon mode: switch to shotgun up front
     f.frame();
-    f.keyDown("KeyQ"); // building (wall)
+    f.keyDown("Mouse3"); // building (wall)
     f.frame();
 
     const CYCLES = 3;
@@ -522,7 +522,7 @@ describe("edit → confirm → shotgun → reset combat sequence", () => {
     for (let i = 0; i < CYCLES; i++) {
       // enter edit mode (confirm commits-exits to weapon each cycle)
       if (f.coordinator.mode !== "edit") {
-        f.keyDown("KeyG");
+        f.keyDown("KeyE");
         f.frame();
       }
       // edit the centre tile

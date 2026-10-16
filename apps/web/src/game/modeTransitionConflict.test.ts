@@ -11,8 +11,9 @@
  *   updateBuildingFrame(connected, inRound, buildPlaceHeld | press)
  *   updateBuildEditFrame(route.editSelect*)
  *
- * Pinned (default binds: Q wall, F floor, E ramp, Z cone, G edit, T reset,
- * 1/2 weapons, R reload / rotate):
+ * Pinned (default binds: Mouse Button 4 wall, Q floor (temporary), Mouse
+ * Button 5 ramp, F cone, E edit, T reset, 1/2 weapons, R reload / rotate —
+ * side buttons arrive as real `mousedown` events with DOM buttons 3 / 4):
  *
  *  - dedicated build binds: one key goes weapon → building with that piece,
  *    no mode key first; switching pieces keeps turbo placing while the
@@ -231,7 +232,13 @@ function createFixture() {
    * frame (exactly how the runtime consumes them every frame).
    */
   const press = (code: string): void => {
-    key.dispatch("keydown", { code, repeat: false });
+    const mouse = /^Mouse(\d+)$/.exec(code);
+    if (mouse) {
+      // A real click: press then release (the release re-arms the button).
+      key.dispatch("mousedown", { type: "mousedown", button: Number(mouse[1]) });
+      key.dispatch("mouseup", { type: "mouseup", button: Number(mouse[1]) });
+    }
+    else key.dispatch("keydown", { code, repeat: false });
     if (code === "Digit1") pendingWeaponKeys.slot1 = true;
     else if (code === "Digit2") pendingWeaponKeys.slot2 = true;
     else if (code === "KeyR") pendingWeaponKeys.reload = true;
@@ -288,19 +295,48 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
   it("registers no duplicate listeners on the shared input surfaces", () => {
     const fixture = createFixture();
     expect(fixture.key.count("keydown")).toBe(2);
+    for (const type of ["pointerdown", "pointermove", "pointerup", "mousedown", "mouseup"]) expect(fixture.key.count(type), type).toBe(2);
     expect(fixture.pointerLock.count("pointerlockchange")).toBe(2);
     expect(fixture.visibility.count("visibilitychange")).toBe(2);
     fixture.buildInput.dispose();
     expect(fixture.key.count("keydown")).toBe(1);
+    expect(fixture.key.count("pointerdown")).toBe(1);
     expect(fixture.pointerLock.count("pointerlockchange")).toBe(1);
+    fixture.dispose();
+    expect(fixture.key.count("pointerdown")).toBe(0);
+  });
+
+  it("side buttons: Mouse Button 4 (DOM 3) → wall, Mouse Button 5 (DOM 4) → ramp, F → cone, E → edit; none fires or places by itself", () => {
+    const fixture = createFixture();
+    fixture.lock();
+    const before = fixture.sent.length;
+    fixture.key.dispatch("mousedown", { type: "mousedown", button: 3 });
+    fixture.frame();
+    expect([fixture.mode.mode, fixture.buildInput.getSelectedBuildType()]).toEqual(["build", "wall"]);
+    fixture.key.dispatch("mousedown", { type: "mousedown", button: 4 });
+    fixture.frame();
+    expect([fixture.mode.mode, fixture.buildInput.getSelectedBuildType()]).toEqual(["build", "ramp"]);
+    fixture.key.dispatch("keydown", { code: "KeyF", repeat: false });
+    fixture.frame();
+    expect(fixture.buildInput.getSelectedBuildType()).toBe("cone");
+    // Selecting pieces sends nothing: no placement, no shot, no edit.
+    expect(fixture.sent.length).toBe(before);
+    fixture.key.dispatch("keydown", { code: "KeyE", repeat: false });
+    fixture.frame();
+    expect(fixture.mode.mode).toBe("edit");
+    // Released side buttons do nothing (only the press is a bind).
+    fixture.key.dispatch("mouseup", { type: "mouseup", button: 3 });
+    fixture.frame();
+    expect(fixture.mode.mode).toBe("edit");
+    expect(fixture.sent.length).toBe(before);
     fixture.dispose();
   });
 
   it.each([
-    ["KeyQ", "wall"],
-    ["KeyF", "floor"],
-    ["KeyE", "ramp"],
-    ["KeyZ", "cone"],
+    ["Mouse3", "wall"],
+    ["KeyQ", "floor"],
+    ["Mouse4", "ramp"],
+    ["KeyF", "cone"],
   ] as const)("weapon → %s with one key: building with that piece, preview and placement immediately", (code, piece) => {
     const fixture = createFixture();
     fixture.lock();
@@ -325,10 +361,10 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-2, 0) });
     const rifleAmmo = fixture.weapon.currentAmmo;
     const plan: Array<[string, string, { origin: Vec3; dir: Vec3 }]> = [
-      ["KeyQ", "wall", aimCell(-2, 0)],
-      ["KeyE", "ramp", aimCell(0, 0)],
-      ["KeyF", "floor", aimCell(-1, 1)],
-      ["KeyZ", "cone", aimCell(2, 1)],
+      ["Mouse3", "wall", aimCell(-2, 0)],
+      ["Mouse4", "ramp", aimCell(0, 0)],
+      ["KeyQ", "floor", aimCell(-1, 1)],
+      ["KeyF", "cone", aimCell(2, 1)],
     ];
     plan.forEach(([code, , aim], i) => {
       fixture.press(code);
@@ -347,15 +383,15 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     const placements = () => fixture.sent.filter((m) => m.type === BUILD_EVENTS.PLACEMENT_REQUEST).length;
     const edits = () => fixture.sent.filter((m) => m.type === EDIT_GRID_ACTION_MESSAGE).map((m) => m.payload as Record<string, unknown>);
 
-    fixture.press("KeyQ");
+    fixture.press("Mouse3");
     fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-2, 0), now: 0 });
-    fixture.press("KeyE");
+    fixture.press("Mouse4");
     fixture.frame({ fireHeld: true, aim: aimCell(0, 0), now: PLACEMENT_REQUEST_INTERVAL_MS });
     fixture.frame({ fireHeld: false, aim: aimCell(0, 0), now: 2 * PLACEMENT_REQUEST_INTERVAL_MS });
     expect(placements()).toBe(2);
 
     // Edit the owned wall: drag a doorway (centre → bottom-centre).
-    fixture.press("KeyG");
+    fixture.press("KeyE");
     expect(fixture.mode.mode).toBe("edit");
     fixture.frame({ aim: editAim(4) });
     fixture.frame({ firePressed: true, fireHeld: true, aim: editAim(4) });
@@ -384,14 +420,14 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     expect(placements()).toBe(2);
 
     // Edit again → reset (predicted at once) → confirm with the edit bind.
-    fixture.press("KeyG");
+    fixture.press("KeyE");
     fixture.frame({ aim: editAim(4) });
     const view = fixture.edit.getEditView()!;
     expect(view.draftState).toEqual({ kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] });
     fixture.press("KeyT");
     fixture.frame({ aim: editAim(4) });
     expect(fixture.edit.getEditView()!.draftState).toEqual({ kind: "wall", tiles: Array(9).fill(true) });
-    fixture.press("KeyG");
+    fixture.press("KeyE");
     fixture.frame({ aim: editAim(4) });
     expect(edits().slice(3)).toEqual([
       { structureId: "s1", action: "reset" },
@@ -406,16 +442,16 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     const fixture = createFixture();
     fixture.lock();
     const steps: Array<[string, string, string | null]> = [
-      ["KeyQ", "build", "wall"],
+      ["Mouse3", "build", "wall"],
       ["Digit1", "weapon", null],
-      ["KeyE", "build", "ramp"],
+      ["Mouse4", "build", "ramp"],
       ["Digit2", "weapon", null],
-      ["KeyQ", "build", "wall"],
-      ["KeyG", "edit", null],
+      ["Mouse3", "build", "wall"],
+      ["KeyE", "edit", null],
       ["Digit1", "weapon", null],
-      ["KeyZ", "build", "cone"],
-      ["KeyG", "edit", null],
-      ["KeyG", "build", null], // edit again returns to the build layer beneath
+      ["KeyF", "build", "cone"],
+      ["KeyE", "edit", null],
+      ["KeyE", "build", null], // edit again returns to the build layer beneath
     ];
     for (const [code, expected, piece] of steps) {
       fixture.press(code);
@@ -440,7 +476,7 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     expect(fixture.weapon.isReloading).toBe(true);
     expect(fixture.buildInput.getRotation()).toBe(0);
     fixture.weapon.reset();
-    fixture.press("KeyQ");
+    fixture.press("Mouse3");
     fixture.press("KeyR");
     fixture.frame();
     expect(fixture.buildInput.getRotation()).toBe(1);
@@ -453,7 +489,7 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     fixture.lock();
     fixture.press("Digit2");
     fixture.frame({ inRound: false, firePressed: true, fireHeld: true });
-    fixture.press("KeyQ");
+    fixture.press("Mouse3");
     fixture.frame({ inRound: false, firePressed: true, fireHeld: true });
     fixture.frame({ aim: aimCell(-1, 0) });
     expect(fixture.weaponSwitchCount()).toBe(0);
@@ -465,8 +501,8 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
   it("pointer unlock clears both layers and discards an unconfirmed edit", () => {
     const fixture = createFixture();
     fixture.lock();
-    fixture.press("KeyQ");
-    fixture.press("KeyG");
+    fixture.press("Mouse3");
+    fixture.press("KeyE");
     fixture.frame({ aim: editAim(4) });
     fixture.frame({ firePressed: true, fireHeld: true, aim: editAim(4) });
     fixture.frame({ fireHeld: false, aim: editAim(4) });

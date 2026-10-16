@@ -50,7 +50,7 @@
  */
 
 import type { EditExitKind, InteractionModeCoordinator } from "../input/interactionMode";
-import { ActionMap, DEFAULT_ACTION_BINDINGS } from "../input/actionBindings";
+import { ActionMap, DEFAULT_ACTION_BINDINGS, attachMouseBindPresses, pressedBindingCode } from "../input/actionBindings";
 
 /** The key that toggles edit mode. */
 export const EDIT_MODE_TOGGLE_KEY = DEFAULT_ACTION_BINDINGS.edit[0]!;
@@ -64,11 +64,6 @@ export const CANCEL_EDIT_KEY: string | null = DEFAULT_ACTION_BINDINGS.editCancel
 /** The key that resets the pending edit to the piece's default form. */
 export const RESET_EDIT_KEY = DEFAULT_ACTION_BINDINGS.editReset[0]!;
 
-/** The minimum keyboard event shape the controller reads. */
-interface KeyboardLikeEvent {
-  code: string;
-  repeat: boolean;
-}
 
 /** A minimal DOM event target (window or document). */
 export interface InputEventTarget {
@@ -129,6 +124,7 @@ export class BuildEditInputController {
    * produces a phantom release.
    */
   private prevSelectHeld = false;
+  private readonly detachMouseBinds: () => void;
   private disposed = false;
   private readonly mode: InteractionModeCoordinator | null;
   private readonly actions: ActionMap;
@@ -146,6 +142,8 @@ export class BuildEditInputController {
     this.mode = mode ?? null;
     this.actions = actions ?? new ActionMap();
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
+    // Mouse binds (e.g. the side buttons) drive the same actions as keys.
+    this.detachMouseBinds = attachMouseBindPresses(this.env.keyTarget, (code) => this.handleKeyDown({ code, repeat: false }));
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -311,6 +309,7 @@ export class BuildEditInputController {
     }
     this.disposed = true;
     this.env.keyTarget.removeEventListener("keydown", this.handleKeyDown);
+    this.detachMouseBinds();
     this.env.pointerLockTarget.removeEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -332,8 +331,8 @@ export class BuildEditInputController {
     if (this.disposed || this.env.isHidden()) {
       return;
     }
-    const e = event as KeyboardLikeEvent;
-    if (typeof e?.code !== "string" || e.repeat) {
+    const code = pressedBindingCode(event);
+    if (code === null) {
       return;
     }
     // Edit intent only while the canvas holds pointer lock — the same rule as
@@ -343,7 +342,7 @@ export class BuildEditInputController {
       return;
     }
 
-    for (const action of this.actions.actionsFor(e.code)) {
+    for (const action of this.actions.actionsFor(code)) {
       switch (action) {
         case "edit":
           if (this.mode) {
