@@ -1,14 +1,35 @@
 import type { LocalMovementInput } from "@buildshift/simulation";
+import { ActionMap, attachMouseBindPresses, mouseBindingCode, type GameAction } from "./actionBindings";
 
-const MOVEMENT_CODES = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
-const JUMP_CODE = "Space";
+/**
+ * Pointer-lock look-input guard. A single mousemove whose movement is
+ * physically impossible — at least {@link LOOK_SPIKE_MIN_PX} pixels on one
+ * axis arriving faster than {@link LOOK_SPIKE_MAX_PX_PER_MS} since the previous
+ * look event (14+ full turns per second at the default sensitivity) — is a
+ * corrupt sample, not player motion: browsers emit such spikes under pointer
+ * lock (accelerated-movement spikes, absolute pointing devices / remote
+ * desktops warping the cursor, the lock-acquisition jump). It is dropped and
+ * counted. Real flicks and low-frame-rate batches (large deltas spread over
+ * tens of milliseconds) are always applied in full — no smoothing.
+ */
+export const LOOK_SPIKE_MIN_PX = 300;
+export const LOOK_SPIKE_MAX_PX_PER_MS = 40;
 
-/** Weapon switch key: key 1 → assault rifle. */
-const WEAPON_SLOT_1_CODE = "Digit1";
-/** Weapon switch key: key 2 → shotgun. */
-const WEAPON_SLOT_2_CODE = "Digit2";
-/** Reload key. */
-const RELOAD_CODE = "KeyR";
+/** Look-input diagnostics (shown in the developer overlay). */
+export interface LookInputStats {
+  /** Look events applied. */
+  events: number;
+  /** Largest single-event |movement| applied (pixels). */
+  maxEventPx: number;
+  /** Corrupt single-event spikes dropped. */
+  rejectedSpikes: number;
+  /** Largest dropped spike (pixels), 0 when none. */
+  maxRejectedPx: number;
+  /** Pointer-lock acquisitions. */
+  lockAcquisitions: number;
+  /** Whether the browser granted raw (unadjusted) pointer-lock movement. */
+  unadjustedMovement: boolean;
+}
 
 /** Accumulated pointer-lock mouse movement in pixels since the last frame. */
 export interface LookDelta {
@@ -36,14 +57,21 @@ export interface WeaponInputFrame {
   isFiring: boolean;
 }
 
+/** Mouse events whose default action can be the side buttons' back/forward navigation. */
+const NAVIGATION_MOUSE_EVENTS = ["mousedown", "mouseup", "auxclick"] as const;
+
 /**
  * Owns every browser input signal used by the local game loop:
  *
- * - keyboard state (WASD intent)
+ * - keyboard state (movement intent)
  * - accumulated pointer-lock mouse movement (look delta)
  * - pointer-lock lifecycle (request, release, listeners)
  * - mouse button state (fire / left-click)
- * - weapon switch / reload key edges (1, 2, R)
+ * - weapon switch / reload key edges
+ *
+ * Physical inputs are resolved through the shared {@link ActionMap}
+ * (`moveForward`, `jump`, `weaponSlot1`, `primaryAction`, …): nothing here
+ * depends on literal key codes, so the bindings are configurable.
  *
  * Real gameplay input is only active while the canvas has pointer lock;
  * while unlocked, both movement and look report zero so the player cannot
@@ -67,11 +95,28 @@ export class InputManager {
   private weaponSlot1Pressed = false;
   private weaponSlot2Pressed = false;
   private reloadPressed = false;
+  private lastLookEventMs: number | null = null;
+  private readonly lookStats: LookInputStats = {
+    events: 0,
+    maxEventPx: 0,
+    rejectedSpikes: 0,
+    maxRejectedPx: 0,
+    lockAcquisitions: 0,
+    unadjustedMovement: false,
+  };
 
-  public constructor(private readonly canvas: HTMLCanvasElement) {
+  /** The shared gameplay action map (also handed to the build/edit inputs). */
+  public readonly actions: ActionMap;
+  private readonly detachMouseBinds: () => void;
+
+  public constructor(private readonly canvas: HTMLCanvasElement, actions: ActionMap = new ActionMap()) {
+    this.actions = actions;
     canvas.addEventListener("click", this.requestPointerLock);
     canvas.addEventListener("mousedown", this.handleMouseDown);
     canvas.addEventListener("mouseup", this.handleMouseUp);
+    for (const type of NAVIGATION_MOUSE_EVENTS) window.addEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    window.addEventListener("contextmenu", this.suppressContextMenu, { capture: true });
+    this.detachMouseBinds = attachMouseBindPresses(window, this.handleMouseBindPress, this.handleMouseBindRelease);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
     window.addEventListener("blur", this.clearInput);
@@ -98,9 +143,34 @@ export class InputManager {
       this.movementOut.z = 0;
       return this.movementOut;
     }
-    this.movementOut.x = Number(this.heldCodes.has("KeyD")) - Number(this.heldCodes.has("KeyA"));
-    this.movementOut.z = Number(this.heldCodes.has("KeyS")) - Number(this.heldCodes.has("KeyW"));
+    this.movementOut.x = Number(this.isActionHeld("moveRight")) - Number(this.isActionHeld("moveLeft"));
+    this.movementOut.z = Number(this.isActionHeld("moveBackward")) - Number(this.isActionHeld("moveForward"));
     return this.movementOut;
+  }
+
+  /** Whether any key bound to `action` is currently held. */
+  public isActionHeld(action: GameAction): boolean {
+    for (const code of this.actions.bindingsFor(action)) {
+      if (this.heldCodes.has(code)) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Whether a `crouch` binding is currently held while the pointer is locked.
+   *
+   * Like movement, crouch intent is only active under pointer lock so the
+   * player cannot crouch while interacting with browser UI. The key is tracked
+   * in {@link heldCodes} (cleared on blur / unlock / visibility change via
+   * {@link clearInput}).
+   */
+  public isCrouchHeld(): boolean {
+    return this.isActionHeld("crouch") && this.pointerLocked;
+  }
+
+  /** Look-input diagnostics (a snapshot copy). */
+  public getLookStats(): LookInputStats {
+    return { ...this.lookStats };
   }
 
   public consumeLookDelta(): LookDelta {
@@ -190,13 +260,29 @@ export class InputManager {
   private readonly requestPointerLock = (): void => {
     if (this.disposed || this.pointerLocked) return;
     if (typeof this.canvas.requestPointerLock !== "function") return;
+    // Prefer raw, unaccelerated relative movement (no OS acceleration path,
+    // no absolute-position warping); fall back to the default lock where the
+    // option is unsupported.
+    const plain = (): void => {
+      try {
+        const request = this.canvas.requestPointerLock();
+        if (request && typeof (request as Promise<void>).catch === "function") {
+          (request as Promise<void>).catch(() => undefined);
+        }
+      } catch {
+        // Older engines: nothing to do.
+      }
+    };
     try {
-      const request = this.canvas.requestPointerLock();
-      if (request && typeof (request as Promise<void>).catch === "function") {
-        (request as Promise<void>).catch(() => undefined);
+      const request = (this.canvas.requestPointerLock as (options?: { unadjustedMovement?: boolean }) => unknown)({ unadjustedMovement: true });
+      if (request && typeof (request as Promise<void>).then === "function") {
+        (request as Promise<void>).then(
+          () => { this.lookStats.unadjustedMovement = true; },
+          () => { if (!this.disposed && !this.pointerLocked) plain(); },
+        );
       }
     } catch {
-      // Older engines: nothing to do.
+      plain();
     }
   };
 
@@ -205,6 +291,9 @@ export class InputManager {
     this.canvas.removeEventListener("click", this.requestPointerLock);
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
     this.canvas.removeEventListener("mouseup", this.handleMouseUp);
+    for (const type of NAVIGATION_MOUSE_EVENTS) window.removeEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    window.removeEventListener("contextmenu", this.suppressContextMenu, { capture: true });
+    this.detachMouseBinds();
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
     window.removeEventListener("blur", this.clearInput);
@@ -216,20 +305,15 @@ export class InputManager {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    if (MOVEMENT_CODES.has(event.code)) {
-      this.heldCodes.add(event.code);
-    }
-    if (event.code === JUMP_CODE && this.pointerLocked && !event.repeat) {
-      this.jumpPressed = true;
-    }
-    if (this.pointerLocked && !event.repeat) {
-      if (event.code === WEAPON_SLOT_1_CODE) {
-        this.weaponSlot1Pressed = true;
-      } else if (event.code === WEAPON_SLOT_2_CODE) {
-        this.weaponSlot2Pressed = true;
-      } else if (event.code === RELOAD_CODE) {
-        this.reloadPressed = true;
-      }
+    const actions = this.actions.actionsFor(event.code);
+    if (actions.length === 0) return;
+    this.heldCodes.add(event.code);
+    if (!this.pointerLocked || event.repeat) return;
+    for (const action of actions) {
+      if (action === "jump") this.jumpPressed = true;
+      else if (action === "weaponSlot1") this.weaponSlot1Pressed = true;
+      else if (action === "weaponSlot2") this.weaponSlot2Pressed = true;
+      else if (action === "reload") this.reloadPressed = true;
     }
   };
 
@@ -239,23 +323,72 @@ export class InputManager {
 
   private readonly handleMouseMove = (event: MouseEvent): void => {
     if (!this.pointerLocked) return;
-    this.lookDelta.x += event.movementX;
-    this.lookDelta.y += event.movementY;
+    const dx = Number.isFinite(event.movementX) ? event.movementX : 0;
+    const dy = Number.isFinite(event.movementY) ? event.movementY : 0;
+    const size = Math.max(Math.abs(dx), Math.abs(dy));
+    const now = typeof event.timeStamp === "number" && event.timeStamp > 0 ? event.timeStamp : null;
+    const elapsed = now !== null && this.lastLookEventMs !== null ? now - this.lastLookEventMs : null;
+    if (now !== null) this.lastLookEventMs = now;
+    if (size >= LOOK_SPIKE_MIN_PX && elapsed !== null && size / Math.max(elapsed, 1) > LOOK_SPIKE_MAX_PX_PER_MS) {
+      this.lookStats.rejectedSpikes += 1;
+      this.lookStats.maxRejectedPx = Math.max(this.lookStats.maxRejectedPx, size);
+      return;
+    }
+    this.lookStats.events += 1;
+    if (size > this.lookStats.maxEventPx) this.lookStats.maxEventPx = size;
+    this.lookDelta.x += dx;
+    this.lookDelta.y += dy;
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
-    if (event.button !== 0 || !this.pointerLocked) return;
+    if (!this.pointerLocked || !this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = true;
     this.firePressed = true;
   };
 
   private readonly handleMouseUp = (event: MouseEvent): void => {
-    if (event.button !== 0) return;
+    if (!this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = false;
   };
 
+  /** Other mouse binds (side buttons, …) drive actions exactly like keys. */
+  private readonly handleMouseBindPress = (code: string): void => {
+    if (this.actions.matches("primaryAction", code)) return;
+    this.handleKeyDown({ code, repeat: false } as KeyboardEvent);
+  };
+
+  private readonly handleMouseBindRelease = (code: string): void => {
+    this.heldCodes.delete(code);
+  };
+
+  /**
+   * The side buttons (DOM buttons 3/4) are the browser's back/forward: while
+   * the game holds pointer lock (or the press lands on the game canvas) their
+   * default action is cancelled so a build bind never navigates away.
+   */
+  /**
+   * The right mouse button is a gameplay bind (edit reset): no browser
+   * context menu while the game holds pointer lock or over the game canvas.
+   */
+  private readonly suppressContextMenu = (event: Event): void => {
+    if (this.pointerLocked || event.target === this.canvas) event.preventDefault();
+  };
+
+  private readonly suppressSideButtonNavigation = (event: Event): void => {
+    const button = (event as MouseEvent).button;
+    if (button !== 3 && button !== 4) return;
+    if (this.pointerLocked || event.target === this.canvas) event.preventDefault();
+  };
+
   private readonly handlePointerLockChange = (): void => {
+    const wasLocked = this.pointerLocked;
     this.pointerLocked = document.pointerLockElement === this.canvas;
+    if (this.pointerLocked && !wasLocked) {
+      this.lookStats.lockAcquisitions += 1;
+      // The first locked event is timed against the lock itself, so a
+      // lock-acquisition jump is judged by the same physical-rate rule.
+      this.lastLookEventMs = typeof performance !== "undefined" ? performance.now() : null;
+    }
     if (!this.pointerLocked) {
       this.clearInput();
     }

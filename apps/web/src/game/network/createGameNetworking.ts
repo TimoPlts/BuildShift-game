@@ -64,7 +64,17 @@ export function createGameNetworking(
   const client = new NetworkClient(options);
   const inputBatcher = new InputBatcher();
   const predictionOrchestrator = new PredictionOrchestrator();
+  client.onStateChange((state) => predictionOrchestrator.setBuildingState(state.building));
   const remotePlayerManager = new RemotePlayerManager();
+  // The existing ?devdiag=1 browser suite may inspect the live canonical
+  // objects without opening a second connection or retaining them after the
+  // runtime is disposed. WeakRef keeps this diagnostic hook non-owning.
+  if (typeof window !== "undefined" && new URLSearchParams(window.location.search).get("devdiag") === "1") {
+    (window as unknown as Record<string, unknown>).__buildshiftNetworking = {
+      client: new WeakRef(client),
+      inputBatcher: new WeakRef(inputBatcher),
+    };
+  }
   return {
     client,
     inputBatcher,

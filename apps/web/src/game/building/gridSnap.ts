@@ -31,9 +31,10 @@ import {
   BUILD_GRID,
   VERTICAL_MOVEMENT,
   getStructureConfig,
+  structureFootprintCells,
   type StructureConfig,
 } from "@buildshift/game-config";
-import type { BuildType, GridPosition } from "@buildshift/protocol";
+import type { BuildType, GridPosition, GridRotation } from "@buildshift/protocol";
 
 /** The ground reference Y coordinate (metres) structures rest on. */
 const GROUND_Y = VERTICAL_MOVEMENT.groundY;
@@ -97,36 +98,31 @@ export function gridKey(grid: GridPosition): string {
 
 /**
  * Enumerates every grid cell occupied by a structure of `buildType`
- * anchored at `grid`, per the footprint convention in the module header.
+ * anchored at `grid` with `rotation` (the shared, rotation-aware
+ * `structureFootprintCells` rule the server also uses: a ramp rotated 1 or 3
+ * runs along Z).
  */
 export function footprintCells(
   buildType: BuildType,
   grid: GridPosition,
+  rotation: GridRotation = 0,
 ): GridPosition[] {
-  const [w, h, d] = getFootprint(buildType);
-  const cells: GridPosition[] = [];
-  for (let i = 0; i < w; i += 1) {
-    for (let j = 0; j < h; j += 1) {
-      for (let k = 0; k < d; k += 1) {
-        cells.push({ x: grid.x + i, y: grid.y + j, z: grid.z + k });
-      }
-    }
-  }
-  return cells;
+  return structureFootprintCells(buildType, grid, rotation);
 }
 
 /**
  * Returns true when the footprints of two structures (each described by a
- * build type + anchor grid cell) share at least one grid cell.
+ * build type + anchor grid cell + optional rotation) share at least one grid
+ * cell.
  */
 export function footprintsOverlap(
-  a: { buildType: BuildType; grid: GridPosition },
-  b: { buildType: BuildType; grid: GridPosition },
+  a: { buildType: BuildType; grid: GridPosition; rotation?: GridRotation },
+  b: { buildType: BuildType; grid: GridPosition; rotation?: GridRotation },
 ): boolean {
   const occupied = new Set(
-    footprintCells(b.buildType, b.grid).map(gridKey),
+    footprintCells(b.buildType, b.grid, b.rotation).map(gridKey),
   );
-  return footprintCells(a.buildType, a.grid).some((cell) =>
+  return footprintCells(a.buildType, a.grid, a.rotation).some((cell) =>
     occupied.has(gridKey(cell)),
   );
 }

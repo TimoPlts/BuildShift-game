@@ -27,8 +27,14 @@ import type {
   GridRotation,
   StructureDurabilityState,
   StructureState,
+  StructureEditState,
 } from "@buildshift/protocol";
-import { isBuildType, isGridRotation, isBuildEditType, STRUCTURE_DURABILITY_LIMITS } from "@buildshift/protocol";
+import {
+  isBuildType,
+  isGridRotation,
+  STRUCTURE_DURABILITY_LIMITS,
+  deserializeEditState,
+} from "@buildshift/protocol";
 
 /**
  * The empty building state — used before the first room-state sync and
@@ -58,6 +64,65 @@ function readSafeInt(
   return typeof value === "number" && Number.isSafeInteger(value)
     ? value
     : undefined;
+}
+
+/**
+ * The expected edit-grid `kind` discriminator for a build type (the server's
+ * `editKind` field must match it when an edit grid is active).
+ */
+function expectedEditKind(buildType: StructureState["buildType"]): string | null {
+  switch (buildType) {
+    case "wall":
+      return "wall";
+    case "floor":
+    case "cone":
+      return "floor_cone";
+    case "ramp":
+      return "ramp";
+  }
+}
+
+/**
+ * Parses the replicated edit-grid fields (`editKind` / `editTiles` /
+ * `editRampVariant`) of one structure entry into a validated
+ * {@link StructureEditState}.
+ *
+ * This is a *superset* read, mirroring the durability parse: entries without
+ * the fields (or with `editKind` still empty — no edit grid active) yield
+ * `null`. Malformed grid data is dropped; production visuals never infer
+ * edited geometry from retired string edit fields.
+ */
+export function parseStructureEditGrid(
+  raw: unknown,
+  buildType: StructureState["buildType"],
+): StructureEditState | null {
+  if (!isRecord(raw)) {
+    return null;
+  }
+  const kind = typeof raw.editKind === "string" ? raw.editKind : "";
+  if (kind === "") {
+    return null;
+  }
+  const expected = expectedEditKind(buildType);
+  if (expected === null || kind !== expected) {
+    return null;
+  }
+  const data =
+    buildType === "ramp"
+      ? {
+          kind: "ramp",
+          variant: typeof raw.editRampVariant === "string" ? raw.editRampVariant : "",
+        }
+      : {
+          kind,
+          tiles: Array.isArray(raw.editTiles)
+            ? raw.editTiles
+            : raw.editTiles != null && typeof (raw.editTiles as Iterable<unknown>)[Symbol.iterator] === "function"
+              ? Array.from(raw.editTiles as Iterable<unknown>)
+              : [],
+        };
+  const parsed = deserializeEditState(data, buildType);
+  return parsed.ok ? parsed.value : null;
 }
 
 /**
@@ -99,10 +164,7 @@ export function parseStructureState(raw: unknown): StructureState | null {
     return null;
   }
   const grid: GridPosition = { x: gx, y: gy, z: gz };
-  const openings: StructureState["openings"] =
-    raw.editType === "door" ? [{ pattern: "door_top" }] :
-    raw.editType === "window" ? [{ pattern: "window_center" }] :
-    raw.editType === "half_bottom" ? [{ pattern: "half_bottom" }] : [];
+  const editGrid = parseStructureEditGrid(raw, raw.buildType as StructureState["buildType"]);
   return {
     structureId,
     buildType: raw.buildType,
@@ -110,8 +172,7 @@ export function parseStructureState(raw: unknown): StructureState | null {
     rotation: raw.rotation as GridRotation,
     ownerId,
     createdSequence,
-    ...(raw.editType === "" || isBuildEditType(raw.editType) ? { editType: raw.editType } : {}),
-    ...(typeof raw.editType === "string" ? { openings } : {}),
+    ...(editGrid !== null ? { editGrid } : {}),
   };
 }
 

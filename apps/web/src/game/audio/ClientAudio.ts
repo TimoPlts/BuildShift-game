@@ -18,7 +18,14 @@
  *  - `unlock()` — resume the AudioContext (also called automatically on
  *    first user interaction).
  *  - `playFire(weaponType)` — AR or shotgun fire sound.
- *  - `playHitConfirm()` — confirmed hit marker sound.
+ *  - `playHitConfirm(weaponType)` — confirmed hit marker sound. The
+ *    shotgun confirmation is a deeper, two-layer thud so it reads heavier
+ *    than the rifle's crisp tone while staying lightweight.
+ *  - `playBuildHit(weaponType)` — confirmed structure-hit tick (throttled:
+ *    at most one blast per 120 ms, so pellet bursts do not stack; an
+ *    independent guard from place/destroy). The shotgun tick is lower and
+ *    longer than the rifle's.
+ *  - `playWeaponSwitch()` — short blip on a successful local weapon switch.
  *  - `playBuildPlace()` — structure placement sound (throttled: at most
  *    one blast per 120 ms, so chain events do not stack).
  *  - `playBuildDestroy()` — structure destruction sound (throttled as
@@ -110,10 +117,11 @@ export class ClientAudio {
   private readonly _activeSources: Set<
     OscillatorNodeLike | BufferSourceNodeLike
   > = new Set();
-  /** Minimum gap between build place/destroy blasts (AudioContext clock). */
+  /** Minimum gap between build place/destroy/hit blasts (AudioContext clock). */
   private static readonly BUILD_SOUND_MIN_GAP_SECONDS = 0.12;
   private _lastBuildPlaceAt = -Infinity;
   private _lastBuildDestroyAt = -Infinity;
+  private _lastBuildHitAt = -Infinity;
   private _unlockPointerHandler: (() => void) | null = null;
   private _unlockKeyHandler: (() => void) | null = null;
 
@@ -157,13 +165,54 @@ export class ClientAudio {
     }
   }
 
-  /** Play the confirmed-hit sound. */
-  public playHitConfirm(): void {
+  /**
+   * Play the confirmed-hit sound for `weaponType`. The rifle keeps a single
+   * crisp tone that sits slightly above fire noise; the shotgun layers a
+   * deeper thud under the same tick so a shotgun hit reads heavier without
+   * adding length or volume beyond the rifle's.
+   */
+  public playHitConfirm(weaponType: WeaponType): void {
     if (this._disposed || !this._unlocked) return;
     const ctx = this._ctx;
     if (!ctx) return;
-    // Sits slightly above fire noise so the marker reads through gunfire.
-    this._playTone(880, 0.05, "sine", 0.35);
+    if (weaponType === "shotgun") {
+      // Deep thud under the tick: weight without masking the confirm.
+      this._playTone(160, 0.09, "sine", 0.35);
+      this._playTone(1320, 0.03, "sine", 0.2, 0.01);
+    } else {
+      // assault_rifle: crisp single tone.
+      this._playTone(880, 0.05, "sine", 0.35);
+    }
+  }
+
+  /**
+   * Play the confirmed structure-hit tick for `weaponType`. Throttled like
+   * the other build sounds so a shotgun pellet burst does not stack ticks.
+   */
+  public playBuildHit(weaponType: WeaponType): void {
+    if (this._disposed || !this._unlocked) return;
+    const ctx = this._ctx;
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    if (now - this._lastBuildHitAt < ClientAudio.BUILD_SOUND_MIN_GAP_SECONDS) {
+      return;
+    }
+    this._lastBuildHitAt = now;
+    if (weaponType === "shotgun") {
+      // Lower, longer clunk for the heavier weapon.
+      this._playTone(220, 0.07, "triangle", 0.3);
+    } else {
+      // assault_rifle: short sharp tick.
+      this._playTone(520, 0.04, "triangle", 0.25);
+    }
+  }
+
+  /** Play a short blip on a successful local weapon switch. */
+  public playWeaponSwitch(): void {
+    if (this._disposed || !this._unlocked) return;
+    const ctx = this._ctx;
+    if (!ctx) return;
+    this._playTone(600, 0.04, "square", 0.18);
   }
 
   /** Play the build placement sound. */
@@ -269,6 +318,7 @@ export class ClientAudio {
     // A fresh round/reconnect may immediately play build sounds.
     this._lastBuildPlaceAt = -Infinity;
     this._lastBuildDestroyAt = -Infinity;
+    this._lastBuildHitAt = -Infinity;
   }
 
   /**

@@ -24,18 +24,33 @@
 /**
  * The grid-snapping lattice for structure placement.
  *
- * A build cell is a `cellSize` × `cellSize` (metres) square in the X/Z plane,
- * stacked in layers of `layerHeight` metres. `groundLayer` is the index of the
- * lowest buildable layer (the layer whose base sits on the ground). The client
- * snaps its placement preview to this lattice and the server validates a
- * placement against it; both derive a cell's world-space position from the
- * shared cell size / layer height so they cannot drift.
+ * This is the **canonical modular build geometry**: one shared, authoritative
+ * definition of the build lattice that the client (preview snapper, renderer,
+ * selection, placement offsets) and the authoritative server (validator,
+ * collision collider placement) both consume so they can never drift.
+ *
+ * The modular unit is a `cellSize` × `cellSize` (metres) square in the X/Z
+ * plane — approximately **5.12 m** per cell — stacked in layers of
+ * `layerHeight` metres — approximately **3.84 m** per layer. The cell and the
+ * layer keep a clean 4:3 ratio (5.12 : 3.84), so the grid reads as a coherent
+ * modular set. `groundLayer` is the index of the lowest buildable layer (the
+ * layer whose base sits on the ground). The client snaps its placement preview
+ * to this lattice and the server validates a placement against it; both derive
+ * a cell's world-space position from the shared cell size / layer height, so
+ * the wall/ramp **rise is exactly one layer (≈ 3.84 m)** on both sides.
  */
 export const BUILD_GRID = {
-  /** Size of a single build cell in the X/Z plane, in metres. */
-  cellSize: 2,
-  /** Height of a single build layer, in metres (distance between layer bases). */
-  layerHeight: 1.5,
+  /**
+   * Size of a single build cell in the X/Z plane, in metres. The canonical
+   * modular cell is ≈ 5.12 m wide.
+   */
+  cellSize: 5.12,
+  /**
+   * Height of a single build layer, in metres (distance between layer bases).
+   * The canonical modular layer is ≈ 3.84 m; a wall or ramp that rises one
+   * layer therefore rises ≈ 3.84 m.
+   */
+  layerHeight: 3.84,
   /** The index of the ground layer (the lowest buildable layer). */
   groundLayer: 0,
 } as const;
@@ -47,25 +62,27 @@ export const BUILD_GRID = {
  *
  * A placement is valid only when every cell its footprint occupies lies
  * within `[minX..maxX] × [minLayer..maxLayer] × [minZ..maxZ]` (inclusive).
- * The bounds are symmetric on X/Z and match the 30 m × 30 m arena ground:
- * 15 cells × 2 m/cell = 30 m.
+ * The bounds are symmetric on X/Z and are sized so the build volume fits
+ * within the 30 m × 30 m arena ground: with ≈ 5.12 m cells, 5 cells span
+ * 25.6 m (leaving a margin inside the arena). Vertically the volume allows
+ * three ≈ 3.84 m layers (11.52 m).
  *
  * Both the client preview snapper and the authoritative server validator
  * reference these same bounds so they cannot drift.
  */
 export const BUILD_BOUNDS = {
   /** Minimum cell index along world X. */
-  minX: -7,
+  minX: -2,
   /** Maximum cell index along world X. */
-  maxX: 7,
+  maxX: 2,
   /** Minimum cell index along world Z. */
-  minZ: -7,
+  minZ: -2,
   /** Maximum cell index along world Z. */
-  maxZ: 7,
+  maxZ: 2,
   /** Minimum (lowest) buildable layer index. */
   minLayer: 0,
   /** Maximum (highest) buildable layer index. */
-  maxLayer: 6,
+  maxLayer: 2,
 } as const;
 
 // ─────────────────────────── Range configuration ─────────────────────────────
@@ -121,8 +138,8 @@ export interface StructureConfig {
   buildType: BuildStructureKey;
   /**
    * Grid footprint in build cells: `[width (x), height (y), depth (z)]`,
-   * measured in the units of {@link BUILD_GRID} (cellSize per x/z cell,
-   * layerHeight per y layer). The footprint is how many grid cells the
+   * measured in the units of {@link BUILD_GRID} (≈ 5.12 m per x/z cell,
+   * ≈ 3.84 m per y layer). The footprint is how many grid cells the
    * structure occupies when placed at its anchor cell.
    */
   footprint: [number, number, number];
@@ -139,12 +156,20 @@ export interface StructureConfig {
 /**
  * The per-kind building tuning.
  *
- *  - **wall** — a vertical barrier: 1 cell wide (2 m), 2 layers tall (3 m),
- *   1 deep (2 m), and rotatable in 4 cardinal directions.
- * - **floor** — a single-cell platform (2 m × 1.5 m × 2 m); rotation-invariant.
- * - **ramp** — a two-cell-long (4 m) incline spanning one layer (1.5 m);
- *   rotatable in 4 cardinal directions.
- * - **cone** — a single-cell point/fixture (2 m × 1.5 m × 2 m); rotation-invariant.
+ * All four kinds are built from the same ≈ 5.12 m × ≈ 3.84 m modular cell,
+ * with thin surfaces (the renderer presents walls as thin panels, floors as
+ * thin slabs, ramps as low inclines — see `BuildStructureRenderer`): the
+ * authoritative footprint/collider stays the full cell so gameplay and
+ * authority are unchanged, while the visual reads as a thin surface.
+ *
+ *  - **wall** — a vertical barrier one cell wide (≈ 5.12 m) and one layer
+ *   tall (≈ 3.84 m rise), rotatable in 4 cardinal directions.
+ * - **floor** — a single-cell platform (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
+ *   rotation-invariant.
+ * - **ramp** — a one-tile (≈ 5.12 m) thin stepped incline rising one layer
+ *   (≈ 3.84 m), rotatable in 4 cardinal directions.
+ * - **cone** — a single-cell point/fixture (≈ 5.12 m × ≈ 3.84 m × ≈ 5.12 m);
+ *   rotation-invariant.
  *
  * Consumers look a structure up by build type via {@link getStructureConfig};
  * additional structure kinds can be appended to {@link BUILD_STRUCTURE_KEYS}
@@ -154,7 +179,7 @@ export interface StructureConfig {
 export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
   wall: {
     buildType: "wall",
-    footprint: [1, 2, 1],
+    footprint: [1, 1, 1],
     cost: 10,
     rotationCount: 4,
   },
@@ -166,7 +191,7 @@ export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
   },
   ramp: {
     buildType: "ramp",
-    footprint: [2, 1, 1],
+    footprint: [1, 1, 1],
     cost: 8,
     rotationCount: 4,
   },
@@ -187,4 +212,185 @@ export const STRUCTURES: Record<BuildStructureKey, StructureConfig> = {
  */
 export function getStructureConfig(buildType: string): StructureConfig | undefined {
   return (STRUCTURES as Record<string, StructureConfig>)[buildType];
+}
+
+// ───────────────────────── Canonical placement rules ─────────────────────────
+//
+// Shared by the client placement preview and the authoritative server
+// placement validator, so the two cannot disagree about which rotation a
+// placement carries, which cells it occupies, or whether it fits the build
+// volume.
+
+/** A grid cell / anchor in build-cell coordinates. */
+export interface BuildCell {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/**
+ * The canonical rotation a placement of `buildType` carries when the player
+ * has the quarter turn `selectedRotation` (0–3) selected: the selection taken
+ * modulo the kind's {@link StructureConfig.rotationCount}. Rotatable kinds
+ * (`rotationCount` 4: wall, ramp) keep the selected quarter turn;
+ * rotation-invariant kinds (`rotationCount` 1: floor, cone) always place with
+ * rotation 0, whatever was selected for a previous piece.
+ */
+export function normalizePlacementRotation(buildType: string, selectedRotation: number): number {
+  const count = getStructureConfig(buildType)?.rotationCount ?? 1;
+  return ((selectedRotation % count) + count) % count;
+}
+
+/**
+ * Whether `rotation` is a canonical placement rotation for `buildType`: an
+ * integer in `[0, rotationCount)`. The server rejects any other rotation.
+ */
+export function isValidPlacementRotation(buildType: string, rotation: number): boolean {
+  const cfg = getStructureConfig(buildType);
+  return cfg !== undefined && Number.isInteger(rotation) && rotation >= 0 && rotation < cfg.rotationCount;
+}
+
+/**
+ * Footprint extents in cells after rotation: rotations 1 and 3 swap the X/Z
+ * extents (a ramp then runs along Z), 0 and 2 keep them.
+ */
+export function rotatedFootprintExtents(cfg: StructureConfig, rotation: number): { xs: number; ys: number; zs: number } {
+  const [w, h, d] = cfg.footprint;
+  return rotation === 1 || rotation === 3 ? { xs: d, ys: h, zs: w } : { xs: w, ys: h, zs: d };
+}
+
+/**
+ * Every grid cell occupied by a `buildType` placed at anchor `grid` with
+ * `rotation`: the anchor plus the next cells along the positive axes.
+ * Unknown kinds occupy just the anchor cell.
+ */
+export function structureFootprintCells(buildType: string, grid: BuildCell, rotation: number): BuildCell[] {
+  const cfg = getStructureConfig(buildType);
+  const { xs, ys, zs } = cfg ? rotatedFootprintExtents(cfg, rotation) : { xs: 1, ys: 1, zs: 1 };
+  const cells: BuildCell[] = [];
+  for (let a = 0; a < xs; a++) for (let b = 0; b < ys; b++) for (let c = 0; c < zs; c++) cells.push({ x: grid.x + a, y: grid.y + b, z: grid.z + c });
+  return cells;
+}
+
+/** Whether every cell of the placement lies inside {@link BUILD_BOUNDS}. */
+export function isWithinBuildBounds(buildType: string, grid: BuildCell, rotation: number): boolean {
+  return structureFootprintCells(buildType, grid, rotation).every((c) =>
+    c.x >= BUILD_BOUNDS.minX && c.x <= BUILD_BOUNDS.maxX &&
+    c.z >= BUILD_BOUNDS.minZ && c.z <= BUILD_BOUNDS.maxZ &&
+    c.y >= BUILD_BOUNDS.minLayer && c.y <= BUILD_BOUNDS.maxLayer);
+}
+
+/**
+ * The world-space point a placement's range is measured to: the anchor
+ * cell's base corner `(x·cellSize, y·layerHeight, z·cellSize)`.
+ */
+export function placementAnchorWorld(grid: BuildCell): BuildCell {
+  return { x: grid.x * BUILD_GRID.cellSize, y: grid.y * BUILD_GRID.layerHeight, z: grid.z * BUILD_GRID.cellSize };
+}
+
+/**
+ * Whether a player at `player` (feet position) may place at anchor `grid`:
+ * the full 3D distance to {@link placementAnchorWorld} is at most
+ * {@link BUILD_RANGE.maxPlacementDistance}. The server rejects anything
+ * farther with `out_of_range`.
+ */
+export function isWithinPlacementRange(player: BuildCell, grid: BuildCell): boolean {
+  const a = placementAnchorWorld(grid);
+  return Math.hypot(player.x - a.x, player.y - a.y, player.z - a.z) <= BUILD_RANGE.maxPlacementDistance;
+}
+
+// ─────────────────────────── Canonical build slots ───────────────────────────
+//
+// Placement occupancy is per structural SLOT, not per whole cell, so
+// Fortnite-style combinations coexist in one tile: a floor (the tile's
+// horizontal plane at its layer base), a ramp, a cone, and up to four walls
+// on the tile's edges. Only the SAME slot conflicts.
+//
+// Walls are edge pieces: a wall at tile `grid` with rotation r stands on the
+// tile's edge r0 = −Z, r1 = +X, r2 = +Z, r3 = −X. The two tiles that share an
+// edge name it by ONE canonical key, so a wall cannot be placed twice on the
+// same physical edge from either side:
+//
+//   - edges spanning X (r0 / r2): `wall-z:<x>,<y>,<boundary z>` where the
+//     boundary is the larger tile z on either side (r0 → z, r2 → z + 1);
+//   - edges spanning Z (r1 / r3): `wall-x:<boundary x>,<y>,<z>` (r3 → x,
+//     r1 → x + 1).
+
+/** The canonical slot keys a structure occupies. */
+export function structureSlots(buildType: string, grid: BuildCell, rotation: number): string[] {
+  if (buildType === "wall") {
+    const r = ((rotation % 4) + 4) % 4;
+    if (r === 0 || r === 2) return [`wall-z:${grid.x},${grid.y},${grid.z + (r === 2 ? 1 : 0)}`];
+    return [`wall-x:${grid.x + (r === 1 ? 1 : 0)},${grid.y},${grid.z}`];
+  }
+  const channel = buildType === "floor" ? "floor" : buildType === "ramp" ? "ramp" : buildType === "cone" ? "cone" : buildType;
+  return structureFootprintCells(buildType, grid, rotation).map((c) => `${channel}:${c.x},${c.y},${c.z}`);
+}
+
+/** Whether two placements share any canonical slot (i.e. would conflict). */
+export function slotsConflict(
+  a: { buildType: string; grid: BuildCell; rotation: number },
+  b: { buildType: string; grid: BuildCell; rotation: number },
+): boolean {
+  const taken = new Set(structureSlots(b.buildType, b.grid, b.rotation));
+  return structureSlots(a.buildType, a.grid, a.rotation).some((key) => taken.has(key));
+}
+
+/**
+ * The wall rotation (edge) of tile `grid` nearest to the world point
+ * `(x, z)` — walls snap to the edge the player aims at.
+ */
+export function wallEdgeRotation(grid: BuildCell, x: number, z: number): number {
+  const ox = x - grid.x * BUILD_GRID.cellSize;
+  const oz = z - grid.z * BUILD_GRID.cellSize;
+  if (Math.abs(ox) > Math.abs(oz)) return ox > 0 ? 1 : 3;
+  return oz > 0 ? 2 : 0;
+}
+
+/**
+ * The wall rotation for a LOCKED wall orientation at world point `(x, z)` of
+ * tile `grid`: the selected rotation fixes the wall's axis (r0/r2 stand on
+ * the tile's Z edges, r1/r3 on its X edges); of the two parallel edges, the
+ * one nearer the point is used. The orientation therefore never follows the
+ * camera — only an explicit rotate (or a new equip) changes it.
+ */
+export function wallEdgeForOrientation(grid: BuildCell, x: number, z: number, rotation: number): number {
+  const r = ((rotation % 4) + 4) % 4;
+  if (r === 0 || r === 2) return z - grid.z * BUILD_GRID.cellSize > 0 ? 2 : 0;
+  return x - grid.x * BUILD_GRID.cellSize > 0 ? 1 : 3;
+}
+
+/**
+ * The canonical quarter turn (0–3) nearest a facing yaw (the camera
+ * convention: yaw 0 faces −Z, +π/2 faces +X, ±π faces +Z, −π/2 faces −X).
+ * Deterministic for any finite yaw (exact diagonals round toward +yaw).
+ */
+export function quarterTurnFromYaw(yaw: number): number {
+  const q = Math.round(yaw / (Math.PI / 2));
+  return (((q % 4) + 4) % 4) + 0;
+}
+
+/**
+ * The rotation a build piece starts with when it is EQUIPPED while the player
+ * faces `yaw` (it then stays locked until an explicit rotate):
+ *  - wall: the edge ahead (wall rotation = the edge's outward direction);
+ *  - ramp: rising away from the player (ramp rotation 0 rises +X, 1 +Z,
+ *    2 −X, 3 −Z);
+ *  - floor / cone: rotation-invariant (0).
+ */
+export function facingPlacementRotation(buildType: string, yaw: number): number {
+  const q = quarterTurnFromYaw(yaw); // 0 −Z, 1 +X, 2 +Z, 3 −X
+  if (buildType === "wall") return q;
+  if (buildType === "ramp") return (q + 3) % 4;
+  return normalizePlacementRotation(buildType, 0);
+}
+
+/**
+ * The build tile containing world point `(x, z)` on layer `layer`: tiles are
+ * centred on `grid × cellSize` (the canonical geometry convention), so the
+ * nearest tile centre wins.
+ */
+export function buildCellAt(x: number, z: number, layer: number): BuildCell {
+  // `+ 0` normalizes −0 (Math.round of a small negative) to 0.
+  return { x: Math.round(x / BUILD_GRID.cellSize) + 0, y: layer, z: Math.round(z / BUILD_GRID.cellSize) + 0 };
 }

@@ -11,8 +11,11 @@
  *    transition for clear rejected-placement feedback.
  *  - Render authoritative structures replicated from the server
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
- *  - Play a short construction pop-in animation plus a brief emissive
- *    confirmation glow when a structure is authoritatively accepted.
+ *  - Play the original BuildShift construction presentation when a
+ *    structure is authoritatively accepted: a short, transparent,
+ *    lightweight build-up (semi-transparent shell solidifying to full
+ *    opacity) plus a scale-in pop and a brief emissive confirmation glow.
+ *    The durability tint and hit flashes remain readable while it plays.
  *  - Tint structure meshes to reflect their authoritative durability
  *    (damage) state using a non-linear curve, with a brief white+emissive
  *    flash on each hit and a deterministic warning pulse when nearly broken.
@@ -45,11 +48,12 @@
 
 import type { Scene, Observer } from "@babylonjs/core";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig } from "@buildshift/game-config";
+import { BUILD_GRID, getStructureConfig, structureCuboids } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -61,7 +65,6 @@ import type {
 import {
   createConstructionEffects,
   createDestructionEffects,
-  startEditTransition,
   triggerHitFlash,
   composeVisualInto,
   createComposedVisual,
@@ -103,23 +106,12 @@ function getFootprintWorldDims(buildType: BuildType): [number, number, number] {
 function getEffectiveHeight(buildType: BuildType): number {
   const [, h] = getFootprintWorldDims(buildType);
   if (buildType === "floor") return 0.15;
-  if (buildType === "ramp") return h * 0.6;
   return h;
 }
 
 function rotationToYAxis(rotation: GridRotation): number {
   const steps = [0, -Math.PI / 2, Math.PI, Math.PI / 2];
   return steps[rotation] ?? 0;
-}
-
-/**
- * Centre offset (metres) for a half-wall edit pose: a quarter of the
- * structure's full world height, so the scaled half sits exactly in the top
- * or bottom half of the structure's volume. Walls are 2 layers tall, so
- * this equals `layerHeight / 2`.
- */
-function halfWallPoseOffset(buildType: BuildType): number {
-  return getFootprintWorldDims(buildType)[1] / 4;
 }
 
 // ─── Color lerp helper ─────────────────────────────────────────────────────
@@ -136,11 +128,11 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 // ─── Mesh factory per build type ───────────────────────────────────────────
 
 /**
- * Create a structure mesh with improved silhouettes:
- *  - wall: a thin panel (reduced depth) for visual distinction from solid blocks
- *  - floor: a thin slab
- *  - ramp: a reduced-height box suggesting an incline
- *  - cone: a pointed cone (cylinder with near-zero top diameter)
+ * Create the placement-preview ghost: exactly the canonical default solids
+ * for this build type, grid cell and rotation (the same `structureCuboids`
+ * the permanent renderer, collision and hitscan use). The root sits at the
+ * anchor (+ half the effective height) with no rotation of its own — the
+ * rotation is part of the canonical shape — and each solid is a child box.
  */
 function createStructureMesh(
   scene: Scene,
@@ -150,48 +142,22 @@ function createStructureMesh(
   rotation: GridRotation,
 ): AbstractMesh {
   const worldPos = gridToWorld(grid);
-  const [w, h, d] = getFootprintWorldDims(buildType);
-  let mesh: AbstractMesh;
-
-  switch (buildType) {
-    case "wall":
-      // Thin panel: 15% of cell depth to read as a wall, not a block.
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d * 0.15 }, scene);
-      break;
-    case "floor":
-      // Thin slab at the base of the cell.
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: 0.15, depth: d }, scene);
-      break;
-    case "ramp":
-      // Reduced-height box suggesting an incline across the footprint.
-      mesh = MeshBuilder.CreateBox(name, { width: w, height: h * 0.6, depth: d }, scene);
-      break;
-    case "cone":
-      mesh = MeshBuilder.CreateCylinder(name, {
-        height: h,
-        diameterTop: 0.01,
-        diameterBottom: w,
-        tessellation: 12,
-      }, scene);
-      break;
-    default:
-      mesh = MeshBuilder.CreateBox(name, { width: 1, height: 1, depth: 1 }, scene);
+  const root = new Mesh(name, scene);
+  root.position = new Vector3(worldPos.x, worldPos.y + getEffectiveHeight(buildType) / 2, worldPos.z);
+  root.isPickable = false;
+  root.checkCollisions = false;
+  for (const [index, { center, halfExtents }] of structureCuboids({ buildType, grid, rotation }).entries()) {
+    const part = MeshBuilder.CreateBox(`${name}-solid-${index}`, {
+      width: halfExtents.x * 2,
+      height: halfExtents.y * 2,
+      depth: halfExtents.z * 2,
+    }, scene);
+    part.parent = root;
+    part.position.set(center.x - root.position.x, center.y - root.position.y, center.z - root.position.z);
+    part.isPickable = false;
+    part.checkCollisions = false;
   }
-
-  const effectiveHeight = getEffectiveHeight(buildType);
-  mesh.position = new Vector3(
-    worldPos.x,
-    worldPos.y + effectiveHeight / 2,
-    worldPos.z,
-  );
-
-  if (rotation !== 0) {
-    mesh.rotation.y = rotationToYAxis(rotation);
-  }
-  mesh.isPickable = false;
-  mesh.checkCollisions = false;
-
-  return mesh;
+  return root;
 }
 
 // ─── Material palette ──────────────────────────────────────────────────────
@@ -248,6 +214,18 @@ const CONFIRM_GLOW = [0.75, 0.6, 0.25] as const;
 /** Emissive boost (RGB) applied while a structure is the aimed build-edit target. */
 const EDIT_TARGET_EMISSIVE_BOOST = [0.18, 0.38, 0.22] as const;
 
+/**
+ * Subtle emissive accent (RGB) for structures owned by the local player.
+ * Applied on top of the base emissive so the owner is distinguishable at a
+ * glance without overwhelming the damage tint or hit-flash readability.
+ */
+const LOCAL_OWNER_ACCENT: readonly [number, number, number] = [0.02, 0.06, 0.02];
+/**
+ * Subtle emissive accent (RGB) for structures owned by a remote player.
+ * Warm-shifted to contrast with the local player's cool-green accent.
+ */
+const REMOTE_OWNER_ACCENT: readonly [number, number, number] = [0.05, 0.02, 0.01];
+
 /** Ghost colour for the half-wall result preview (pre-confirmation). */
 const EDIT_PREVIEW_COLOR = new Color3(0.3, 0.95, 0.6);
 /** Opacity of the half-wall result preview ghost. */
@@ -273,6 +251,11 @@ interface StructureRuntime {
   baseDiffuse: Color3;
   /** True when the material/mesh needs one more tick after a state change. */
   dirty: boolean;
+  /** The authoritative session ID of the player who placed this structure. */
+  ownerId: string;
+  /** Whether the structure belongs to the local player (drives the ownership accent). */
+  isLocalOwner: boolean;
+  geometryKey: string;
 }
 
 /**
@@ -285,7 +268,49 @@ interface StructureFingerprint {
   y: number;
   z: number;
   rotation: GridRotation;
-  editType: string | undefined;
+  geometryKey: string;
+}
+
+function geometryKey(structure: StructureState): string {
+  const edit = structure.editGrid;
+  const state = edit?.kind === "ramp"
+    ? `r:${edit.variant}`
+    : edit ? `t:${edit.tiles.map((value) => value ? "1" : "0").join("")}` : "default";
+  return `${structure.buildType}:${structure.rotation}:${state}`;
+}
+
+/** A non-rendered root carries the existing effects/material. Child boxes are
+ * exactly the canonical solid volumes, relative to the anchored root pose. */
+function createReplicatedMesh(scene: Scene, structure: StructureState): AbstractMesh {
+  const root = new Mesh(`structure-${structure.structureId}`, scene);
+  root.isPickable = false;
+  root.checkCollisions = false;
+  fillReplicatedMesh(scene, root, structure);
+  return root;
+}
+
+function fillReplicatedMesh(scene: Scene, root: AbstractMesh, structure: StructureState): void {
+  for (const child of root.getChildMeshes(false)) child.dispose();
+  const base = gridToWorld(structure.grid);
+  const baseY = base.y + getEffectiveHeight(structure.buildType) / 2;
+  for (const [index, cuboid] of structureCuboids({
+    buildType: structure.buildType,
+    grid: structure.grid,
+    rotation: structure.rotation,
+    editGrid: structure.editGrid,
+  }).entries()) {
+    const { center, halfExtents } = cuboid;
+    const part = MeshBuilder.CreateBox(`build-solid-${structure.structureId}-${index}`, {
+      width: halfExtents.x * 2,
+      height: halfExtents.y * 2,
+      depth: halfExtents.z * 2,
+    }, scene);
+    part.parent = root;
+    part.position.set(center.x - base.x, center.y - baseY, center.z - base.z);
+    part.material = root.material;
+    part.isPickable = false;
+    part.checkCollisions = false;
+  }
 }
 
 // ─── BuildStructureRenderer ────────────────────────────────────────────────
@@ -303,6 +328,8 @@ export class BuildStructureRenderer {
   private previewMesh: AbstractMesh | null = null;
   private previewMaterial: StandardMaterial | null = null;
   private previewBuildType: BuildType | null = null;
+  /** Rotation the current ghost was built for (the shape depends on it). */
+  private previewRotation: GridRotation | null = null;
   /** Whether the current preview candidate is valid (drives pulse styling). */
   private previewValid = true;
   /** Target world position the ghost eases toward (set by showPreview). */
@@ -324,10 +351,17 @@ export class BuildStructureRenderer {
   /** The structure the half-wall result preview is shown for (self-cleanup). */
   private editPreviewStructureId: string | null = null;
 
+  /**
+   * The local player's session ID. Structures owned by this session receive
+   * the local-owner accent; all others receive the remote-owner accent.
+   * Set by the GameRuntime when the connection is established.
+   */
+  private localSessionId: string | null = null;
+
   private structures = new Map<string, StructureRuntime>();
 
   /** Structures awaiting destruction animation completion before mesh disposal. */
-  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3 }>();
+  private pendingDestruction = new Map<string, { mesh: AbstractMesh; material: StandardMaterial; effects: StructureEffects; scaleY: number; baseEmissive: Color3; /** Composed visual alpha at destruction start (interrupted build-ups fade from their current transparency instead of popping to opaque). */ startAlpha: number }>();
 
   /**
    * Fingerprint of the last synced state (keyed by structureId). Lets the
@@ -369,12 +403,13 @@ export class BuildStructureRenderer {
       worldPos.y + effectiveHeight / 2,
       worldPos.z,
     );
-    this.previewTargetRotY = rotation === 0 ? 0 : rotationToYAxis(rotation);
+    // The canonical ghost already encodes its rotation (see createStructureMesh).
+    this.previewTargetRotY = 0;
     const color = valid ? PREVIEW_VALID_COLOR : PREVIEW_INVALID_COLOR;
 
     const hadPreview = this.previewMesh !== null;
 
-    if (this.previewMesh && this.previewBuildType !== buildType) {
+    if (this.previewMesh && (this.previewBuildType !== buildType || this.previewRotation !== rotation)) {
       this.disposePreview();
     }
 
@@ -392,12 +427,14 @@ export class BuildStructureRenderer {
       mat.emissiveColor = color;
       mat.specularColor = new Color3(0, 0, 0);
       mesh.material = mat;
+      for (const part of mesh.getChildMeshes()) part.material = mat;
       // Snap directly to the target on first appearance.
       mesh.position.copyFrom(this.previewTargetPos);
       mesh.rotation.y = this.previewTargetRotY;
       this.previewMesh = mesh;
       this.previewMaterial = mat;
       this.previewBuildType = buildType;
+      this.previewRotation = rotation;
       this.createPreviewCellMarker(worldPos.x, worldPos.z, color);
     } else {
       // Re-target: the render tick eases the ghost toward the new cell and
@@ -529,6 +566,7 @@ export class BuildStructureRenderer {
       this.previewCellMaterial = null;
     }
     this.previewBuildType = null;
+    this.previewRotation = null;
     this.previewValid = true;
     this.previewDeniedBlink = null;
   }
@@ -584,7 +622,7 @@ export class BuildStructureRenderer {
           fp.y !== s.grid.y ||
           fp.z !== s.grid.z ||
           fp.rotation !== s.rotation ||
-          fp.editType !== s.editType
+          fp.geometryKey !== geometryKey(s)
         ) {
           identical = false;
         }
@@ -604,7 +642,7 @@ export class BuildStructureRenderer {
       if (!existing) {
         this.createStructure(structure, now);
       } else {
-        this.updateStructure(existing, structure, now);
+    this.updateStructure(existing, structure);
       }
     }
 
@@ -635,8 +673,28 @@ export class BuildStructureRenderer {
         y: structure.grid.y,
         z: structure.grid.z,
         rotation: structure.rotation,
-        editType: structure.editType,
+        geometryKey: geometryKey(structure),
       });
+    }
+  }
+
+  /**
+   * Set the local player's session ID so structures can be tinted with an
+   * ownership accent. Structures whose `ownerId` matches this session get
+   * the local-owner accent; all others get the remote-owner accent.
+   *
+   * When the session ID changes (reconnect), the accent is recomputed for
+   * every live structure and the materials are marked dirty so the next
+   * tick applies the new accent. Safe to call with `null` (clears all
+   * local-owner accents — every structure becomes "remote").
+   */
+  public setLocalSessionId(sessionId: string | null): void {
+    if (this.disposed) return;
+    if (sessionId === this.localSessionId) return;
+    this.localSessionId = sessionId;
+    for (const runtime of this.structures.values()) {
+      runtime.isLocalOwner = sessionId !== null && runtime.ownerId === sessionId;
+      runtime.dirty = true;
     }
   }
 
@@ -705,13 +763,7 @@ export class BuildStructureRenderer {
   // ─── Private: structure lifecycle ────────────────────────────────────────
 
   private createStructure(structure: StructureState, now: number): void {
-    const mesh = createStructureMesh(
-      this.scene,
-      `structure-${structure.structureId}`,
-      structure.buildType,
-      structure.grid,
-      structure.rotation,
-    );
+    const mesh = createReplicatedMesh(this.scene, structure);
     const mat = new StandardMaterial(
       `structure-material-${structure.structureId}`,
       this.scene,
@@ -725,21 +777,9 @@ export class BuildStructureRenderer {
     mat.emissiveColor = SOLID_EMISSIVE.clone();
     mat.specularColor = new Color3(0.15, 0.15, 0.15);
     mesh.material = mat;
+    for (const child of mesh.getChildMeshes(false)) child.material = mat;
 
     const effects = createConstructionEffects(now);
-
-    // Compute initial edit pose
-    let targetScaleY = 1;
-    let targetYOffset = 0;
-    if (structure.buildType === "wall") {
-      if (structure.editType === "half_top") {
-        targetScaleY = 0.5;
-        targetYOffset = halfWallPoseOffset("wall");
-      } else if (structure.editType === "half_bottom") {
-        targetScaleY = 0.5;
-        targetYOffset = -halfWallPoseOffset("wall");
-      }
-    }
 
     const baseColor = SOLID_COLORS[structure.buildType] ?? new Color3(0.5, 0.5, 0.5);
     const runtime: StructureRuntime = {
@@ -747,19 +787,22 @@ export class BuildStructureRenderer {
       material: mat,
       buildType: structure.buildType,
       effects,
-      targetScaleY,
-      targetYOffset,
+      targetScaleY: 1,
+      targetYOffset: 0,
       grid: { ...structure.grid },
       durability: null,
       prevDurability: 0,
       baseDiffuse: baseColor.clone(),
       dirty: true,
+      ownerId: structure.ownerId,
+      isLocalOwner: this.localSessionId !== null && structure.ownerId === this.localSessionId,
+      geometryKey: geometryKey(structure),
     };
 
     this.structures.set(structure.structureId, runtime);
   }
 
-  private updateStructure(runtime: StructureRuntime, structure: StructureState, now: number): void {
+  private updateStructure(runtime: StructureRuntime, structure: StructureState): void {
     // Update grid position (may have moved) — written in place (the runtime
     // owns its grid object; the protocol state is re-read fresh each sync).
     const grid = runtime.grid;
@@ -772,32 +815,11 @@ export class BuildStructureRenderer {
       runtime.dirty = true;
     }
 
-    // Compute the target edit pose
-    let targetScaleY = 1;
-    let targetYOffset = 0;
-    if (structure.buildType === "wall") {
-      if (structure.editType === "half_top") {
-        targetScaleY = 0.5;
-        targetYOffset = halfWallPoseOffset("wall");
-      } else if (structure.editType === "half_bottom") {
-        targetScaleY = 0.5;
-        targetYOffset = -halfWallPoseOffset("wall");
-      }
-    }
-
-    // If the edit pose changed, start a smooth transition
-    if (targetScaleY !== runtime.targetScaleY || targetYOffset !== runtime.targetYOffset) {
-      startEditTransition(
-        runtime.effects,
-        // The "from" is the current target (where we're visually at or transitioning to)
-        runtime.targetScaleY,
-        runtime.targetYOffset,
-        targetScaleY,
-        targetYOffset,
-        now,
-      );
-      runtime.targetScaleY = targetScaleY;
-      runtime.targetYOffset = targetYOffset;
+    const nextGeometryKey = geometryKey(structure);
+    if (nextGeometryKey !== runtime.geometryKey || gridChanged) {
+      fillReplicatedMesh(this.scene, runtime.mesh, structure);
+      runtime.geometryKey = nextGeometryKey;
+      runtime.dirty = true;
     }
   }
 
@@ -806,12 +828,25 @@ export class BuildStructureRenderer {
     // Persist the base emissive for the pending-destruction tick (one
     // allocation per destruction event, not per frame).
     const baseEmissive = this._computeBaseEmissive(runtime, now, this._tempEmissive).clone();
+    // Capture the current visual alpha so a build-up interrupted mid-
+    // construction fades from its actual (partially transparent) state
+    // rather than popping to opaque. Completed builds compose to 1, so the
+    // normal destruction fade is unchanged.
+    composeVisualInto(
+      runtime.effects,
+      runtime.targetScaleY,
+      runtime.targetYOffset,
+      now,
+      this._composed,
+    );
+    const startAlpha = this._composed.alpha;
     this.pendingDestruction.set(id, {
       mesh: runtime.mesh,
       material: runtime.material,
       effects,
       scaleY: runtime.targetScaleY,
       baseEmissive,
+      startAlpha,
     });
     // Reset diffuse to base (clear any active hit-flash boost)
     runtime.material.diffuseColor = runtime.baseDiffuse.clone();
@@ -891,7 +926,7 @@ export class BuildStructureRenderer {
         visual.uniformScale * pending.scaleY,
         visual.uniformScale,
       );
-      pending.material.alpha = visual.alpha;
+      pending.material.alpha = visual.alpha * pending.startAlpha;
       // Write the boost into the existing material color (no allocation).
       const emissive = pending.material.emissiveColor;
       emissive.copyFrom(pending.baseEmissive);
@@ -1030,26 +1065,33 @@ export class BuildStructureRenderer {
     const durability = runtime.durability;
     if (!durability) {
       out.copyFrom(SOLID_EMISSIVE);
-      return out;
-    }
-    const maxDur = Math.max(1, durability.maxDurability);
-    const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
-    const damage = 1 - fraction;
-    const tintAmount = Math.pow(damage, 1.5);
-    // Lerp into `out` in place (no allocation).
-    out.copyFrom(SOLID_EMISSIVE);
-    out.r += (DAMAGED_EMISSIVE.r - SOLID_EMISSIVE.r) * tintAmount;
-    out.g += (DAMAGED_EMISSIVE.g - SOLID_EMISSIVE.g) * tintAmount;
-    out.b += (DAMAGED_EMISSIVE.b - SOLID_EMISSIVE.b) * tintAmount;
+    } else {
+      const maxDur = Math.max(1, durability.maxDurability);
+      const fraction = Math.max(0, Math.min(1, durability.currentDurability / maxDur));
+      const damage = 1 - fraction;
+      const tintAmount = Math.pow(damage, 1.5);
+      // Lerp into `out` in place (no allocation).
+      out.copyFrom(SOLID_EMISSIVE);
+      out.r += (DAMAGED_EMISSIVE.r - SOLID_EMISSIVE.r) * tintAmount;
+      out.g += (DAMAGED_EMISSIVE.g - SOLID_EMISSIVE.g) * tintAmount;
+      out.b += (DAMAGED_EMISSIVE.b - SOLID_EMISSIVE.b) * tintAmount;
 
-    // Warning pulse for nearly-broken structures (deterministic, time-based)
-    if (fraction <= NEARLY_BROKEN_THRESHOLD) {
-      const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
-      const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
-      const w = severity * pulse * WARNING_PULSE_STRENGTH;
-      out.r += w;
-      out.g += w * 0.4;
+      // Warning pulse for nearly-broken structures (deterministic, time-based)
+      if (fraction <= NEARLY_BROKEN_THRESHOLD) {
+        const severity = (NEARLY_BROKEN_THRESHOLD - fraction) / NEARLY_BROKEN_THRESHOLD;
+        const pulse = 0.5 + 0.5 * Math.sin((now / 1000) * WARNING_PULSE_FREQ * Math.PI * 2);
+        const w = severity * pulse * WARNING_PULSE_STRENGTH;
+        out.r += w;
+        out.g += w * 0.4;
+      }
     }
+
+    // Ownership accent: subtle constant emissive shift so the player can
+    // distinguish their own builds from the opponent's at a glance.
+    const accent = runtime.isLocalOwner ? LOCAL_OWNER_ACCENT : REMOTE_OWNER_ACCENT;
+    out.r += accent[0];
+    out.g += accent[1];
+    out.b += accent[2];
 
     return out;
   }

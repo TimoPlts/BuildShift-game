@@ -15,6 +15,7 @@ import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
 import { PlayerPresentation } from "../scene/PlayerPresentation";
+import { presentationFeetInto } from "./presentationFeet";
 
 /**
  * The local (Stage 1) player: a stylized low-poly body (see
@@ -245,9 +246,13 @@ export class PlayerController {
   }
 
   /**
-   * The player's presentation root transform node. External presentation
-   * components (e.g. the weapon model) can parent themselves here so they
-   * move and rotate with the player body automatically.
+   * The player's presentation root transform node (the visual body root, at
+   * capsule-centre height). External presentation components (e.g. the weapon
+   * model) parent themselves here so they move and rotate with the player body
+   * automatically AND lower with it when the player crouches (the crouch blend
+   * vertically squashes this node about the feet, see
+   * {@link PlayerPresentation.setCrouchBlend}). Mount positions are expressed
+   * in this node's local space (capsule-centre origin).
    */
   public get presentationRoot(): TransformNode {
     return this._presentation.visualRoot;
@@ -298,6 +303,15 @@ export class PlayerController {
       this.mesh.position.z,
     );
     return out;
+  }
+
+  /**
+   * Feet of the rendered body (the camera's follow point) — see
+   * {@link presentationFeetInto}. `rootAtFeet` is true while the runtime
+   * drives the presentation with the networked (feet-convention) prediction.
+   */
+  public getPresentationFeetInto(out: Vector3, rootAtFeet: boolean): Vector3 {
+    return presentationFeetInto(out, this.mesh.position, rootAtFeet);
   }
 
   /**

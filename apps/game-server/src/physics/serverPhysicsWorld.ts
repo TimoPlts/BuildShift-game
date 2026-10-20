@@ -97,6 +97,19 @@ export class ServerPhysicsWorld {
   private readonly colliderOwner = new Map<Collider, string>();
   /** Per-structure static collision bodies, keyed by structure id. */
   private readonly structures = new Map<string, StructurePhysics>();
+  /**
+   * World-space cuboids backing each structure's collision geometry, keyed by
+   * structure id. This in-memory mirror of the Rapier structure colliders is
+   * the authoritative source for *pure-geometry* queries (e.g. the crouch
+   * stand-up obstruction check). It is deliberately decoupled from the Rapier
+   * broadphase because the canonical movement room never steps its physics
+   * world, so Rapier spatial queries would never see the (static) structure
+   * colliders. The registry stays in lock-step with the Rapier colliders.
+   */
+  private readonly structureCuboids = new Map<
+    string,
+    Array<{ center: Translation3; halfExtents: HalfExtents3 }>
+  >();
   private readonly scratch: Translation3 = { x: 0, y: 0, z: 0 };
   private disposed = false;
 
@@ -273,6 +286,66 @@ export class ServerPhysicsWorld {
     const collider = this.world.createCollider(colliderDesc, body);
 
     this.structures.set(structureId, { body, collider });
+    this.structureCuboids.set(structureId, [
+      { center: { x: center.x, y: center.y, z: center.z }, halfExtents: { x: halfExtents.x, y: halfExtents.y, z: halfExtents.z } },
+    ]);
+  }
+
+  /**
+   * Replaces a structure's static collision geometry with the given set of
+   * world-space cuboids (one parented cuboid collider per entry on a single
+   * fixed body at the origin). Used by the floor edit system to regenerate a
+   * structure's collision geometry from its canonical tile edit state.
+   *
+   * Any existing body for `structureId` is removed first, so this is a full
+   * replacement. An empty list leaves the structure with no collision body.
+   * No-op when the world is disposed.
+   */
+  public setStructureColliders(
+    structureId: string,
+    cuboids: ReadonlyArray<{ center: Readonly<Translation3>; halfExtents: Readonly<HalfExtents3> }>,
+  ): void {
+    if (this.disposed) {
+      return;
+    }
+    this.removeStructureCollider(structureId);
+    if (cuboids.length === 0) {
+      return;
+    }
+    const body = this.world.createRigidBody(RigidBodyDesc.fixed());
+    body.setTranslation({ x: 0, y: 0, z: 0 }, true);
+    for (const cuboid of cuboids) {
+      const colliderDesc = ColliderDesc.cuboid(
+        cuboid.halfExtents.x,
+        cuboid.halfExtents.y,
+        cuboid.halfExtents.z,
+      );
+      colliderDesc.setTranslation(cuboid.center.x, cuboid.center.y, cuboid.center.z);
+      this.world.createCollider(colliderDesc, body);
+    }
+    this.structures.set(structureId, { body, collider: body.collider(0) });
+    this.structureCuboids.set(
+      structureId,
+      cuboids.map((c) => ({
+        center: { x: c.center.x, y: c.center.y, z: c.center.z },
+        halfExtents: { x: c.halfExtents.x, y: c.halfExtents.y, z: c.halfExtents.z },
+      })),
+    );
+  }
+
+  /**
+   * The number of colliders currently backing a structure's physics body
+   * (`0` when the structure has no body). Exposed for authoritative tests.
+   */
+  public structureColliderCount(structureId: string): number {
+    const structure = this.structures.get(structureId);
+    return structure ? structure.body.numColliders() : 0;
+  }
+
+  /** The exact cuboids currently installed in Rapier, also used by the
+   * canonical room's deterministic movement pass. */
+  public getStructureCuboids(): Array<{ center: Translation3; halfExtents: HalfExtents3 }> {
+    return [...this.structureCuboids.values()].flat();
   }
 
   /**
@@ -287,7 +360,74 @@ export class ServerPhysicsWorld {
     if (!this.disposed) {
       this.world.removeRigidBody(structure.body);
     }
+    this.structureCuboids.delete(structureId);
     this.structures.delete(structureId);
+  }
+
+  // ─── Shape queries ─────────────────────────────────────────────────────────
+
+  /**
+   * Tests whether an axis-aligned capsule standing on the given feet
+   * position intersects any *structure* collider.
+   *
+   * This is the authoritative stand-up obstruction query for crouching: the
+   * caller passes the full *standing* capsule dimensions and a small
+   * `liftOffset` that keeps the capsule bottom just above the surface the
+   * player stands on (so the ground / floor under the player's feet is never
+   * a false positive). Only structure colliders are considered — the static
+   * arena (floor + perimeter walls) intentionally never obstructs
+   * standing up.
+   *
+   * The check is a **pure-geometry** capsule-vs-cuboid overlap against the
+   * in-memory structure-cuboid registry ({@link structureCuboids}). It does
+   * NOT use the Rapier broadphase, so it is correct even in rooms that never
+   * step their physics world (the canonical movement room drives players with
+   * the pure `stepPlayerMovement` and only bookkeeps structure colliders
+   * here).
+   *
+   * The capsule spans `[feetY + liftOffset, feetY + liftOffset + 2 * halfTotalHeight]`
+   * vertically, centred on the given X/Z.
+   *
+   * @param x feet world X (metres).
+   * @param feetY feet world Y (metres; 0 on the ground plane).
+   * @param z feet world Z (metres).
+   * @param halfTotalHeight half the standing capsule height (centre to feet),
+   *        metres.
+   * @param radius capsule radius, metres.
+   * @param liftOffset vertical lift of the capsule bottom above the feet,
+   *        metres (use the character-controller contact offset).
+   * @returns `true` when a structure collider obstructs the capsule.
+   */
+  public isStructureObstructingCapsule(
+    x: number,
+    feetY: number,
+    z: number,
+    halfTotalHeight: number,
+    radius: number,
+    liftOffset: number,
+  ): boolean {
+    if (this.disposed) {
+      return false;
+    }
+    for (const cuboids of this.structureCuboids.values()) {
+      for (const c of cuboids) {
+        if (
+          capsuleIntersectsCuboid(
+            x,
+            feetY,
+            z,
+            halfTotalHeight,
+            radius,
+            liftOffset,
+            c.center,
+            c.halfExtents,
+          )
+        ) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   // ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -332,6 +472,71 @@ export class ServerPhysicsWorld {
     this.players.clear();
     this.colliderOwner.clear();
     this.structures.clear();
+    this.structureCuboids.clear();
     this.disposed = true;
   }
+}
+
+/**
+ * Exact axis-aligned capsule-vs-AABB overlap test.
+ *
+ * The capsule is vertical, modelled as the Minkowski sum of a line segment
+ * (the cylindrical axis, of half-length `halfTotalHeight - radius`, centred
+ * at `feetY + liftOffset + halfTotalHeight`) and a sphere of `radius`. The
+ * AABB is a structure-collision cuboid with world-space `center` and
+ * `halfExtents`.
+ *
+ * The test reduces to: is the distance from the capsule's axis segment to the
+ * AABB ≤ `radius`? Because the axis is vertical (constant X/Z), the closest
+ * AABB point is found by clamping the axis's X/Z into the box's X/Z footprint
+ * and the segment's Y range into the box's Y span.
+ */
+function capsuleIntersectsCuboid(
+  x: number,
+  feetY: number,
+  z: number,
+  halfTotalHeight: number,
+  radius: number,
+  liftOffset: number,
+  center: { x: number; y: number; z: number },
+  halfExtents: { x: number; y: number; z: number },
+): boolean {
+  const r2 = radius * radius;
+  const x0 = center.x - halfExtents.x;
+  const x1 = center.x + halfExtents.x;
+  const y0 = center.y - halfExtents.y;
+  const y1 = center.y + halfExtents.y;
+  const z0 = center.z - halfExtents.z;
+  const z1 = center.z + halfExtents.z;
+
+  // Closest point on the box X/Z footprint to the axis (constant x, z).
+  const hx = x < x0 ? x0 : x > x1 ? x1 : x;
+  const hz = z < z0 ? z0 : z > z1 ? z1 : z;
+  const dxz = (x - hx) * (x - hx) + (z - hz) * (z - hz);
+  if (dxz > r2) {
+    // Even the nearest X/Z point on the box is farther than the radius: no
+    // vertical alignment can bring the capsule into the box.
+    return false;
+  }
+
+  // Capsule axis segment (cylindrical core) endpoints, bottom then top.
+  const hh = halfTotalHeight - radius;
+  const cy = feetY + liftOffset + halfTotalHeight;
+  const segBottom = cy - hh;
+  const segTop = cy + hh;
+
+  let dy: number;
+  if (segTop < y0) {
+    // Segment entirely below the box: closest box point is its top face.
+    dy = y0 - segTop;
+  } else if (segBottom > y1) {
+    // Segment entirely above the box: closest box point is its bottom face.
+    dy = segBottom - y1;
+  } else {
+    // Y ranges overlap: the axis reaches the box's vertical span, so the
+    // vertical gap is zero.
+    dy = 0;
+  }
+
+  return dxz + dy * dy <= r2;
 }

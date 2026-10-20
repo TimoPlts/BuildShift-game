@@ -33,7 +33,15 @@ import {
   ASSAULT_RIFLE,
   MAX_HEALTH,
   MAX_SHIELD,
+  PLAYER_COLLIDER,
+  PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+  structureCuboids,
+  resolveStructureMovement,
+  clampToPlayableArena,
+  type StructureCuboid,
 } from "@buildshift/game-config";
+import type { BuildingState } from "@buildshift/protocol";
 import type { BufferedInput } from "./inputBatcher";
 
 /**
@@ -54,6 +62,13 @@ export const SIMULATION_TICK_SECONDS = 1 / 30;
 
 const HORIZONTAL_CONFIG: Readonly<HorizontalMovementConfig> = {
   moveSpeed: PLAYER_MOVEMENT.moveSpeed,
+};
+
+// Crouch movement config: reduced horizontal speed, derived from the SAME
+// shared `PLAYER_MOVEMENT` base the authoritative server uses, so predicted
+// and authoritative crouch trajectories match exactly.
+const CROUCH_HORIZONTAL_CONFIG: Readonly<HorizontalMovementConfig> = {
+  moveSpeed: PLAYER_MOVEMENT.moveSpeed * PLAYER_MOVEMENT.crouchSpeedFactor,
 };
 
 const VERTICAL_CONFIG: Readonly<VerticalMovementConfig> = {
@@ -117,6 +132,27 @@ export interface FirePredictionResult {
  * Client-side prediction and reconciliation engine for the local player.
  */
 export class PredictionOrchestrator {
+  private structureSolids: StructureCuboid[] = [];
+
+  /** Refresh predicted collision from the same authoritative replicated
+   * structures consumed by the permanent renderer. */
+  public setBuildingState(building: BuildingState): void {
+    this.structureSolids = Object.values(building.structures).flatMap((structure) => structureCuboids({
+      buildType: structure.buildType,
+      grid: structure.grid,
+      rotation: structure.rotation,
+      editGrid: structure.editGrid,
+    }));
+  }
+
+  /** Structure collision, then the authoritative arena boundary — the same
+   * order the server applies to each input. */
+  private collide(previous: FullMovementState, proposed: FullMovementState, crouched: boolean): FullMovementState {
+    return clampToPlayableArena(resolveStructureMovement(
+      previous, proposed, this.structureSolids, PLAYER_COLLIDER.radius,
+      (crouched ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : PLAYER_COLLIDER_HALF_TOTAL_HEIGHT) * 2,
+    ), PLAYER_COLLIDER.radius);
+  }
   private state: FullMovementState = { ...INITIAL_STATE };
   private correctionFrom: { x: number; y: number; z: number } | null = null;
   private correctionRemaining = 0;
@@ -141,6 +177,15 @@ export class PredictionOrchestrator {
   private lastStepYaw = INITIAL_STATE.yaw;
 
   // ── Combat state ──────────────────────────────────────────────────
+  /**
+   * Whether the local player is crouched. Drives the reduced move speed in
+   * {@link predict} / the reconciliation replay and is exposed to the render
+   * loop for crouch presentation. Snapped to the authoritative value on
+   * reconciliation (the server keeps the player crouched when standing up is
+   * obstructed).
+   */
+  private _crouched = false;
+
   private _localAmmo = ASSAULT_RIFLE.maxAmmo;
   private _localHealth = MAX_HEALTH;
   private _localShield = MAX_SHIELD;
@@ -182,18 +227,25 @@ export class PredictionOrchestrator {
     jump: boolean;
     crouch: boolean;
   }): PredictedState {
+    // Track the crouched posture so the reduced move speed is applied and the
+    // render loop can drive crouch presentation.
+    this._crouched = input.crouch;
+    const hConfig = input.crouch
+      ? CROUCH_HORIZONTAL_CONFIG
+      : HORIZONTAL_CONFIG;
     const worldInput = movementInputToWorld(
       { x: input.moveX, z: input.moveZ },
       this.lastStepYaw,
     );
-    this.state = stepFullMovement(
+    const before = this.state;
+    this.state = this.collide(before, stepFullMovement(
       this.state,
       worldInput,
       { jump: input.jump },
       SIMULATION_TICK_SECONDS,
-      HORIZONTAL_CONFIG,
+      hConfig,
       VERTICAL_CONFIG,
-    );
+    ), input.crouch);
     if (this.correctionRemaining > 0) {
       this.correctionRemaining -= 1;
       if (this.correctionRemaining <= 0) {
@@ -253,6 +305,7 @@ export class PredictionOrchestrator {
       velocityY: number;
       grounded: boolean;
       sequence: number;
+      crouch?: boolean;
       // Combat fields
       health?: number;
       shield?: number;
@@ -290,21 +343,28 @@ export class PredictionOrchestrator {
     // with the yaw it held BEFORE consuming that frame, so the first
     // replayed input steps at the server's current yaw and each later
     // input at the previous input's yaw.
+    // Snap the authoritative crouch posture at ack time (the server keeps the
+    // player crouched when standing up is obstructed); replayed inputs after
+    // ack may override it per-frame.
+    this._crouched = serverState.crouch === true;
     let stepYaw = serverState.yaw;
     for (const entry of bufferedInputs) {
       if (entry.input.sequence <= ack) continue;
+      const entryCrouch = entry.input.crouch === true;
+      this._crouched = entryCrouch;
       const worldInput = movementInputToWorld(
         { x: entry.input.moveX, z: entry.input.moveZ },
         stepYaw,
       );
-      this.state = stepFullMovement(
+      const before = this.state;
+      this.state = this.collide(before, stepFullMovement(
         this.state,
         worldInput,
         { jump: entry.input.jump },
         SIMULATION_TICK_SECONDS,
-        HORIZONTAL_CONFIG,
+        entryCrouch ? CROUCH_HORIZONTAL_CONFIG : HORIZONTAL_CONFIG,
         VERTICAL_CONFIG,
-      );
+      ), entryCrouch);
       stepYaw = entry.input.lookYaw;
     }
     this.lastStepYaw = stepYaw;
@@ -360,6 +420,11 @@ export class PredictionOrchestrator {
   /** The last server-acknowledged input sequence. */
   public get lastAckSequence(): number {
     return this._lastAckSequence;
+  }
+
+  /** Whether the local player is crouched (drives presentation + speed). */
+  public getCrouched(): boolean {
+    return this._crouched;
   }
 
   /** The distance of the last reconciliation correction (metres), or null. */
@@ -420,6 +485,7 @@ export class PredictionOrchestrator {
     this.lastPreReconcileState = null;
     this._lastCorrectionDistance = null;
     this.lastStepYaw = INITIAL_STATE.yaw;
+    this._crouched = false;
     // Reset combat to full defaults.
     this._localAmmo = ASSAULT_RIFLE.maxAmmo;
     this._localHealth = MAX_HEALTH;

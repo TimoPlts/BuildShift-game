@@ -4,6 +4,17 @@ import type { Scene } from "@babylonjs/core/scene";
 import { THIRD_PERSON_CAMERA } from "./cameraConfig";
 
 /**
+ * An axis-aligned bounding box in world space (metres, Y-up).
+ * Used for camera obstruction checks against build structures.
+ */
+export interface ObstacleAABB {
+  /** Minimum corner (x, y, z). */
+  min: readonly [number, number, number];
+  /** Maximum corner (x, y, z). */
+  max: readonly [number, number, number];
+}
+
+/**
  * Stage 1C yaw convention (single source of truth for the camera math):
  *
  * - yaw = 0 faces -Z (world forward)
@@ -33,9 +44,10 @@ import { THIRD_PERSON_CAMERA } from "./cameraConfig";
  * - looking up steeply, the camera dollies in along the aim ray instead of
  *   clipping below `minimumCameraHeight` (see {@link update}).
  *
- * Camera collision is intentionally deferred until Rapier is introduced
- * (Stage 1D+); the only presentation guard is the ground dolly above, and
- * the camera may otherwise clip through arena geometry.
+ * Camera obstruction: the ground dolly prevents clipping below the floor,
+ * and build-structure AABBs (set via {@link setObstacles}) prevent the
+ * camera from rendering inside solid builds. Both guards are presentation
+ * only — they change the tracking distance but never the aim direction.
  */
 export class ThirdPersonCameraController {
   private readonly camera: UniversalCamera;
@@ -58,7 +70,23 @@ export class ThirdPersonCameraController {
    * unlike the pitch nudge which rotates the view.
    */
   private transientVerticalOffset = 0;
+  /**
+   * Crouch camera dip (world-Y, metres) — the orbit pivot is lowered by this
+   * amount while the local player is crouched. The runtime owns the smoothing
+   * (it eases the dip toward `THIRD_PERSON_CAMERA.crouchDip` when crouched and
+   * back to 0 when standing) and feeds the smoothed value each frame, so the
+   * camera lowers smoothly with the crouched body. Unlike the transient
+   * vertical nudge this is a sustained posture offset, but it is applied the
+   * same way (to BOTH the pivot/look target and the camera position) so the
+   * aim direction is never changed.
+   */
+  private crouchDip = 0;
   private disposed = false;
+  /**
+   * World-space obstacle AABBs (build structures) that block the camera.
+   * Updated each frame by the runtime; empty array = no obstruction.
+   */
+  private obstacles: ReadonlyArray<ObstacleAABB> = [];
 
   public constructor(scene: Scene) {
     this.camera = new UniversalCamera(
@@ -164,6 +192,54 @@ export class ThirdPersonCameraController {
   }
 
   /**
+   * Returns the pure yaw/pitch aim direction (the authoritative direction
+   * that matches the server's `ad(yaw, pitch)` computation). Unlike the
+   * camera forward, this is independent of the transient recoil pitch
+   * nudge and the movement vertical offset. This is the direction the
+   * reticle represents and the direction the server resolves shots along.
+   *
+   * @param out - Optional output vector to write into.
+   * @returns The normalized aim direction in world space.
+   */
+  public getAimDirection(out?: Vector3): Vector3 {
+    const result = out ?? new Vector3();
+    const cosPitch = Math.cos(this.pitch);
+    result.x = Math.sin(this.yaw) * cosPitch;
+    result.y = Math.sin(this.pitch);
+    result.z = -Math.cos(this.yaw) * cosPitch;
+    return result;
+  }
+
+  /**
+   * Sets the world-space obstacle AABBs (build structures) that block the
+   * camera. The camera will dolly in if its orbit path intersects an
+   * obstacle. Pass an empty array to disable obstruction. Presentation only:
+   * the aim direction is never affected.
+   */
+  public setObstacles(obstacles: ReadonlyArray<ObstacleAABB>): void {
+    if (this.disposed) return;
+    this.obstacles = obstacles;
+  }
+
+  /**
+   * Sets the crouch camera dip for the next {@link update}, in metres
+   * (positive = lower the orbit pivot). Applied to both the look target and
+   * the camera position, so the aim direction is untouched. Defaults to `0`
+   * (no dip). The runtime feeds the smoothed dip each frame.
+   */
+  public setCrouchDip(dipMeters: number): void {
+    if (this.disposed) {
+      return;
+    }
+    this.crouchDip = dipMeters;
+  }
+
+  /** The current crouch dip (for inspection / tests). */
+  public getCrouchDip(): number {
+    return this.crouchDip;
+  }
+
+  /**
    * Repositions the camera behind and above the player for the current
    * yaw/pitch. `feetPosition` is the player's ground anchor.
    *
@@ -198,7 +274,11 @@ export class ThirdPersonCameraController {
     // stays a pure translation shared by the pivot (look target) and the
     // camera position — the aim direction is unchanged.
     const pivotX = feetPosition.x + rightX * shoulderOffset;
-    const pivotY = feetPosition.y + targetHeight + this.transientVerticalOffset;
+    const pivotY =
+      feetPosition.y +
+      targetHeight -
+      this.crouchDip +
+      this.transientVerticalOffset;
     const pivotZ = feetPosition.z + rightZ * shoulderOffset;
 
     // Fold in the transient (recoil) nudge without touching aim pitch.
@@ -218,6 +298,33 @@ export class ThirdPersonCameraController {
         trackingDistance = maxDistance;
       }
     }
+
+    // Build obstruction guard: if the orbit path from pivot toward the
+    // camera intersects a solid build structure, dolly in to just before
+    // the nearest hit. The camera direction (aim) is untouched.
+    if (this.obstacles.length > 0) {
+      const camDirX = -forwardX;
+      const camDirY = -forwardY;
+      const camDirZ = -forwardZ;
+      const dirLen = Math.sqrt(camDirX * camDirX + camDirY * camDirY + camDirZ * camDirZ);
+      if (dirLen > 1e-12) {
+        const ndX = camDirX / dirLen;
+        const ndY = camDirY / dirLen;
+        const ndZ = camDirZ / dirLen;
+        for (const obs of this.obstacles) {
+          const t = rayAABBDistance(
+            pivotX, pivotY, pivotZ,
+            ndX, ndY, ndZ,
+            obs.min[0], obs.min[1], obs.min[2],
+            obs.max[0], obs.max[1], obs.max[2],
+          );
+          if (t !== null && t < trackingDistance) {
+            trackingDistance = t - THIRD_PERSON_CAMERA.buildObstructionGap;
+          }
+        }
+      }
+    }
+
     if (trackingDistance < minimumCameraDistance) {
       trackingDistance = minimumCameraDistance;
     }
@@ -254,4 +361,65 @@ function clamp(value: number, min: number, max: number): number {
 function normalizeAngle(angle: number): number {
   const twoPi = Math.PI * 2;
   return ((((angle + Math.PI) % twoPi) + twoPi) % twoPi) - Math.PI;
+}
+
+/**
+ * Ray–AABB intersection using the slab method.
+ *
+ * @param ox,oy,oz - Ray origin.
+ * @param dx,dy,dz - Normalized ray direction.
+ * @param minx,miny,minz - AABB minimum corner.
+ * @param maxx,maxy,maxz - AABB maximum corner.
+ * @returns The distance `t` along the ray to the near face of the AABB, or
+ *   `null` if the ray does not intersect the box.
+ */
+function rayAABBDistance(
+  ox: number, oy: number, oz: number,
+  dx: number, dy: number, dz: number,
+  minx: number, miny: number, minz: number,
+  maxx: number, maxy: number, maxz: number,
+): number | null {
+  let tmin = 0;
+  let tmax = Infinity;
+
+  // X slab
+  if (Math.abs(dx) < 1e-12) {
+    if (ox < minx || ox > maxx) return null;
+  } else {
+    const invDx = 1 / dx;
+    let t1 = (minx - ox) * invDx;
+    let t2 = (maxx - ox) * invDx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return null;
+  }
+
+  // Y slab
+  if (Math.abs(dy) < 1e-12) {
+    if (oy < miny || oy > maxy) return null;
+  } else {
+    const invDy = 1 / dy;
+    let t1 = (miny - oy) * invDy;
+    let t2 = (maxy - oy) * invDy;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return null;
+  }
+
+  // Z slab
+  if (Math.abs(dz) < 1e-12) {
+    if (oz < minz || oz > maxz) return null;
+  } else {
+    const invDz = 1 / dz;
+    let t1 = (minz - oz) * invDz;
+    let t2 = (maxz - oz) * invDz;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tmin) tmin = t1;
+    if (t2 < tmax) tmax = t2;
+    if (tmin > tmax) return null;
+  }
+
+  return tmin;
 }

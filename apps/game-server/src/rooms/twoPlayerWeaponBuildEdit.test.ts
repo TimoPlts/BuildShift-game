@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Client } from "@colyseus/core";
 import { ASSAULT_RIFLE, ROUNDS_TO_WIN, SHOTGUN, SHOTGUN_WEAPON } from "@buildshift/game-config";
-import { BUILD_EDIT_EVENTS, MatchPhase } from "@buildshift/protocol";
+import { MatchPhase } from "@buildshift/protocol";
 import { TwoPlayerMovementRoom, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
-import { StructureStateSchema } from "../state/buildingState.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 
 // Use the production handlers and simulation, with a manually advanced server
@@ -17,7 +16,6 @@ describe("canonical weapon and build-edit authority", () => {
   const network = {
     sendWeaponSwitch: (weaponId: string) => send("two-player:weapon_switch", { targetWeaponId: weaponId }),
     sendWeaponReload: () => send("two-player:weapon_reload", {}),
-    sendBuildEdit: (structureId: string, editPattern: string) => send("build:edit_request", { structureId, editPattern }),
   };
   const send = (type: string, value: unknown, client = a) => {
     const handler = handlers.get(type);
@@ -49,7 +47,9 @@ describe("canonical weapon and build-edit authority", () => {
   afterEach(() => { room.onDispose(); room.clock.clear(); vi.restoreAllMocks(); });
 
   it("registers only the canonical build-edit transport", () => {
-    expect(handlers.has(BUILD_EDIT_EVENTS.EDIT_REQUEST)).toBe(true);
+    expect(handlers.has("two-player:edit_grid_action")).toBe(true);
+    expect(handlers.has("build:edit_request")).toBe(false);
+    expect(handlers.has("two-player:wall_pattern")).toBe(false);
     expect(handlers.has("two-player:build_edit")).toBe(false);
   });
 
@@ -187,32 +187,4 @@ describe("canonical weapon and build-edit authority", () => {
     expect(internal.nextFireTick.size).toBe(0);
   });
 
-  function wall() {
-    const s = new StructureStateSchema();
-    s.structureId = "wall"; s.ownerId = "a"; s.buildType = "wall"; s.editType = "";
-    s.maxDurability = 100; s.currentDurability = 100;
-    internal.bld.structures.set("wall", s);
-    return s;
-  }
-  it("applies and clears the client's edit pattern in authoritative state", () => {
-    const s = wall();
-    network.sendBuildEdit("wall", "window_center"); expect(s.editType).toBe("window");
-    expect(room.broadcast).toHaveBeenCalledWith(BUILD_EDIT_EVENTS.EDIT_RESULT, expect.objectContaining({ success: true, structureId: "wall" }));
-    network.sendBuildEdit("wall", "none"); expect(s.editType).toBe("");
-  });
-  it.each(["ownership", "phase", "dead", "damaged", "destroyed", "type", "cell", "missing"])("rejects invalid build edit: %s", reason => {
-    const s = wall();
-    const payload: any = { structureId: "wall", editType: "window", gridOffset: { x: 1, y: 1, z: 0 } };
-    if (reason === "ownership") s.ownerId = "b";
-    if (reason === "phase") room.state.matchPhase = MatchPhase.COUNTDOWN;
-    if (reason === "dead") room.state.players.get("a")!.alive = false;
-    if (reason === "damaged") s.currentDurability = 50;
-    if (reason === "destroyed") s.currentDurability = 0;
-    if (reason === "type") s.buildType = "ramp";
-    if (reason === "cell") payload.gridOffset.x = 3;
-    if (reason === "missing") payload.structureId = "missing";
-    send(BUILD_EDIT_EVENTS.EDIT_REQUEST, payload);
-    expect(s.editType).toBe("");
-    expect(a.send).toHaveBeenLastCalledWith(BUILD_EDIT_EVENTS.EDIT_RESULT, expect.objectContaining({ success: false }));
-  });
 });

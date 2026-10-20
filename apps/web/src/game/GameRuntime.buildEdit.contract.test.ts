@@ -11,9 +11,14 @@
  * What this contract locks down:
  *  - the build-edit system is constructed in the runtime constructor from the
  *    SAME canvas + network client as the building system (no second network
- *    surface), and driven once per render frame from the runtime's EXISTING
- *    sources (camera, aim, feet, the authoritative building mirror, session
- *    id, connection state);
+ *    surface) and the SAME shared interaction-mode coordinator (overhaul
+ *    task 12 — one owner of the build/edit layer state), and driven once per
+ *    render frame from the runtime's EXISTING sources (camera, aim, feet, the
+ *    authoritative building mirror, session id, connection state, in-round
+ *    flag, and the per-frame primary-action route);
+ *  - the projected edit-grid preview (`EditPreviewPresentation`) is driven
+ *    from the controller's pending state + the pure `aimEditTile` crosshair
+ *    mapping, and hidden when there is nothing to show;
  *  - the build-edit presentation state is folded into the local HUD view
  *    through the pure `buildBuildEditHudView` mapper (no mirrored gameplay
  *    state invented in the runtime);
@@ -32,46 +37,85 @@ const internal = readFileSync(new URL("./GameRuntimeInternal.ts", import.meta.ur
 const hud = readFileSync(new URL("../ui/hud/GameHud.tsx", import.meta.url), "utf8");
 
 describe("GameRuntime build-edit wiring", () => {
-  it("constructs the build-edit system from the existing canvas + network client", () => {
+  it("constructs the build-edit system + preview from the existing canvas + network client", () => {
     expect(runtime).toContain(
-      "import{createBuildEditSystem,buildBuildEditHudView,type BuildEditSystem}from\"./buildEdit\"",
+      'import{createBuildEditSystem,buildBuildEditHudView,EditPreviewPresentation,type BuildEditSystem}from"./buildEdit"',
     );
     expect(runtime).toContain("private readonly buildEditSystem:BuildEditSystem;");
-    // Same canvas + network client as the building system — no new network surface.
+    // Same canvas + network client as the building system — no new network
+    // surface — plus the shared interaction-mode coordinator.
     expect(runtime).toContain(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
+    );
+    // The projected edit-grid preview is a presentation-only scene resource.
+    expect(runtime).toContain(
+      "this.editPreview=new EditPreviewPresentation(this.scene);",
     );
     // It is created after the network client exists (the building-system line
     // precedes it, which itself follows `this.networkClient=...`).
     const clientIdx = runtime.indexOf("this.networkClient=networking.client");
     const buildEditIdx = runtime.indexOf(
-      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient);",
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
     );
     expect(clientIdx).toBeGreaterThan(-1);
     expect(buildEditIdx).toBeGreaterThan(clientIdx);
   });
 
+  it("shares ONE interaction-mode coordinator between the building and build-edit systems", () => {
+    // A single coordinator instance is constructed on the runtime ...
+    expect(runtime).toContain(
+      "private readonly interactionMode=new InteractionModeCoordinator();",
+    );
+    // ... and the SAME instance is threaded into both systems (no per-system
+    // mode state, no duplicate listeners — the coordinator owns none), with
+    // the input manager's ONE gameplay action map (shared bindings).
+    expect(runtime).toContain(
+      "this.buildingSystem=createBuildingSystem(canvas,this.networkClient,this.interactionMode,this.buildLatencyMetrics,inputManager.actions);",
+    );
+    expect(runtime).toContain(
+      "this.buildEditSystem=createBuildEditSystem(canvas,this.networkClient,{interactionMode:this.interactionMode,latency:this.buildLatencyMetrics,actions:inputManager.actions});",
+    );
+  });
+
   it("drives the build-edit frame from the runtime's existing sources each render frame", () => {
     // The update is called right after the building frame update in the render
-    // loop. Build presentation synchronizes the same authoritative mirror
-    // before edit targeting and HUD emission.
+    // loop, with the same per-frame primary-action route. Build presentation
+    // synchronizes the same authoritative mirror before edit targeting and
+    // HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.playerController.getFeetPositionInto(this._feetPos),this.isConnected);this.updateBuildPresentation();this.updateBuildEditFrame();if(this.debugHudEnabled)",
+      "this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
     );
 
-    const fnIdx = runtime.indexOf("private updateBuildEditFrame():void");
+    const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
     expect(fnIdx).toBeGreaterThan(-1);
-    const block = runtime.slice(fnIdx, fnIdx + 500);
+    const block = runtime.slice(fnIdx, fnIdx + 900);
     // Reads only existing runtime sources: camera position, the shared aim
     // direction, the player's feet, the authoritative building mirror, the
-    // session id, and the live connection flag.
+    // session id, the live connection flag, the in-round flag, and the
+    // routed edit-select edges.
     expect(block).toContain("camera.position");
     expect(block).toContain("this.currentAimDirection");
-    expect(block).toContain("this.playerController.getFeetPositionInto(this._feetPos)");
+    expect(block).toContain("const feet=this.buildFeetInto(this._feetPos)");
     expect(block).toContain("this.buildingSystem.store.getBuildingState()");
     expect(block).toContain("sessionId:this.networkClient.sessionId");
     expect(block).toContain("connected:this.isConnected");
+    expect(block).toContain("inRound");
+    expect(block).toContain("editSelectPressed:route.editSelectPressed,editSelectHeld:route.editSelectHeld");
+  });
+
+  it("drives the projected edit-grid preview from the controller's edit view (draft vs applied, crosshair tile)", () => {
+    const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");
+    expect(fnIdx).toBeGreaterThan(-1);
+    const block = runtime.slice(fnIdx, fnIdx + 1400);
+    // The preview shows the locked piece's unconfirmed draft against its
+    // applied state, with the crosshair tile / ramp half highlighted (one
+    // canonical sampling path inside the controller) ...
+    expect(block).toContain("const view=controller.getEditView();");
+    expect(block).toContain("this.editPreview.show({");
+    expect(block).toContain("state:view.draftState,baseState:view.baseState,selectedTile:view.hoverTile,selectedVariant:view.hoverVariant");
+    // ... and hides it whenever there is no target or pending state.
+    expect(block).toContain("this.editPreview.hide();");
   });
 
   it("folds the build-edit presentation state into the local HUD view via the pure mapper", () => {
@@ -95,7 +139,7 @@ describe("GameRuntime build-edit wiring", () => {
 
   it("clears build-edit preview + feedback when the connection drops", () => {
     expect(runtime).toContain(
-      "}else{this.buildEditSystem.clearOnDisconnect();}this.debugHud.state.connectionState",
+      "}else{this.buildEditSystem.clearOnDisconnect();this.buildStructureRenderer.setLocalSessionId(null);}this.debugHud.state.connectionState",
     );
   });
 

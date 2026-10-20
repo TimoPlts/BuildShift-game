@@ -120,6 +120,7 @@ export function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
   const lastFireSequence =
     typeof r.lastFireSequence === "number" ? r.lastFireSequence : -1;
   const isEliminated = r.isEliminated === true;
+  const crouch = r.crouch === true;
 
   return {
     x,
@@ -131,6 +132,7 @@ export function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
     sequence,
     yaw,
     pitch: 0,
+    crouch,
     health,
     shield,
     energy,

@@ -1929,6 +1929,8 @@ Input mapping should not be hard-coded across random gameplay files.
 
 This allows keybind settings later.
 
+Implemented as the gameplay action map (`apps/web/src/game/input/actionBindings.ts`): `InputManager`, the building input, and the edit input resolve every key / mouse button to actions (`moveForward`, `buildWall`, `edit`, `editConfirm`, `primaryAction`, …) through one shared `ActionMap`; the development defaults live in `DEFAULT_ACTION_BINDINGS` and `ActionMap.rebind` is the settings-menu hook. Dedicated build binds enter building with that piece from any mode; the edit bind locks the aimed owned piece into a local drag-selection draft that is only sent (as its canonical difference) on confirm.
+
 ---
 
 # 56. Camera Architecture

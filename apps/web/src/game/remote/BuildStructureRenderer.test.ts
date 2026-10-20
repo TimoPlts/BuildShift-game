@@ -14,6 +14,7 @@ import { Scene } from "@babylonjs/core/scene";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { BuildingState, StructureState, StructureDurabilityState } from "@buildshift/protocol";
+import { structureCuboids } from "@buildshift/game-config";
 import { BuildStructureRenderer } from "./BuildStructureRenderer";
 
 function structure(
@@ -148,8 +149,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(6, 4);
-      expect(mesh.position.z).toBeCloseTo(4, 4);
+      expect(mesh.position.x).toBeCloseTo(15.36, 4);
+      expect(mesh.position.z).toBeCloseTo(10.24, 4);
     });
   });
 
@@ -187,83 +188,189 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
-  // ─── Half-wall edit transition ───────────────────────────────────────────
+  // ─── Construction build-up (transparent start) ─────────────────────────
 
-  describe("half-wall edit transition", () => {
-    it("transitions from full to half_top smoothly", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300); // construction complete
+  describe("construction build-up (transparent start)", () => {
+    it("new structures start semi-transparent and build up to solid", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
 
-      const beforeScaleY = (scene.getMeshByName("structure-wall") as Mesh).scaling.y;
-      expect(beforeScaleY).toBeCloseTo(1, 1);
+      // At creation: lightweight, semi-transparent shell
+      advance(0);
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(mat.alpha).toBeCloseTo(0.35, 2);
 
-      // Apply half_top edit
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-
-      // Mid-transition: should be between 1 and 0.5
+      // Mid build-up: partially solidified
       advance(100);
-      const midMesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(midMesh.scaling.y).toBeLessThan(1);
-      expect(midMesh.scaling.y).toBeGreaterThan(0.5);
+      const midAlpha = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(midAlpha.alpha).toBeGreaterThan(0.5);
+      expect(midAlpha.alpha).toBeLessThan(1);
 
-      // After transition (200ms): should be at 0.5
-      advance(150);
-      const endMesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(endMesh.scaling.y).toBeCloseTo(0.5, 1);
+      // After the construction duration: fully solid
+      advance(100);
+      const endMat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(endMat.alpha).toBeCloseTo(1, 5);
     });
 
-    it("half_top shifts position upward", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300);
-
-      const beforeY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-      advance(250);
-
-      const afterY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-      expect(afterY).toBeGreaterThan(beforeY);
-    });
-
-    it("half_bottom shifts position downward", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300);
-
-      const beforeY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_bottom" } },
-      });
-      advance(250);
-
-      const afterY = (scene.getMeshByName("structure-wall") as Mesh).position.y;
-      expect(afterY).toBeLessThan(beforeY);
-    });
-
-    it("transitioning back to full wall restores original pose", () => {
-      const wall = structure("wall", "wall");
-      renderer.syncStructures({ structures: { wall } });
-      advance(300);
-
-      // Edit to half_top
-      renderer.syncStructures({
-        structures: { wall: { ...wall, editType: "half_top" } },
-      });
-      advance(250);
-
-      // Edit back to full
-      renderer.syncStructures({ structures: { wall: { ...wall, editType: "" } } });
-      advance(250);
+    it("keeps the durability tint readable while the build-up is still transparent", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      // Heavy damage while the build-up is still in progress.
+      renderer.updateStructureDurability("wall", durability(40, 200));
+      advance(50); // mid build-up
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.scaling.y).toBeCloseTo(1, 1);
+      const mat = mesh.material as StandardMaterial;
+      // Still mid build-up…
+      expect(mat.alpha).toBeGreaterThan(0.3);
+      expect(mat.alpha).toBeLessThan(1);
+      // …but the damage tint is applied to the diffuse color and remains
+      // readable (wall base diffuse r ≈ 0.42; heavy damage pulls it toward
+      // the damaged red ≈ 0.92).
+      expect(mat.diffuseColor.r).toBeGreaterThan(0.6);
+      expect(mat.diffuseColor.r).toBeGreaterThan(mat.diffuseColor.b);
+
+      // After the build-up settles, the tint is unchanged.
+      advance(200);
+      const settled = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(settled.alpha).toBeCloseTo(1, 5);
+      expect(settled.diffuseColor.r).toBeGreaterThan(0.6);
+    });
+
+    it("keeps the hit flash emissive visible while the build-up is still transparent", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      // Establish the durability baseline (no flash on the first report).
+      renderer.updateStructureDurability("wall", durability(200, 200));
+      advance(60); // mid build-up
+      const mesh = scene.getMeshByName("structure-wall") as Mesh;
+      const baseEmissiveR = (mesh.material as StandardMaterial).emissiveColor.r;
+
+      renderer.updateStructureDurability("wall", durability(120, 200)); // a hit
+      advance(16);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(mat.alpha).toBeLessThan(1); // still mid build-up
+      expect(mat.emissiveColor.r).toBeGreaterThan(baseEmissiveR); // flash visible
+      const flashEmissiveR = mat.emissiveColor.r; // snapshot (material is written in place)
+
+      // Flash decays and the build-up completes to solid.
+      advance(300);
+      const settled = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(settled.alpha).toBeCloseTo(1, 5);
+      expect(settled.emissiveColor.r).toBeLessThan(flashEmissiveR);
+    });
+  });
+
+  // ─── Construction lifecycle cleanup ─────────────────────────────────
+
+  describe("construction lifecycle cleanup", () => {
+    it("removal during the build-up fades from the current transparency (no opacity pop)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(100); // mid build-up
+      const midAlpha = (scene.getMeshByName("structure-wall") as Mesh)
+        .material as StandardMaterial;
+      expect(midAlpha.alpha).toBeLessThan(1);
+
+      // Authoritatively removed mid build-up.
+      renderer.syncStructures({ structures: {} });
+      advance(16);
+
+      // The destruction fade starts from the current (partial) transparency,
+      // not from opaque.
+      const mesh = scene.getMeshByName("structure-wall");
+      expect(mesh).not.toBeNull();
+      const fadeAlpha = (mesh!.material as StandardMaterial).alpha;
+      expect(fadeAlpha).toBeLessThan(1);
+      expect(fadeAlpha).toBeLessThanOrEqual(midAlpha.alpha + 0.01);
+
+      // Cleanup completes: mesh disposed.
+      advance(300);
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("an authoritative reset (empty state) during the build-up disposes all construction resources", () => {
+      renderer.syncStructures({
+        structures: {
+          wall: structure("wall", "wall"),
+          cone: structure("cone", "cone"),
+        },
+      });
+      advance(50); // mid build-up for both
+      renderer.syncStructures({ structures: {} });
+      advance(300); // destruction fades complete
+
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+      expect(
+        scene.materials.filter((m) => m.name.startsWith("structure-material-")).length,
+      ).toBe(0);
+    });
+
+    it("dispose during the build-up cleans up meshes and materials", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(50); // mid build-up
+      renderer.dispose();
+
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+      expect(
+        scene.materials.filter((m) => m.name.startsWith("structure-material-")).length,
+      ).toBe(0);
+      // Ticking after dispose must not throw or resurrect resources.
+      expect(() => scene.onBeforeRenderObservable.notifyObservers(scene)).not.toThrow();
+      expect(scene.meshes.filter((m) => m.name.startsWith("structure-")).length).toBe(0);
+    });
+
+    it("does not leak meshes across interrupted build-up create/destroy cycles", () => {
+      for (let i = 0; i < 6; i++) {
+        const id = `wall-${i}`;
+        renderer.syncStructures({ structures: { [id]: structure(id, "wall") } });
+        advance(60); // interrupt mid build-up
+        renderer.syncStructures({ structures: {} });
+        advance(300); // destruction fade completes
+      }
+      expect(
+        scene.meshes.filter((m) => m.name.startsWith("structure-")).length,
+      ).toBe(0);
+    });
+  });
+
+  // ─── Authoritative edit geometry ──────────────────────────────────────────
+
+  describe("replicated edit geometry", () => {
+    it("rebuilds wall openings from the grid and restores the exact full mesh", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+      const original = scene.getMeshByName("build-solid-wall-0") as Mesh;
+      expect(original).not.toBeNull();
+      const editGrid = { kind: "wall" as const, tiles: [true, true, true, true, false, true, true, true, true] };
+      renderer.syncStructures({ structures: { wall: { ...wall, editGrid } } });
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(8);
+      expect(scene.getMeshByName("structure-wall")).not.toBeNull();
+      renderer.syncStructures({ structures: { wall: { ...wall, editGrid: { kind: "wall", tiles: Array(9).fill(true) } } } });
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(1);
+      expect(scene.getMeshByName("build-solid-wall-0")).not.toBe(original);
+    });
+
+    it.each(["wall", "floor", "cone", "ramp"] as const)("matches the shared %s geometry", (buildType) => {
+      const s = structure("piece", buildType);
+      const editGrid = buildType === "wall" ? { kind: "wall" as const, tiles: [true, false, true, true, true, true, true, true, true] }
+        : buildType === "ramp" ? { kind: "ramp" as const, variant: "half_right" as const }
+        : { kind: "floor_cone" as const, tiles: [true, false, true, true] };
+      const edited = { ...s, editGrid };
+      renderer.syncStructures({ structures: { piece: edited } });
+      advance(300);
+      const expected = structureCuboids({ buildType, grid: s.grid, rotation: s.rotation, editGrid });
+      const parts = scene.meshes.filter((m) => m.name.startsWith("build-solid-piece-")) as Mesh[];
+      expect(parts).toHaveLength(expected.length);
+      for (let i = 0; i < expected.length; i++) {
+        expect(parts[i]!.getAbsolutePosition().x).toBeCloseTo(expected[i]!.center.x, 4);
+        expect(parts[i]!.getAbsolutePosition().y).toBeCloseTo(expected[i]!.center.y, 4);
+        expect(parts[i]!.getAbsolutePosition().z).toBeCloseTo(expected[i]!.center.z, 4);
+      }
     });
   });
 
@@ -311,8 +418,9 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // Wall is 2 layers tall (3m): the top-half ghost centres at y = 1.5 + 0.75 = 2.25.
-      expect(ghost.position.y).toBeCloseTo(2.25, 5);
+      // Wall is one layer tall (≈3.84 m): the top-half ghost centres at
+      // y = 1.92 + 0.96 = 2.88.
+      expect(ghost.position.y).toBeCloseTo(2.88, 5);
       expect((ghost.material as StandardMaterial).alpha).toBeCloseTo(0.45, 5);
     });
 
@@ -325,8 +433,8 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const ghost = scene.getMeshByName("build-edit-result-preview") as Mesh;
-      // The bottom-half ghost centres at y = 1.5 - 0.75 = 0.75.
-      expect(ghost.position.y).toBeCloseTo(0.75, 5);
+      // The bottom-half ghost centres at y = 1.92 - 0.96 = 0.96.
+      expect(ghost.position.y).toBeCloseTo(0.96, 5);
     });
 
     it("hides the preview when hidden, for non-wall targets, and on structure removal", () => {
@@ -593,8 +701,8 @@ describe("BuildStructureRenderer", () => {
 
       const preview = scene.getMeshByName("build-preview");
       expect(preview).not.toBeNull();
-      expect(preview!.position.x).toBeCloseTo(4, 4);
-      expect(preview!.position.z).toBeCloseTo(2, 4);
+      expect(preview!.position.x).toBeCloseTo(10.24, 4);
+      expect(preview!.position.z).toBeCloseTo(5.12, 4);
     });
 
     it("eases the ghost toward a new grid cell instead of teleporting", () => {
@@ -607,28 +715,40 @@ describe("BuildStructureRenderer", () => {
       const mid = scene.getMeshByName("build-preview") as Mesh;
       // Strictly between the old and new cell: smoothed, not snapped.
       expect(mid.position.x).toBeGreaterThan(0.01);
-      expect(mid.position.x).toBeLessThan(4);
+      expect(mid.position.x).toBeLessThan(10.24);
 
       for (let i = 0; i < 40; i++) advance(16);
       const settled = scene.getMeshByName("build-preview") as Mesh;
-      expect(settled.position.x).toBeCloseTo(4, 3);
+      expect(settled.position.x).toBeCloseTo(10.24, 3);
     });
 
-    it("eases the ghost rotation along the shortest arc", () => {
-      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 0, true);
-      advance(16);
-
-      // rotation 2 → target yaw of π.
-      renderer.showPreview("wall", { x: 0, y: 0, z: 0 }, 2, true);
-      advance(16);
-
-      const mid = scene.getMeshByName("build-preview") as Mesh;
-      expect(Math.abs(mid.rotation.y)).toBeGreaterThan(0.1);
-      expect(Math.abs(mid.rotation.y)).toBeLessThan(Math.PI);
-
+    it("builds the ghost as the exact canonical solids for each rotation (rebuilt on rotate)", () => {
+      const grid = { x: 0, y: 0, z: 0 };
+      const ghostBoxes = () => {
+        const root = scene.getMeshByName("build-preview") as Mesh;
+        expect(root.rotation.y).toBe(0);
+        return root.getChildMeshes().map((m) => {
+          m.computeWorldMatrix(true);
+          const bb = m.getBoundingInfo().boundingBox;
+          return [bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z, bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z];
+        });
+      };
+      const canonical = (buildType: "ramp" | "cone", rotation: number) => structureCuboids({ buildType, grid, rotation })
+        .map(({ center: c, halfExtents: h }) => [c.x - h.x, c.y - h.y, c.z - h.z, c.x + h.x, c.y + h.y, c.z + h.z]);
+      for (const rotation of [0, 1, 2, 3] as const) {
+        renderer.showPreview("ramp", grid, rotation, true);
+        for (let i = 0; i < 40; i++) advance(16);
+        const boxes = ghostBoxes();
+        const expected = canonical("ramp", rotation);
+        expect(boxes).toHaveLength(expected.length);
+        for (const [i, e] of expected.entries()) for (const [k, v] of e.entries()) expect(boxes[i]![k]).toBeCloseTo(v, 4);
+      }
+      renderer.showPreview("cone", grid, 0, true);
       for (let i = 0; i < 40; i++) advance(16);
-      const settled = scene.getMeshByName("build-preview") as Mesh;
-      expect(Math.abs(settled.rotation.y)).toBeCloseTo(Math.PI, 2);
+      const cone = ghostBoxes();
+      const expectedCone = canonical("cone", 0);
+      expect(cone).toHaveLength(expectedCone.length);
+      for (const [i, e] of expectedCone.entries()) for (const [k, v] of e.entries()) expect(cone[i]![k]).toBeCloseTo(v, 4);
     });
 
     it("shows a low-opacity ground marker on the snapped cell", () => {
@@ -637,8 +757,8 @@ describe("BuildStructureRenderer", () => {
 
       const cell = scene.getMeshByName("build-preview-cell");
       expect(cell).not.toBeNull();
-      expect(cell!.position.x).toBeCloseTo(4, 4);
-      expect(cell!.position.z).toBeCloseTo(2, 4);
+      expect(cell!.position.x).toBeCloseTo(10.24, 4);
+      expect(cell!.position.z).toBeCloseTo(5.12, 4);
       expect(cell!.position.y).toBeCloseTo(0.011, 5);
       expect((cell!.material as StandardMaterial).alpha).toBeCloseTo(0.3, 5);
     });
@@ -867,6 +987,39 @@ describe("BuildStructureRenderer", () => {
   // ─── Resource management ─────────────────────────────────────────────────
 
   describe("resource management", () => {
+    it("keeps meshes and materials bounded through rapid mixed build churn", () => {
+      const baseMeshes = scene.meshes.length;
+      const baseMaterials = scene.materials.length;
+      const types: StructureState["buildType"][] = ["wall", "floor", "ramp", "cone"];
+
+      // This models repeated accepted placement followed by authoritative
+      // removal/reset. It deliberately uses fresh IDs and grids every pass so
+      // a renderer that leaves stale meshes, materials, or observers behind
+      // cannot hide behind an idempotent update path.
+      for (let cycle = 0; cycle < 20; cycle++) {
+        const structures: Record<string, StructureState> = {};
+        for (const [index, buildType] of types.entries()) {
+          const id = `${buildType}-${cycle}`;
+          structures[id] = structure(id, buildType, "", {
+            x: cycle * types.length + index,
+            y: 0,
+            z: cycle % 3,
+          });
+        }
+        renderer.syncStructures({ structures });
+        advance(250);
+        expect(scene.meshes.filter((mesh) => mesh.name.startsWith("structure-")).length).toBe(4);
+
+        renderer.syncStructures({ structures: {} });
+        advance(300);
+        expect(scene.meshes.filter((mesh) => mesh.name.startsWith("structure-")).length).toBe(0);
+        expect(scene.materials.filter((material) => material.name.startsWith("structure-material-")).length).toBe(0);
+      }
+
+      expect(scene.meshes.length).toBe(baseMeshes);
+      expect(scene.materials.length).toBe(baseMaterials);
+    });
+
     it("does not leak meshes on repeated create/destroy cycles", () => {
       for (let i = 0; i < 10; i++) {
         const id = `wall-${i}`;
@@ -898,21 +1051,16 @@ describe("BuildStructureRenderer", () => {
   // ─── No-change fast path (performance pass) ─────────────────────────────────
 
   describe("no-change fast path", () => {
-    it("still transitions the edit pose after repeated identical syncs", () => {
+    it("still rebuilds edited geometry after repeated identical syncs", () => {
       const wall = structure("wall", "wall");
       renderer.syncStructures({ structures: { wall } });
       advance(300); // construction complete
       renderer.syncStructures({ structures: { wall } }); // fast path x2
       renderer.syncStructures({ structures: { wall } });
 
-      const half = structure("wall", "wall", "half_top");
+      const half = { ...wall, editGrid: { kind: "wall" as const, tiles: [false, false, false, true, true, true, true, true, true] } };
       renderer.syncStructures({ structures: { wall: half } });
-      advance(50); // mid transition
-
-      const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      // Mid-transition the Y scale is between full (1) and half (0.5).
-      expect(mesh.scaling.y).toBeLessThan(1);
-      expect(mesh.scaling.y).toBeGreaterThan(0.5);
+      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(6);
     });
 
     it("still moves the mesh after repeated identical syncs", () => {
@@ -927,7 +1075,7 @@ describe("BuildStructureRenderer", () => {
       advance(16);
 
       const mesh = scene.getMeshByName("structure-wall") as Mesh;
-      expect(mesh.position.x).toBeCloseTo(2, 4);
+      expect(mesh.position.x).toBeCloseTo(5.12, 4);
     });
 
     it("still plays destruction after repeated identical syncs", () => {
@@ -1178,6 +1326,198 @@ describe("BuildStructureRenderer", () => {
       expect(coneMat.diffuseColor.r).toBe(originalConeDiffuse.r);
       expect(coneMat.diffuseColor.g).toBe(originalConeDiffuse.g);
       expect(coneMat.diffuseColor.b).toBe(originalConeDiffuse.b);
+    });
+  });
+
+  // ─── Ownership accent ─────────────────────────────────────────────────
+
+  describe("ownership accent", () => {
+    it("distinguishes local-owner structures from remote-owner structures", () => {
+      const localWall = { ...structure("local", "wall"), ownerId: "local" };
+      const remoteWall = { ...structure("remote", "wall"), ownerId: "remote" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { local: localWall, remote: remoteWall } });
+      advance(300); // construction complete
+
+      const localMat = (scene.getMeshByName("structure-local") as Mesh).material as StandardMaterial;
+      const remoteMat = (scene.getMeshByName("structure-remote") as Mesh).material as StandardMaterial;
+
+      // Local owner: emissive g is boosted by LOCAL_OWNER_ACCENT[1] (0.06).
+      // Remote owner: emissive r is boosted by REMOTE_OWNER_ACCENT[0] (0.05).
+      // SOLID_EMISSIVE = (0.02, 0.02, 0.04).
+      // Local: g = 0.02 + 0.06 = 0.08
+      // Remote: r = 0.02 + 0.05 = 0.07
+      expect(localMat.emissiveColor.g).toBeCloseTo(0.08, 5);
+      expect(remoteMat.emissiveColor.r).toBeCloseTo(0.07, 5);
+
+      // The accents are clearly different channels.
+      expect(localMat.emissiveColor.g).toBeGreaterThan(remoteMat.emissiveColor.g);
+      expect(remoteMat.emissiveColor.r).toBeGreaterThan(localMat.emissiveColor.r);
+    });
+
+    it("is stable across frames (no per-frame drift or pulse)", () => {
+      const localWall = { ...structure("local", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { local: localWall } });
+      advance(300); // construction complete
+
+      const mat = (scene.getMeshByName("structure-local") as Mesh).material as StandardMaterial;
+      const r0 = mat.emissiveColor.r;
+      const g0 = mat.emissiveColor.g;
+      const b0 = mat.emissiveColor.b;
+
+      for (let i = 0; i < 20; i++) advance(16);
+
+      expect(mat.emissiveColor.r).toBe(r0);
+      expect(mat.emissiveColor.g).toBe(g0);
+      expect(mat.emissiveColor.b).toBe(b0);
+    });
+
+    it("updates all existing structures when the session ID changes", () => {
+      const wallA = { ...structure("a", "wall"), ownerId: "playerA" };
+      const wallB = { ...structure("b", "wall"), ownerId: "playerB" };
+      renderer.setLocalSessionId("playerA");
+      renderer.syncStructures({ structures: { a: wallA, b: wallB } });
+      advance(300);
+
+      const matA = (scene.getMeshByName("structure-a") as Mesh).material as StandardMaterial;
+      const matB = (scene.getMeshByName("structure-b") as Mesh).material as StandardMaterial;
+
+      // playerA is local → accent g; playerB is remote → accent r.
+      expect(matA.emissiveColor.g).toBeGreaterThan(matB.emissiveColor.g);
+      expect(matB.emissiveColor.r).toBeGreaterThan(matA.emissiveColor.r);
+
+      // Switch local session to playerB.
+      renderer.setLocalSessionId("playerB");
+      advance(16);
+
+      const matA2 = (scene.getMeshByName("structure-a") as Mesh).material as StandardMaterial;
+      const matB2 = (scene.getMeshByName("structure-b") as Mesh).material as StandardMaterial;
+
+      // Now playerB is local → accent g; playerA is remote → accent r.
+      expect(matB2.emissiveColor.g).toBeGreaterThan(matA2.emissiveColor.g);
+      expect(matA2.emissiveColor.r).toBeGreaterThan(matB2.emissiveColor.r);
+    });
+
+    it("clears the local accent when the session ID is set to null (disconnect)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const localEmissiveG = mat.emissiveColor.g;
+      expect(localEmissiveG).toBeCloseTo(0.08, 5); // local accent active
+
+      renderer.setLocalSessionId(null);
+      advance(16);
+
+      const remoteMat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // Now remote accent: g = 0.02 + 0.02 = 0.04
+      expect(remoteMat.emissiveColor.g).toBeCloseTo(0.04, 5);
+    });
+
+    it("is absent before setLocalSessionId is called (all structures get remote accent)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "someowner" };
+      // Do NOT call setLocalSessionId.
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // Remote accent: r = 0.02 + 0.05 = 0.07
+      expect(mat.emissiveColor.r).toBeCloseTo(0.07, 5);
+    });
+
+    it("composes correctly with the damage tint (accent + damage tint are additive)", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const healthyG = mat.emissiveColor.g;
+
+      // Heavy damage: tint shifts diffuse toward DAMAGED_COLOR, emissive shifts toward DAMAGED_EMISSIVE.
+      renderer.updateStructureDurability("wall", durability(20, 200));
+      advance(200); // past hit-flash
+
+      const damagedMat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      // The damaged emissive r is dominated by the DAMAGED_EMISSIVE shift,
+      // but the local accent still adds to g.
+      expect(damagedMat.emissiveColor.g).toBeGreaterThan(healthyG - 0.01); // accent persists
+    });
+
+    it("lifecycle: accent is removed when the structure is destroyed", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      // Destroy the structure.
+      renderer.syncStructures({ structures: {} });
+      advance(300); // destruction animation completes
+
+      expect(scene.getMeshByName("structure-wall")).toBeNull();
+    });
+
+    it("performance: 50 structures with mixed ownership have stable materials across frames", () => {
+      const structures: Record<string, StructureState> = {};
+      for (let i = 0; i < 50; i++) {
+        structures[`s-${i}`] = {
+          ...structure(`s-${i}`, "wall", "", { x: i % 10, y: 0, z: Math.floor(i / 10) }),
+          ownerId: i % 2 === 0 ? "playerA" : "playerB",
+        };
+      }
+      renderer.setLocalSessionId("playerA");
+      renderer.syncStructures({ structures });
+      advance(300); // construction complete
+
+      // Sample emissive values for a spread of structures.
+      const samples: Array<{ name: string; r: number; g: number; b: number }> = [];
+      for (const i of [0, 1, 10, 11, 25, 49]) {
+        const mat = (scene.getMeshByName(`structure-s-${i}`) as Mesh).material as StandardMaterial;
+        samples.push({ name: `structure-s-${i}`, r: mat.emissiveColor.r, g: mat.emissiveColor.g, b: mat.emissiveColor.b });
+      }
+
+      // Advance 30 frames.
+      for (let f = 0; f < 30; f++) advance(16);
+
+      // All materials must be bit-stable (no drift).
+      for (const s of samples) {
+        const mat = (scene.getMeshByName(s.name) as Mesh).material as StandardMaterial;
+        expect(mat.emissiveColor.r).toBe(s.r);
+        expect(mat.emissiveColor.g).toBe(s.g);
+        expect(mat.emissiveColor.b).toBe(s.b);
+      }
+
+      // Verify ownership distinction is preserved:
+      // even indices (playerA = local) have higher g than odd indices (playerB = remote).
+      const localMat = (scene.getMeshByName("structure-s-0") as Mesh).material as StandardMaterial;
+      const remoteMat = (scene.getMeshByName("structure-s-1") as Mesh).material as StandardMaterial;
+      expect(localMat.emissiveColor.g).toBeGreaterThan(remoteMat.emissiveColor.g);
+    });
+
+    it("setLocalSessionId is a no-op after dispose", () => {
+      renderer.dispose();
+      expect(() => renderer.setLocalSessionId("local")).not.toThrow();
+    });
+
+    it("setLocalSessionId with the same value does not re-mark structures dirty", () => {
+      const wall = { ...structure("wall", "wall"), ownerId: "local" };
+      renderer.setLocalSessionId("local");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      const r0 = mat.emissiveColor.r;
+      const g0 = mat.emissiveColor.g;
+
+      // Setting the same session ID again should be a no-op.
+      renderer.setLocalSessionId("local");
+      advance(16);
+
+      expect(mat.emissiveColor.r).toBe(r0);
+      expect(mat.emissiveColor.g).toBe(g0);
     });
   });
 });

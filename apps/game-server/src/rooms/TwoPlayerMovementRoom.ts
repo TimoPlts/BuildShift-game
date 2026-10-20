@@ -1,18 +1,25 @@
 import { Room, type Client } from "@colyseus/core";
 import { t } from "@colyseus/schema";
-import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, BUILD_EDIT_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, isBuildEditType, isStructureOpeningPattern } from "@buildshift/protocol";
-import { stepPlayerMovement, movementInputToWorld, fireGate, hitscan, computeShotgunSpread } from "@buildshift/simulation";
-import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_COUNTDOWN_SECONDS as RCS, ROUND_RESET_DELAY_SECONDS as RRS, ROUND_DURATION_SECONDS, ANTI_STALL_TIMEOUT_SECONDS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, isBuildEditAllowedForStructure } from "@buildshift/game-config";
-import { BuildingStateSchema, StructureStateSchema, oc, wc } from "../state/buildingState.js";
+import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, validateEditActionRequest, applyEditAction, createDefaultEditState, getEditTileCount, serializeEditState } from "@buildshift/protocol";
+import { stepPlayerMovement, movementInputToWorld, fireGate, hitscan, computeShotgunSpread, type HitscanHit, type HitscanTarget } from "@buildshift/simulation";
+import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_COUNTDOWN_SECONDS as RCS, ROUND_RESET_DELAY_SECONDS as RRS, ROUND_DURATION_SECONDS, ANTI_STALL_TIMEOUT_SECONDS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CHARACTER_CONTROLLER, structureCuboids, rayStructureIntersection, resolveStructureMovement, clampToPlayableArena, type GeometryEditState } from "@buildshift/game-config";
+import { BuildingStateSchema, StructureStateSchema, oc } from "../state/buildingState.js";
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
+import { classifyFloorForm } from "../match/floorEditGeometry.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
+import { PlayerInputQueue } from "./lifecycle/playerInputQueue.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
 export const TWO_PLAYER_MOVEMENT_INPUT = "two-player:input";
 export const WEAPON_SWITCH_INPUT = "two-player:weapon_switch";
+export const EDIT_GRID_ACTION_INPUT = "two-player:edit_grid_action";
 const THZ = 30, TD = 1 / THZ;
 const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gravity, jumpVelocity: VERTICAL_MOVEMENT.jumpVelocity, terminalVelocity: VERTICAL_MOVEMENT.terminalVelocity, groundY: VERTICAL_MOVEMENT.groundY };
+// Crouch movement config: same vertical tuning, reduced horizontal speed.
+// Derived from the SAME shared `PLAYER_MOVEMENT` base as `MC` so the client
+// prediction and the authoritative server derive an identical crouch speed.
+const MC_CROUCH = { ...MC, moveSpeed: PLAYER_MOVEMENT.moveSpeed * PLAYER_MOVEMENT.crouchSpeedFactor };
 const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
 const CT = Math.max(1, Math.round(RCS * THZ)), RT = Math.max(1, Math.round(RRS * THZ)), ROUND_TICKS = Math.max(1, Math.round(ROUND_DURATION_SECONDS * THZ)), STALL_TICKS = Math.max(1, Math.round(ANTI_STALL_TIMEOUT_SECONDS * THZ));
 const REMATCH_REQUEST = "match:rematch_request";
@@ -35,7 +42,7 @@ interface PWS {
  *  the window expires. */
 interface PlayerSnapshot {
     x: number; y: number; z: number; yaw: number; velocityY: number;
-    grounded: boolean; lastProcessedSequence: number;
+    grounded: boolean; crouch: boolean; lastProcessedSequence: number;
     health: number; shield: number; energy: number;
     ammo: number; lastFireSequence: number;
     alive: boolean; isEliminated: boolean; currentWeapon: WeaponId;
@@ -53,8 +60,24 @@ function nm(x: unknown, a: number, b: number) { return typeof x === "number" && 
 function ad(y: number, p: number) { const c = Math.cos(p); return { x: Math.sin(y) * c, y: Math.sin(p), z: -Math.cos(y) * c }; }
 function pi(m: unknown) { if (!m || typeof m !== "object")
     return null; const r = m as Record<string, unknown>, s = r.sequence; if (typeof s !== "number" || !Number.isSafeInteger(s) || s < 0)
-    return null; return { sequence: s, moveX: nm(r.moveX, PIL.movementMin, PIL.movementMax), moveZ: nm(r.moveZ, PIL.movementMin, PIL.movementMax), lookYaw: nm(r.lookYaw, -Math.PI, Math.PI), lookPitch: nm(r.lookPitch, PIL.pitchMin, PIL.pitchMax), jump: r.jump === true, primaryFire: r.primaryFire === true }; }
+    return null; return { sequence: s, moveX: nm(r.moveX, PIL.movementMin, PIL.movementMax), moveZ: nm(r.moveZ, PIL.movementMin, PIL.movementMax), lookYaw: nm(r.lookYaw, -Math.PI, Math.PI), lookPitch: nm(r.lookPitch, PIL.pitchMin, PIL.pitchMax), jump: r.jump === true, crouch: r.crouch === true, primaryFire: r.primaryFire === true }; }
 type PE = InstanceType<typeof PlayerStateSchema>;
+type ParsedInput = NonNullable<ReturnType<typeof pi>>;
+type Structure = InstanceType<typeof StructureStateSchema>;
+function editGeometryState(s: Structure): GeometryEditState | undefined {
+    if (s.editKind === "wall" && s.editTiles.length === 9) return { kind: "wall", tiles: [...s.editTiles] };
+    if (s.editKind === "floor_cone" && s.editTiles.length === 4) return { kind: "floor_cone", tiles: [...s.editTiles] };
+    if (s.editKind === "ramp" && ["full", "flipped", "half_left", "half_right", "turn_left", "turn_right"].includes(s.editRampVariant)) return { kind: "ramp", variant: s.editRampVariant as Extract<GeometryEditState, { kind: "ramp" }>["variant"] };
+    return undefined;
+}
+function structureGeometry(s: Structure) {
+    return structureCuboids({
+        buildType: s.buildType as "wall" | "floor" | "cone" | "ramp",
+        grid: s.grid,
+        rotation: s.rotation,
+        editGrid: editGeometryState(s),
+    });
+}
 function wcfg(id: WeaponId) { return id === "shotgun" ? SHOTGUN : ASSAULT_RIFLE; }
 function initW(p: PE): void { p.ammo = ASSAULT_RIFLE.maxAmmo; p.lastFireSequence = -1; p.currentWeapon = CWO; const a = new WeaponAmmoStateSchema(); a.magazineAmmo = ASSAULT_RIFLE.maxAmmo; a.reserveAmmo = ASSAULT_RIFLE.maxReserve; a.isReloading = false; a.reloadProgress = 0; p.weapons.set(ASSAULT_RIFLE.id, a); const s = new WeaponAmmoStateSchema(); s.magazineAmmo = SHOTGUN.maxAmmo; s.reserveAmmo = SHOTGUN.maxReserve; s.isReloading = false; s.reloadProgress = 0; p.weapons.set(SHOTGUN.id, s); }
 const CanonicalRoomState = RoomStateSchema.extend({ structures: t.map(StructureStateSchema) }, "CanonicalRoomState");
@@ -70,7 +93,8 @@ export class TwoPlayerMovementRoom extends Room<{
     private sc = 0;
     private pw: ServerPhysicsWorld | null = null;
     private readonly pwp: Promise<ServerPhysicsWorld>;
-    private readonly inb = new Map<string, any>();
+    /** Per-player sequenced input queues (see PlayerInputQueue). */
+    private readonly inq = new Map<string, PlayerInputQueue<ParsedInput>>();
     private jc = 0;
     private readonly ss = new Map<string, number>();
     private ptl = 0;
@@ -87,7 +111,7 @@ export class TwoPlayerMovementRoom extends Room<{
         this.pwp = ServerPhysicsWorld.create().then(w => { this.pw = w; return w; });
         this.reconnectGrace = createReconnectGraceManager(RECONNECT_GRACE_MS, (sid, snap) => this.handleGraceExpire(sid, snap as PlayerSnapshot));
     }
-    onCreate(): void { this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(BUILD_EDIT_EVENTS.EDIT_REQUEST, (c, m) => { this.hbe(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
+    onCreate(): void { this.maxClients = 2; this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(EDIT_GRID_ACTION_INPUT, (c, m) => { this.hega(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); }); this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.setFixedTimestep(() => this.tick(), THZ); }
     onJoin(c: Client): void {
         // Reconnect within grace: restore prior authoritative state.
         const snap = this.reconnectGrace.restore(c.sessionId) as PlayerSnapshot | undefined;
@@ -95,7 +119,7 @@ export class TwoPlayerMovementRoom extends Room<{
             this.restoreFromSnapshot(c.sessionId, snap);
             return;
         }
-        const si = this.jc % SP.length, sp = SP[si]; this.jc++; this.ss.set(c.sessionId, si); const p = new PlayerStateSchema(); p.x = sp.x; p.y = sp.y; p.z = sp.z; p.yaw = 0; p.velocityY = 0; p.grounded = true; p.lastProcessedSequence = -1; p.health = MAX_HEALTH; p.shield = MAX_SHIELD; p.energy = ENERGY.startingEnergy; p.alive = true; p.isEliminated = false; initW(p); this.wps.set(c.sessionId, cws()); this.state.players.set(c.sessionId, p); const r = new RoundScoreSchema(); r.value = 0; this.state.roundScore.set(c.sessionId, r); if (this.state.matchPhase === MatchPhase.MATCH_ENDED)
+        const si = this.jc % SP.length, sp = SP[si]; this.jc++; this.ss.set(c.sessionId, si); const p = new PlayerStateSchema(); p.x = sp.x; p.y = sp.y; p.z = sp.z; p.yaw = 0; p.velocityY = 0; p.grounded = true; p.crouch = false; p.lastProcessedSequence = -1; p.health = MAX_HEALTH; p.shield = MAX_SHIELD; p.energy = ENERGY.startingEnergy; p.alive = true; p.isEliminated = false; initW(p); this.wps.set(c.sessionId, cws()); this.state.players.set(c.sessionId, p); const r = new RoundScoreSchema(); r.value = 0; this.state.roundScore.set(c.sessionId, r); if (this.state.matchPhase === MatchPhase.MATCH_ENDED)
         this.resetMatch();
     }
     onLeave(c: Client, _e?: number): void {
@@ -106,9 +130,9 @@ export class TwoPlayerMovementRoom extends Room<{
         if (p) {
             this.reconnectGrace.save(c.sessionId, this.createSnapshot(c.sessionId, p));
         }
-        this.state.players.delete(c.sessionId); this.inb.delete(c.sessionId); this.inactiveTicks.delete(c.sessionId); this.rematchVotes.delete(c.sessionId); this.ss.delete(c.sessionId); this.lpt.delete(c.sessionId); this.wps.delete(c.sessionId); this.nextFireTick.delete(c.sessionId);
+        this.state.players.delete(c.sessionId); this.inq.delete(c.sessionId); this.inactiveTicks.delete(c.sessionId); this.rematchVotes.delete(c.sessionId); this.ss.delete(c.sessionId); this.lpt.delete(c.sessionId); this.wps.delete(c.sessionId); this.nextFireTick.delete(c.sessionId);
     }
-    onDispose(): void { this.reconnectGrace.dispose(); this.inb.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); this.inactiveTicks.clear(); this.nextFireTick.clear(); this.rematchVotes.clear(); if (this.pw) {
+    onDispose(): void { this.reconnectGrace.dispose(); this.inq.clear(); this.ss.clear(); this.lpt.clear(); this.occ.clear(); this.wps.clear(); this.inactiveTicks.clear(); this.nextFireTick.clear(); this.rematchVotes.clear(); if (this.pw) {
         this.pw.dispose();
         this.pw = null;
     } }
@@ -123,7 +147,7 @@ export class TwoPlayerMovementRoom extends Room<{
             : cws();
         return {
             x: p.x, y: p.y, z: p.z, yaw: p.yaw, velocityY: p.velocityY,
-            grounded: p.grounded, lastProcessedSequence: p.lastProcessedSequence,
+            grounded: p.grounded, crouch: p.crouch, lastProcessedSequence: p.lastProcessedSequence,
             health: p.health, shield: p.shield, energy: p.energy,
             ammo: p.ammo, lastFireSequence: p.lastFireSequence,
             alive: p.alive, isEliminated: p.isEliminated, currentWeapon: p.currentWeapon as WeaponId,
@@ -140,6 +164,7 @@ export class TwoPlayerMovementRoom extends Room<{
         const p = new PlayerStateSchema();
         p.x = snap.x; p.y = snap.y; p.z = snap.z;
         p.yaw = snap.yaw; p.velocityY = snap.velocityY; p.grounded = snap.grounded;
+        p.crouch = snap.crouch;
         p.lastProcessedSequence = snap.lastProcessedSequence;
         p.health = snap.health; p.shield = snap.shield; p.energy = snap.energy;
         p.alive = snap.alive; p.isEliminated = snap.isEliminated;
@@ -176,7 +201,22 @@ export class TwoPlayerMovementRoom extends Room<{
         }
     }
     private hi(c: Client, m: unknown): void { const i = pi(m); if (!i)
-        return; this.inb.set(c.sessionId, i); this.inactiveTicks.set(c.sessionId, 0); }
+        return; this.inactiveTicks.set(c.sessionId, 0);
+        // Only an in-progress round simulates input; anything sent outside it
+        // is not simulated (the queues are cleared at every round boundary).
+        const p = this.state.players.get(c.sessionId);
+        if (!p || this.state.matchPhase !== MatchPhase.IN_PROGRESS)
+            return;
+        this.queueFor(c.sessionId).enqueue(i, p.lastProcessedSequence); }
+    private queueFor(sid: string): PlayerInputQueue<ParsedInput> { let q = this.inq.get(sid);
+        if (!q) {
+            q = new PlayerInputQueue<ParsedInput>();
+            this.inq.set(sid, q);
+        }
+        return q; }
+    /** Drop every queued input and banked credit; sequence baselines stay. */
+    private clearInputs(): void { for (const q of this.inq.values())
+        q.clear(); }
     private async hpr(c: Client, msg: unknown): Promise<void> { this.sc++; await handleBuildPlacement(c, msg, { state: this.state, bld: this.bld, occ: this.occ, lpt: this.lpt, tc: this.tc, structureId: this.roomId + "-" + this.sc, pwPromise: this.pwp, broadcast: (ev, d) => this.broadcast(ev, d), sendTo: (cl2, ev, d) => cl2.send(ev, d) }); }
     private hws(c: Client, m: unknown): void { if (this.state.matchPhase !== MatchPhase.IN_PROGRESS)
         return; const ws = this.wps.get(c.sessionId); if (!ws)
@@ -212,14 +252,16 @@ export class TwoPlayerMovementRoom extends Room<{
         }
         c.send(WSE, tws(ws));
     }
-    private hbe(c: Client, m: unknown): void {
-        if (!m || typeof m !== "object" || Array.isArray(m))
+    private async hega(c: Client, m: unknown): Promise<void> {
+        const v = validateEditActionRequest(m);
+        if (!v.ok) {
+            c.send(EDIT_GRID_ACTION_INPUT, { structureId: typeof (m as Record<string, unknown>)?.structureId === "string" ? (m as Record<string, unknown>).structureId as string : "", success: false, reason: v.errors.join("; ") });
             return;
-        const r = m as Record<string, unknown>, id = r.structureId;
-        if (typeof id !== "string" || !id)
-            return;
-        const reject = (reason: string) => c.send(BUILD_EDIT_EVENTS.EDIT_RESULT, { structureId: id, success: false, reason });
-        const p = this.state.players.get(c.sessionId), s = this.bld.structures.get(id);
+        }
+        const req = v.value;
+        const reject = (reason: string) => c.send(EDIT_GRID_ACTION_INPUT, { structureId: req.structureId, success: false, reason });
+        const p = this.state.players.get(c.sessionId);
+        const s = this.bld.structures.get(req.structureId);
         if (!p || !p.alive || p.isEliminated || this.state.matchPhase !== MatchPhase.IN_PROGRESS) {
             reject("invalid_player_state");
             return;
@@ -232,31 +274,54 @@ export class TwoPlayerMovementRoom extends Room<{
             reject("not_owned");
             return;
         }
-        if (s.currentDurability <= 0 || s.currentDurability < s.maxDurability) {
-            reject("invalid_structure_state");
-            return;
+        // Build the current edit state from the schema fields.
+        let currentState: import("@buildshift/protocol").StructureEditState;
+        if (s.editKind === "wall") {
+            currentState = { kind: "wall", tiles: [...s.editTiles] };
+        } else if (s.editKind === "floor_cone") {
+            currentState = { kind: "floor_cone", tiles: [...s.editTiles] };
+        } else if (s.editKind === "ramp") {
+            currentState = { kind: "ramp", variant: s.editRampVariant as import("@buildshift/protocol").RampVariant };
+        } else {
+            currentState = createDefaultEditState(s.buildType);
         }
-        let edit: unknown = r.editType;
-        if (r.editPattern !== undefined) {
-            if (!isStructureOpeningPattern(r.editPattern)) {
-                reject("invalid_pattern");
-                return;
-            }
-            edit = ({ door_top: "door", window_center: "window", half_bottom: "half_bottom", none: "" } as const)[r.editPattern];
-        }
-        if (edit !== "" && (!isBuildEditType(edit) || !isBuildEditAllowedForStructure(edit, s.buildType))) {
-            reject("edit_type_not_allowed");
-            return;
-        }
-        if (r.gridOffset !== undefined) {
-            const g = r.gridOffset as Record<string, unknown>;
-            if (!g || typeof g !== "object" || ![g.x, g.y, g.z].every(v => typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 2)) {
-                reject("invalid_cell");
+        // Validate tileIndex bounds for select/deselect.
+        if ((req.action === "select" || req.action === "deselect") && req.tileIndex !== undefined) {
+            const tc = getEditTileCount(s.buildType);
+            if (tc !== null && (req.tileIndex < 0 || req.tileIndex >= tc)) {
+                reject("tile_out_of_range");
                 return;
             }
         }
-        s.editType = edit as string;
-        this.broadcast(BUILD_EDIT_EVENTS.EDIT_RESULT, { structureId: id, success: true, editType: s.editType, updatedStructure: s.toJSON() });
+        // Apply the action.
+        const newState = applyEditAction(currentState, req, s.buildType);
+        if (newState === null) {
+            reject("invalid_action");
+            return;
+        }
+        // Floor authority: the canonical post-edit state must be a valid 2×2
+        // floor form. An edit that would remove the last remaining tile is
+        // rejected server-side (a floor cannot be edited to empty; it must
+        // be destroyed instead).
+        if (s.buildType === "floor" && newState.kind === "floor_cone" && classifyFloorForm(newState.tiles) === null) {
+            reject("invalid_form");
+            return;
+        }
+        // Write back to the schema.
+        if (newState.kind === "wall" || newState.kind === "floor_cone") {
+            s.editKind = newState.kind;
+            s.editTiles.length = 0;
+            for (const tile of newState.tiles) s.editTiles.push(tile);
+            s.editRampVariant = "";
+        } else {
+            s.editKind = "ramp";
+            s.editTiles.length = 0;
+            s.editRampVariant = newState.variant;
+        }
+        const pw = await this.pwp;
+        pw.setStructureColliders(req.structureId, structureGeometry(s));
+        const result = { structureId: req.structureId, success: true, editState: serializeEditState(newState) };
+        this.broadcast(EDIT_GRID_ACTION_INPUT, result);
     }
     private adv(): void { for (const [sid, p] of this.state.players) {
         const ws = this.wps.get(sid);
@@ -319,36 +384,69 @@ export class TwoPlayerMovementRoom extends Room<{
                 this.endRound(op, sid, "anti_stall_timeout");
             return;
         }
+        const q = this.queueFor(sid);
         if (p.isEliminated || this.state.matchPhase !== MatchPhase.IN_PROGRESS) {
-            this.inb.delete(sid);
+            q.clear();
             continue;
         }
-        const buf = this.inb.get(sid);
-        if (buf === undefined) {
+        // One elapsed tick: queued inputs are simulated in sequence order
+        // within the unsimulated-time budget; an idle (no-input) step runs
+        // only once the client is later than the catch-up window
+        // (see PlayerInputQueue).
+        q.beginTick();
+        for (let buf = q.take(); buf !== undefined; buf = this.state.matchPhase === MatchPhase.IN_PROGRESS && !p.isEliminated ? q.take() : undefined) {
+            if (buf.sequence > p.lastProcessedSequence)
+                this.si(sid, p, buf);
+        }
+        if (this.state.matchPhase === MatchPhase.IN_PROGRESS && !p.isEliminated && q.settleIdle())
             this.sn(p);
-            continue;
+    } }
+    /** Simulate one authoritative input step for a player. */
+    private si(sid: string, p: PE, buf: ParsedInput): void {
+        // Sync the authoritative crouch flag from the player's intent.
+        // Crouching down is always allowed. Standing up is denied while the
+        // full standing capsule is obstructed by structure geometry — the
+        // player stays crouched until the way is clear (checked on the
+        // release of the crouch intent, not while holding it).
+        if (buf.crouch) {
+            p.crouch = true;
         }
-        if (buf.sequence <= p.lastProcessedSequence) {
-            this.inb.delete(sid);
-            this.sn(p);
-            continue;
+        else if (p.crouch) {
+            p.crouch = this.standBlocked(p);
         }
+        const mc = p.crouch ? MC_CROUCH : MC;
         const wd = movementInputToWorld({ x: buf.moveX, z: buf.moveZ }, p.yaw);
-        const res = stepPlayerMovement({ x: p.x, y: p.y, z: p.z, vx: 0, vy: p.velocityY, vz: 0, onGround: p.grounded }, { moveX: wd.x, moveZ: wd.z, jump: buf.jump }, TD, MC);
-        p.x = res.x;
-        p.y = res.y;
-        p.z = res.z;
-        p.velocityY = res.vy;
-        p.grounded = res.onGround;
+        const before = { x: p.x, y: p.y, z: p.z, velocityY: p.velocityY, grounded: p.grounded };
+        const res = stepPlayerMovement({ x: p.x, y: p.y, z: p.z, vx: 0, vy: p.velocityY, vz: 0, onGround: p.grounded }, { moveX: wd.x, moveZ: wd.z, jump: buf.jump }, TD, mc);
+        // Structure collision, then the authoritative arena boundary (the
+        // same order client prediction applies).
+        const moved = clampToPlayableArena(resolveStructureMovement(before, { x: res.x, y: res.y, z: res.z, velocityY: res.vy, grounded: res.onGround }, this.pw?.getStructureCuboids() ?? [], PLAYER_COLLIDER.radius, p.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT * 2 : PLAYER_COLLIDER_HALF_TOTAL_HEIGHT * 2), PLAYER_COLLIDER.radius);
+        p.x = moved.x;
+        p.y = moved.y;
+        p.z = moved.z;
+        p.velocityY = moved.velocityY;
+        p.grounded = moved.grounded;
         p.yaw = buf.lookYaw;
         p.lastProcessedSequence = buf.sequence;
         if (buf.primaryFire)
             this.rf(sid, p, buf.lookYaw, buf.lookPitch);
-        this.inb.delete(sid);
-    } }
-    private sn(p: PE): void { const res = stepPlayerMovement({ x: p.x, y: p.y, z: p.z, vx: 0, vy: p.velocityY, vz: 0, onGround: p.grounded }, { moveX: 0, moveZ: 0, jump: false }, TD, MC); p.y = res.y; p.velocityY = res.vy; p.grounded = res.onGround; }
-    private bc(): void { this.broadcast(MATCH_EVENTS.ROUND_RESET, { clearBuilds: true, resetHealth: MAX_HEALTH, resetEnergy: ENERGY.startingEnergy }); this.rp(); this.inb.clear(); this.state.matchPhase = MatchPhase.COUNTDOWN; this.ptl = CT; }
-    private br(): void { this.inb.clear(); this.inactiveTicks.clear(); for (const sid of this.state.players.keys())
+    }
+    private sn(p: PE): void { const mc = p.crouch ? MC_CROUCH : MC; const before = { x: p.x, y: p.y, z: p.z, velocityY: p.velocityY, grounded: p.grounded }; const res = stepPlayerMovement({ x: p.x, y: p.y, z: p.z, vx: 0, vy: p.velocityY, vz: 0, onGround: p.grounded }, { moveX: 0, moveZ: 0, jump: false }, TD, mc); const moved = resolveStructureMovement(before, { x: res.x, y: res.y, z: res.z, velocityY: res.vy, grounded: res.onGround }, this.pw?.getStructureCuboids() ?? [], PLAYER_COLLIDER.radius, p.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT * 2 : PLAYER_COLLIDER_HALF_TOTAL_HEIGHT * 2); p.y = moved.y; p.velocityY = moved.velocityY; p.grounded = moved.grounded; }
+    /**
+     * Authoritative stand-up obstruction check: returns `true` when the full
+     * *standing* capsule at the player's feet position is intersected by any
+     * structure collider, so the player cannot stand up yet. Uses the
+     * character-controller contact offset as the lift so the surface the
+     * player stands on is never a false positive. Only structure colliders are
+     * considered (the arena never obstructs standing up).
+     */
+    private standBlocked(p: PE): boolean {
+        if (!this.pw)
+            return false;
+        return this.pw.isStructureObstructingCapsule(p.x, p.y, p.z, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_COLLIDER.radius, PLAYER_CHARACTER_CONTROLLER.contactOffset);
+    }
+    private bc(): void { this.broadcast(MATCH_EVENTS.ROUND_RESET, { clearBuilds: true, resetHealth: MAX_HEALTH, resetEnergy: ENERGY.startingEnergy }); this.rp(); this.clearInputs(); this.state.matchPhase = MatchPhase.COUNTDOWN; this.ptl = CT; }
+    private br(): void { this.clearInputs(); this.inactiveTicks.clear(); for (const sid of this.state.players.keys())
         this.inactiveTicks.set(sid, 0); this.state.currentRound += 1; this.state.matchPhase = MatchPhase.IN_PROGRESS; this.roundTicks = ROUND_TICKS; this.ptl = 0; }
     private ks(id: string, by: string) { const s = this.bld.structures.get(id); if (!s)
         return; this.bld.structures.delete(id); const c = getStructureConfig(s.buildType); if (c) {
@@ -367,6 +465,7 @@ export class TwoPlayerMovementRoom extends Room<{
         p.yaw = 0;
         p.velocityY = 0;
         p.grounded = true;
+        p.crouch = false;
         p.health = MAX_HEALTH;
         p.shield = MAX_SHIELD;
         p.energy = ENERGY.startingEnergy;
@@ -383,7 +482,7 @@ export class TwoPlayerMovementRoom extends Room<{
         const s = new RoundScoreSchema();
         s.value = 1;
         this.state.roundScore.set(wid, s);
-    } const wins = this.state.roundScore.get(wid)?.value ?? 0; const loserScore = this.state.roundScore.get(_lid)?.value ?? 0; this.state.lastRoundResult.winnerId = wid; this.state.lastRoundResult.roundNumber = this.state.currentRound; this.inb.clear(); this.broadcast(MATCH_EVENTS.ROUND_OVER, { winnerId: wid, loserId: _lid, winnerScore: wins, loserScore: loserScore, roundNumber: this.state.currentRound, reason }); if (wins >= ROUNDS_TO_WIN) {
+    } const wins = this.state.roundScore.get(wid)?.value ?? 0; const loserScore = this.state.roundScore.get(_lid)?.value ?? 0; this.state.lastRoundResult.winnerId = wid; this.state.lastRoundResult.roundNumber = this.state.currentRound; this.clearInputs(); this.broadcast(MATCH_EVENTS.ROUND_OVER, { winnerId: wid, loserId: _lid, winnerScore: wins, loserScore: loserScore, roundNumber: this.state.currentRound, reason }); if (wins >= ROUNDS_TO_WIN) {
         this.state.matchPhase = MatchPhase.MATCH_ENDED;
         this.ptl = 0;
         this.matchEndedAt = Date.now();
@@ -395,7 +494,7 @@ export class TwoPlayerMovementRoom extends Room<{
         return;
     } this.state.matchPhase = MatchPhase.ROUND_ENDED; this.ptl = RT; }
     private resetMatch(): void { this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = CT; this.roundTicks = 0; this.matchEndedAt = 0; this.rematchVotes.clear(); for (const [, r] of this.state.roundScore)
-        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.inb.clear(); this.reconnectGrace.clearAll(); }
+        r.value = 0; this.state.lastRoundResult.winnerId = ""; this.state.lastRoundResult.roundNumber = 0; this.rp(); this.clearInputs(); this.reconnectGrace.clearAll(); }
     private resolveTimeout(): void { const players = [...this.state.players.entries()]; if (players.length < 2)
         return; const [a, ap] = players[0], [b, bp] = players[1]; this.endRound(ap.health > bp.health || (ap.health === bp.health && a < b) ? a : b, ap.health > bp.health || (ap.health === bp.health && a < b) ? b : a, "time_expired"); }
     private rm(c: Client): void { if (this.state.matchPhase !== MatchPhase.MATCH_ENDED || Date.now() - this.matchEndedAt > REMATCH_WINDOW_SECONDS * 1000) {
@@ -421,21 +520,23 @@ export class TwoPlayerMovementRoom extends Room<{
         this.broadcast(EVENTS.FIRE_REJECTED, { shooterId: sid, reason: gate.reason });
         return;
     } this.nextFireTick.set(sid, this.tc + cfg.fireIntervalTicks); slot.magazineAmmo--; this.clients.find(c => c.sessionId === sid)?.send(WSE, tws(ws)); sh.ammo = slot.magazineAmmo; sh.lastFireSequence = seq; const se = sh.weapons.get(wid); if (se)
-        se.magazineAmmo = slot.magazineAmmo; const o = { x: sh.x, y: sh.y + EH, z: sh.z }, d = ad(yaw, pitch), t = [], st = []; for (const [id, tp] of this.state.players) {
+        se.magazineAmmo = slot.magazineAmmo; const shH = sh.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EH, o = { x: sh.x, y: sh.y + shH, z: sh.z }, d = ad(yaw, pitch), tStand: HitscanTarget[] = [], tCrouch: HitscanTarget[] = []; for (const [id, tp] of this.state.players) {
         if (id !== sid && !tp.isEliminated)
-            t.push({ id, position: { x: tp.x, y: tp.y + EH, z: tp.z } });
-    } for (const [id, s] of this.bld.structures) {
-        const c = getStructureConfig(s.buildType);
-        if (!c)
-            continue;
-        const w = wc(s.grid, c, s.rotation);
-        st.push({ id, position: { x: w.ctr.x, y: w.ctr.y, z: w.ctr.z } });
+            (tp.crouch ? tCrouch : tStand).push({ id, position: { x: tp.x, y: tp.y + (tp.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EH), z: tp.z } });
     } const rays = wid === "shotgun" ? computeShotgunSpread(o, d, SHOTGUN_WEAPON.spreadDegrees * Math.PI / 180, SHOTGUN_WEAPON.pellets) : [{ origin: o, direction: d }]; const damage = wid === "shotgun" ? SHOTGUN_WEAPON.perPelletDamage : cfg.damage; for (const ray of rays) {
         if (this.state.matchPhase !== MatchPhase.IN_PROGRESS)
             break;
-        const pH = hitscan(o, ray.direction, { damage, range: cfg.range, targetRadius: TR }, t)[0];
-        const sH = hitscan(o, ray.direction, { damage, range: cfg.range, targetRadius: 0.5 }, st)[0];
-        const hit = pH && (sH === undefined || pH.distance <= sH.distance) ? pH : sH;
+        const standHit = hitscan(o, ray.direction, { damage, range: cfg.range, targetRadius: TR }, tStand)[0];
+        const crouchHit = hitscan(o, ray.direction, { damage, range: cfg.range, targetRadius: PLAYER_CROUCH_COLLIDER.radius }, tCrouch)[0];
+        let sH: HitscanHit | undefined;
+        for (const [id, structure] of this.bld.structures) {
+            const intersection = rayStructureIntersection(o, ray.direction, cfg.range, structureGeometry(structure));
+            if (intersection && (!sH || intersection.distance < sH.distance)) {
+                sH = { targetId: id, damage, distance: intersection.distance, hitPoint: intersection.point, penetrates: false };
+            }
+        }
+        const candidates = [standHit, crouchHit, sH].filter((h): h is HitscanHit => h !== undefined);
+        const hit = candidates.length > 0 ? candidates.reduce((a, b) => (a.distance <= b.distance ? a : b)) : undefined;
         if (!hit)
             continue;
         if (this.state.players.has(hit.targetId)) {

@@ -6,15 +6,20 @@
  *      byte-for-byte unchanged after scene creation.
  *   2. Every collider presentation mesh is non-pickable and non-collidable,
  *      ensuring it cannot intercept gameplay picking or physics queries.
- *   3. Every decorative/presentation-only mesh (walls, posts, borders, ring,
- *      skybox) is non-pickable and non-collidable.
+ *   3. Every decorative/presentation-only mesh (shell, caps, floor grid,
+ *      spawn markers, skybox) is non-pickable and non-collidable.
  *
  * Uses Babylon's NullEngine (headless, no WebGL required).
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { createFoundationScene } from "./createFoundationScene";
-import { ARENA_COLLIDERS, PLAYER_SPAWN } from "@buildshift/game-config";
+import {
+  ARENA_COLLIDERS,
+  BUILD_BOUNDS,
+  BUILD_GRID,
+  PLAYER_SPAWN,
+} from "@buildshift/game-config";
 
 /** Canonical snapshot of the collider table (id, position, halfExtents). */
 const CANONICAL_COLLIDERS = ARENA_COLLIDERS.map((c) => ({
@@ -27,6 +32,28 @@ const CANONICAL_COLLIDERS = ARENA_COLLIDERS.map((c) => ({
 const CANONICAL_SPAWN = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.z };
 
 /**
+ * The floor grid line names expected for one axis, derived the same way
+ * `setupArenaDecorations` does: cell boundaries `i*cellSize` for
+ * `i = min..max+1`, clipped to the arena interior.
+ */
+function expectedGridLineNames(
+  axis: "x" | "z",
+  min: number,
+  max: number,
+  halfExtent: number,
+): string[] {
+  const names: string[] = [];
+  for (let i = min; i <= max + 1; i += 1) {
+    if (Math.abs(i * BUILD_GRID.cellSize) < halfExtent) {
+      names.push(`arena-grid-line-${axis}-${names.length}`);
+    }
+  }
+  return names;
+}
+
+const GROUND = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
+
+/**
  * Names of all presentation-only (non-gameplay) meshes created by
  * `createFoundationScene` and its sub-modules. These must never
  * participate in picking or collision.
@@ -34,33 +61,26 @@ const CANONICAL_SPAWN = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.
 const PRESENTATION_MESH_NAMES = [
   // Sky
   "arena-skybox",
-  // Play-field plate
+  // Play-field plate (build-area boundary)
   "arena-playfield-plate",
-  // Perimeter walls
-  "arena-wall-n",
-  "arena-wall-s",
-  "arena-wall-e",
-  "arena-wall-w",
-  // Accent wall caps
-  "arena-wall-cap-n",
-  "arena-wall-cap-s",
-  "arena-wall-cap-e",
-  "arena-wall-cap-w",
-  // Corner posts
-  "arena-post-ne",
-  "arena-post-nw",
-  "arena-post-se",
-  "arena-post-sw",
-  // Ground border strips
-  "arena-border-n",
-  "arena-border-s",
-  "arena-border-e",
-  "arena-border-w",
-  // Center ring
-  "arena-center-ring",
-  // Spawn side markers
+  // Indestructible shell
+  "arena-shell-n",
+  "arena-shell-s",
+  "arena-shell-e",
+  "arena-shell-w",
+  // Accent shell caps
+  "arena-shell-cap-n",
+  "arena-shell-cap-s",
+  "arena-shell-cap-e",
+  "arena-shell-cap-w",
+  // Floor build grid
+  ...expectedGridLineNames("x", BUILD_BOUNDS.minX, BUILD_BOUNDS.maxX, GROUND.halfExtents[0]),
+  ...expectedGridLineNames("z", BUILD_BOUNDS.minZ, BUILD_BOUNDS.maxZ, GROUND.halfExtents[2]),
+  // Mirrored 1v1 spawn markers
   "arena-spawn-pad",
   "arena-spawn-bar",
+  "arena-spawn-pad-mirror",
+  "arena-spawn-bar-mirror",
 ];
 
 describe("arena presentation — canonical config invariants", () => {
@@ -179,6 +199,31 @@ describe("arena presentation — decorative meshes are non-pickable/non-collidab
         mesh!.checkCollisions,
         `presentation mesh "${name}" must be non-collidable`,
       ).toBe(false);
+    }
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("removes the old clutter pieces (posts, border strips, center ring)", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    for (const name of [
+      "arena-post-ne",
+      "arena-post-nw",
+      "arena-post-se",
+      "arena-post-sw",
+      "arena-border-n",
+      "arena-border-s",
+      "arena-border-e",
+      "arena-border-w",
+      "arena-center-ring",
+    ]) {
+      expect(
+        scene.getMeshByName(name),
+        `clutter mesh "${name}" should no longer exist`,
+      ).toBeNull();
     }
 
     scene.dispose();

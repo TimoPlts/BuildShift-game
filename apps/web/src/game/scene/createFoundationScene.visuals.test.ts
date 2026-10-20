@@ -87,17 +87,17 @@ describe("createFoundationScene — visual wiring", () => {
     engine.dispose();
   });
 
-  it("creates all four perimeter wall decoration meshes", () => {
+  it("creates all four indestructible shell wall decoration meshes", () => {
     const { engine, scene } = makeScene();
 
     for (const name of [
-      "arena-wall-n",
-      "arena-wall-s",
-      "arena-wall-e",
-      "arena-wall-w",
+      "arena-shell-n",
+      "arena-shell-s",
+      "arena-shell-e",
+      "arena-shell-w",
     ]) {
       const wall = scene.getMeshByName(name);
-      expect(wall, `wall "${name}" not found`).not.toBeNull();
+      expect(wall, `shell wall "${name}" not found`).not.toBeNull();
       expect(wall!.isPickable).toBe(false);
     }
 
@@ -105,12 +105,16 @@ describe("createFoundationScene — visual wiring", () => {
     engine.dispose();
   });
 
-  it("creates the center ring decoration mesh", () => {
+  it("creates the floor build-grid decoration meshes", () => {
     const { engine, scene } = makeScene();
 
-    const ring = scene.getMeshByName("arena-center-ring");
-    expect(ring).not.toBeNull();
-    expect(ring!.isPickable).toBe(false);
+    const gridMeshes = scene.meshes.filter((m) =>
+      m.name.startsWith("arena-grid-line-"),
+    );
+    expect(gridMeshes.length).toBeGreaterThanOrEqual(10);
+    for (const mesh of gridMeshes) {
+      expect(mesh.isPickable, mesh.name).toBe(false);
+    }
 
     scene.dispose();
     engine.dispose();

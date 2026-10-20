@@ -1,24 +1,37 @@
 /**
  * buildEdit — the presentation-only client half of the existing
- * server-authoritative build-edit system (docs/TECHNICAL_ARCHITECTURE.md §24).
+ * server-authoritative piece-edit system (docs/TECHNICAL_ARCHITECTURE.md §24).
  *
  * Public surface:
  *
- *  - {@link selectTargetStructure} — pure aim-ray selection of an owned,
- *    editable structure from the authoritative building-state mirror.
- *  - {@link BuildEditInputController} — the browser keyboard intent source
- *    (edit mode toggle, edit choice, apply).
+ *  - {@link selectTargetStructure} — pure aim-ray selection of an owned
+ *    structure from the authoritative building-state mirror.
+ *  - {@link aimEditTile} / {@link sampleEditSurface} — pure crosshair →
+ *    canonical tile (wall 3×3, floor/cone 2×2) / ramp width-half mapping,
+ *    and {@link TileDragSelection} — the local drag selection that never
+ *    skips a tile the crosshair path crosses.
+ *  - {@link BuildEditInputController} — the browser intent source (edit mode
+ *    toggle, confirm, cancel, reset, and the routed primary-button
+ *    tile-selection state — no mouse listeners of its own).
  *  - {@link BuildEditController} — the presentation-only orchestrator that
- *    tracks the chosen edit, submits `build:edit_request` intents, and turns
- *    `build:edit_result` into accepted/rejected feedback.
+ *    tracks the pending tile state (optimistic apply + authoritative
+ *    convergence from the replicated state and the
+ *    `two-player:edit_grid_action` result broadcast), submits
+ *    `edit_grid_action` intents, and turns results into feedback.
  *  - {@link buildBuildEditHudView} / {@link buildEditHudChangeKey} — pure
  *    mapping of the controller's presentation state into the flat HUD view.
- *  - {@link createBuildEditSystem} — wires the input + controller together and
- *    owns their lifecycle (dispose tears both down).
+ *  - {@link buildEditPreviewGeometry} — pure mapping of the canonical edit
+ *    model into a lightweight preview descriptor (tiles / ramp variant /
+ *    validity), engine-free and serializable.
+ *  - {@link EditPreviewPresentation} — the presentation-only Babylon preview
+ *    of the pending edit (full piece, projected grid, selection highlight,
+ *    resulting shape, clear invalid indication).
+ *  - {@link createBuildEditSystem} — wires the input + controller together
+ *    and owns their lifecycle (dispose tears both down).
  *
  * Authority contract: this module is presentation-only. It reads the
  * replicated building state, sends edit *intents*, and consumes the server's
- * authoritative result. It never creates/edits/deletes structures, never
+ * authoritative results. It never creates/edits/deletes structures, never
  * touches structure health, ownership, placement rules, Energy, grid logic,
  * the networking protocol, or server authority — those are unchanged.
  */
@@ -31,7 +44,10 @@ import {
   BuildEditInputController,
   type BuildEditInputEnvironment,
 } from "./buildEditInputController";
+import type { InteractionModeCoordinator } from "../input/interactionMode";
+import type { ActionMap } from "../input/actionBindings";
 import type { TargetedStructure } from "./structureSelection";
+import type { BuildLatencyMetrics } from "../building/buildLatencyMetrics";
 
 /**
  * The wired build-edit system: the input controller + orchestrator plus a
@@ -56,6 +72,26 @@ export interface BuildEditSystem {
 export interface CreateBuildEditSystemOptions {
   now?: () => number;
   env?: BuildEditInputEnvironment;
+  /**
+   * "Confirm Edit on Release" — releasing the primary button after a tile
+   * selection also confirms the edit (fast single-click commit).
+   */
+  confirmOnRelease?: boolean;
+  /**
+   * The shared interaction-mode coordinator (overhaul task 12). When
+   * provided, edit-mode ownership moves to the coordinator so build and
+   * edit can never be active at once; the runtime shares one instance with
+   * the building system.
+   */
+  interactionMode?: InteractionModeCoordinator;
+  /**
+   * Optional latency metrics tracker for the build-edit system. When
+   * provided, the controller records send/result timestamps for the
+   * developer diagnostics overlay.
+   */
+  latency?: BuildLatencyMetrics;
+  /** The shared gameplay action map (bindings); defaults when omitted. */
+  actions?: ActionMap;
 }
 
 /**
@@ -69,11 +105,20 @@ export function createBuildEditSystem(
   network: BuildEditNetworkLike,
   options?: CreateBuildEditSystemOptions,
 ): BuildEditSystem {
-  const input = new BuildEditInputController(canvas, options?.env);
+  const input = new BuildEditInputController(
+    canvas,
+    options?.env,
+    options?.interactionMode,
+    options?.actions,
+  );
   const controller = new BuildEditController(
     input,
     network,
     options?.now,
+    {
+      confirmOnRelease: options?.confirmOnRelease,
+      latency: options?.latency,
+    },
   );
 
   return {
@@ -92,21 +137,26 @@ export function createBuildEditSystem(
 // Re-exports so the runtime and tests import a single, stable surface.
 export {
   BuildEditController,
-  supportedEditsFor,
-  parseBuildEditResult,
+  BUILD_EDIT_RANGE,
+  EDIT_GRID_ACTION_MESSAGE,
+  parseEditActionResult,
+  editDiffActions,
+  sameEditState,
+  type BuildEditView,
+  type EditActionBody,
   type BuildEditFrameContext,
   type BuildEditNetworkLike,
-  type BuildEditResultInfo,
+  type BuildEditActionResultInfo,
   type BuildEditFeedback,
-  BUILD_EDIT_RANGE,
+  type BuildEditControllerOptions,
 } from "./buildEditController";
 export {
   BuildEditInputController,
   defaultBuildEditInputEnvironment,
   EDIT_MODE_TOGGLE_KEY,
-  APPLY_EDIT_KEY,
-  EDIT_TYPE_KEYS,
-  type BuildEditSelection,
+  CONFIRM_EDIT_KEY,
+  CANCEL_EDIT_KEY,
+  RESET_EDIT_KEY,
   type BuildEditInputEnvironment,
   type InputEventTarget,
 } from "./buildEditInputController";
@@ -117,6 +167,22 @@ export {
   type Vec3Like,
 } from "./structureSelection";
 export {
+  TileDragSelection,
+  cellsAlongSegment,
+  editGridSize,
+  sampleEditSurface,
+  sampleTile,
+  type EditGridSize,
+  type EditSurfaceSample,
+  type EditRampSample,
+  type TileDragMode,
+} from "./editDragSelection";
+export {
+  aimEditTile,
+  type EditTileAimResult,
+  type EditTileAimInput,
+} from "./editTileSelection";
+export {
   buildBuildEditHudView,
   buildEditHudChangeKey,
   type BuildEditHudState,
@@ -124,3 +190,36 @@ export {
   type BuildEditTargetHud,
   type BuildEditFeedbackHud,
 } from "./buildEditHudView";
+export {
+  buildEditPreviewGeometry,
+  type EditPreviewTile,
+  type EditPreviewRamp,
+  type EditPreviewGeometry,
+} from "./editPreviewGeometry";
+export {
+  CONE_CORNER_COUNT,
+  CONE_CORNER_NAMES,
+  CONE_SHAPE_IDS,
+  CONE_SHAPE_TILES,
+  isConeShapeId,
+  coneTilesForShape,
+  coneShapeForTiles,
+  validateConeTiles,
+  isConeEditState,
+  classifyConeEditState,
+  resetConeEditState,
+  coneGeometryFromTiles,
+  coneGeometryFromState,
+  type ConeShapeId,
+  type ConeTilePattern,
+  type ConeTilesValidation,
+  type ConeCornerGeometry,
+  type ConeGeometry,
+} from "./coneEdit";
+export {
+  EditPreviewPresentation,
+  editTileLayout,
+  editRampLayout,
+  type EditPreviewInput,
+  type EditTileLayout,
+} from "./EditPreviewPresentation";

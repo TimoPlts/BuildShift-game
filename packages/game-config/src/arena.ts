@@ -103,3 +103,31 @@ export const ARENA_COLLIDERS: ArenaCollider[] = [
     halfExtents: [2, 1, 2],
   },
 ];
+
+// ─── Authoritative playable bounds ─────────────────────────────────────────
+
+const FOUNDATION = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
+
+/**
+ * The authoritative Box Fight playable area in the X/Z plane: the footprint
+ * of the foundation slab players stand on. The server confines every player
+ * to it, and client prediction applies the identical rule, so they agree.
+ * Decorative arena props are NOT authoritative collision; only this boundary
+ * shell is.
+ */
+export const PLAYABLE_ARENA_BOUNDS = {
+  minX: FOUNDATION.position[0] - FOUNDATION.halfExtents[0],
+  maxX: FOUNDATION.position[0] + FOUNDATION.halfExtents[0],
+  minZ: FOUNDATION.position[2] - FOUNDATION.halfExtents[2],
+  maxZ: FOUNDATION.position[2] + FOUNDATION.halfExtents[2],
+} as const;
+
+/**
+ * Confine a player's capsule (centre `x`/`z`, horizontal `radius`) to the
+ * playable area: the whole capsule stays over the foundation slab.
+ */
+export function clampToPlayableArena<T extends { x: number; z: number }>(pose: T, radius: number): T {
+  const x = Math.min(PLAYABLE_ARENA_BOUNDS.maxX - radius, Math.max(PLAYABLE_ARENA_BOUNDS.minX + radius, pose.x));
+  const z = Math.min(PLAYABLE_ARENA_BOUNDS.maxZ - radius, Math.max(PLAYABLE_ARENA_BOUNDS.minZ + radius, pose.z));
+  return x === pose.x && z === pose.z ? pose : { ...pose, x, z };
+}

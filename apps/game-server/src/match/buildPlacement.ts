@@ -6,21 +6,22 @@ import {
   computeEnergyAfterBuild,
   ENERGY_EVENTS,
   BUILD_EVENTS,
+  createDefaultEditState,
 } from "@buildshift/protocol";
 import {
-  BUILD_GRID,
-  BUILD_RANGE,
   BUILD_RATE,
   getStructureConfig,
+  isValidPlacementRotation,
+  isWithinPlacementRange,
   ENERGY,
   getStructureDurability,
+  structureCuboids,
 } from "@buildshift/game-config";
 import {
   StructureStateSchema,
   StructureGridSchema,
   ib,
   oc,
-  wc,
 } from "../state/buildingState.js";
 import type { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import type { BuildingStateSchemaInstance } from "../state/buildingState.js";
@@ -61,7 +62,9 @@ export async function handleBuildPlacement(
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "unknown_build_type" });
     return;
   }
-  if (cfg.rotationCount === 1 && it.rotation !== 0) {
+  // Canonical rotation rule shared with the client preview: an integer in
+  // [0, rotationCount) — rotation-invariant kinds place only with 0.
+  if (!isValidPlacementRotation(it.buildType, it.rotation)) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
     return;
   }
@@ -73,11 +76,8 @@ export async function handleBuildPlacement(
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
     return;
   }
-  const ax = it.grid.x * BUILD_GRID.cellSize;
-  const ay = it.grid.y * BUILD_GRID.layerHeight;
-  const az = it.grid.z * BUILD_GRID.cellSize;
-  const dx = pl.x - ax, dy = pl.y - ay, dz = pl.z - az;
-  if (Math.sqrt(dx * dx + dy * dy + dz * dz) > BUILD_RANGE.maxPlacementDistance) {
+  // Canonical range rule shared with the client preview (full 3D distance).
+  if (!isWithinPlacementRange(pl, it.grid)) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "out_of_range" });
     return;
   }
@@ -119,13 +119,16 @@ export async function handleBuildPlacement(
   en.createdSequence = st.createdSequence;
   en.maxDurability = maxDur;
   en.currentDurability = maxDur;
+  const initialEdit = createDefaultEditState(it.buildType);
+  en.editKind = initialEdit.kind;
+  en.editRampVariant = initialEdit.kind === "ramp" ? initialEdit.variant : "";
+  if (initialEdit.kind !== "ramp") en.editTiles.push(...initialEdit.tiles);
   ctx.bld.structures.set(id, en);
   for (const cell of cells) ctx.occ.add(cell);
   ctx.lpt.set(sid, ctx.tc);
   pl.energy = computeEnergyAfterBuild(pl.energy, cfg.cost, ENERGY.maxEnergy);
   ctx.broadcast(ENERGY_EVENTS.ENERGY_UPDATE, { playerId: sid, energy: pl.energy });
   const pw = await ctx.pwPromise;
-  const wco = wc(it.grid, cfg, it.rotation);
-  pw.addStructureCollider(id, wco.ctr, wco.he);
+  pw.setStructureColliders(id, structureCuboids({ buildType: it.buildType, grid: it.grid, rotation: it.rotation }));
   ctx.broadcast(BUILD_EVENTS.STRUCTURE_PLACED, { structure: st });
 }

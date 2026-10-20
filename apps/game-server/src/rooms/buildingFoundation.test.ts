@@ -95,9 +95,9 @@ describe("Building foundation — server-authoritative contract", () => {
 
   it("rejects overlapping placement with overlap", async () => {
     await wait(RATE_WAIT);
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 102, buildType: "wall", grid: { x: 3, y: 0, z: 0 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 102, buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0 });
     await wfe(pA, (e) => e.structure.createdSequence === 102, 5000, "setup");
-    roomB.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 103, buildType: "wall", grid: { x: 3, y: 0, z: 0 }, rotation: 0 });
+    roomB.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 103, buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0 });
     const ev = await wfe(rB, (e) => e.sequence === 103, 5000, "overlap");
     expect(ev.reason).toBe("overlap");
     await wait(200);
@@ -105,8 +105,9 @@ describe("Building foundation — server-authoritative contract", () => {
   }, 15000);
 
   it("rejects out-of-range placement with out_of_range", async () => {
-    // Grid x=6 → world x=12, distance from player at (0, 0.9, 6) ≈ 13.4 > 12.
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 104, buildType: "wall", grid: { x: 6, y: 0, z: 0 }, rotation: 0 });
+    // Grid (2,0,2) → anchor ≈ (10.24, 0, 10.24); player A spawns at (-5, 0, 0),
+    // so the distance ≈ 18.4 m > 12 (in-bounds but out of range).
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 104, buildType: "wall", grid: { x: 2, y: 0, z: 2 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 104, 5000, "range");
     expect(ev.reason).toBe("out_of_range");
     await wait(200);
@@ -117,7 +118,7 @@ describe("Building foundation — server-authoritative contract", () => {
     await wait(RATE_WAIT);
     roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 105, buildType: "wall", grid: { x: 0, y: 0, z: 2 }, rotation: 0 });
     await wfe(pA, (e) => e.structure.createdSequence === 105, 5000, "first");
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 106, buildType: "wall", grid: { x: 0, y: 0, z: 3 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 106, buildType: "wall", grid: { x: 0, y: 0, z: 1 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 106 && e.reason === "rate_limited", 5000, "rl");
     expect(ev.reason).toBe("rate_limited");
     await wait(200);
@@ -126,10 +127,10 @@ describe("Building foundation — server-authoritative contract", () => {
 
   it("records correct ownerId per structure", async () => {
     await wait(RATE_WAIT);
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 107, buildType: "wall", grid: { x: -3, y: 0, z: 0 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 107, buildType: "wall", grid: { x: -1, y: 0, z: 0 }, rotation: 0 });
     const sA = (await wfe(pA, (e) => e.structure.createdSequence === 107, 5000, "oA")).structure;
     expect(sA.ownerId).toBe(roomA.sessionId);
-    roomB.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 108, buildType: "floor", grid: { x: 3, y: 0, z: 1 }, rotation: 0 });
+    roomB.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 108, buildType: "floor", grid: { x: 2, y: 0, z: 1 }, rotation: 0 });
     const sB = (await wfe(pB, (e) => e.structure.createdSequence === 108, 5000, "oB")).structure;
     expect(sB.ownerId).toBe(roomB.sessionId);
   }, 15000);
@@ -152,7 +153,7 @@ describe("Building foundation — server-authoritative contract", () => {
 
   it("structures persist after a player leaves; player state is cleaned up", async () => {
     await wait(RATE_WAIT);
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 109, buildType: "wall", grid: { x: -1, y: 0, z: 0 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 109, buildType: "wall", grid: { x: -1, y: 0, z: 1 }, rotation: 0 });
     await wfe(pA, (e) => e.structure.createdSequence === 109, 5000, "persist");
     await wd(roomB.leave(), 5000, "leave");
     await wfs(roomA, (s) => pfs(s, roomB.sessionId) === undefined, 5000);

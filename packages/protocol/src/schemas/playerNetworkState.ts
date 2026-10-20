@@ -26,12 +26,16 @@ export interface PlayerNetworkState {
   vy: number;
   /** Velocity Z, m/s. */
   vz: number;
-  /**
-   * Highest input sequence the server has authoritatively processed for
+  /** Highest input sequence the server has authoritatively processed for
    * this player. `-1` means no input has been processed yet. The client
    * reconciles by re-applying local inputs with sequence > this value.
    */
   sequence: number;
+  /**
+   * Authoritative crouch flag: `true` while the player is crouched
+   * (reduced collider / hitbox + reduced move speed).
+   */
+  crouch: boolean;
   /** Horizontal facing, radians (0 faces -Z, positive rotates toward +X). */
   yaw: number;
   /** Vertical look, radians (0 = horizontal, positive = looking up). */

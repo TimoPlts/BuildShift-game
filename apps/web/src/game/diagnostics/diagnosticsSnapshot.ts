@@ -6,7 +6,9 @@
  * It is a display-only view: no gameplay, networking, or authority logic
  * reads from this object.
  */
+import type { LookInputStats } from "../input/InputManager";
 import type { MovementMetricsReading } from "./movementMetrics";
+import type { BuildLatencyReading } from "../building/buildLatencyMetrics";
 
 /**
  * A single axis-aligned position in world space.
@@ -58,4 +60,17 @@ export interface DiagnosticsSnapshot {
    * predate the field.
    */
   movement?: MovementMetricsReading | null;
+  /**
+   * Development-only build/edit latency metrics (input-to-feedback,
+   * request-to-accept, accept-to-replicated-mesh). Present on the
+   * canonical production path; may be absent from test fixtures that
+   * predate the field.
+   */
+  buildLatency?: BuildLatencyReading | null;
+  /**
+   * Development-only pointer-lock look-input statistics (applied events,
+   * largest per-event delta, dropped corrupt spikes, lock acquisitions,
+   * raw-movement grant).
+   */
+  look?: LookInputStats | null;
 }

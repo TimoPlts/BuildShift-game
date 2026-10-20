@@ -11,11 +11,18 @@ export {
   PLAYER_COLLIDER,
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
   PLAYER_COLLIDER_TOTAL_HEIGHT,
+  PLAYER_CROUCH_COLLIDER,
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_CROUCH_COLLIDER_TOTAL_HEIGHT,
   PLAYER_CHARACTER_CONTROLLER,
   PHYSICS_TIMING,
 } from "./character.js";
-export { ARENA_COLLIDERS, PLAYER_SPAWN } from "./arena.js";
+export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableArena } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
+export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
+export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
+export { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection, WALL_HIGH_FRACTION } from "./surfacePlacement.js";
+export type { StructureSurfaceHit, SurfacePlacement } from "./surfacePlacement.js";
 
 export {
   SHOTGUN,
@@ -93,6 +100,21 @@ export {
   BUILD_STRUCTURE_KEYS,
   STRUCTURES,
   getStructureConfig,
+  normalizePlacementRotation,
+  isValidPlacementRotation,
+  rotatedFootprintExtents,
+  structureFootprintCells,
+  isWithinBuildBounds,
+  placementAnchorWorld,
+  isWithinPlacementRange,
+  structureSlots,
+  slotsConflict,
+  wallEdgeRotation,
+  wallEdgeForOrientation,
+  quarterTurnFromYaw,
+  facingPlacementRotation,
+  buildCellAt,
+  type BuildCell,
   type BuildStructureKey,
   type StructureConfig,
 } from "./building.js";

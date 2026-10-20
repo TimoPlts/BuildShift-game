@@ -17,6 +17,12 @@ export const THIRD_PERSON_CAMERA = {
   /** Height of the orbit pivot above the player's feet, in metres. */
   targetHeight: 1.6,
   /**
+   * Orbit-pivot height reduction (metres) applied while the local player is
+   * crouched, so the camera lowers smoothly with the crouched body. Applied
+   * as a smoothed dip (the runtime eases it in/out) rather than a hard step.
+   */
+  crouchDip: 0.45,
+  /**
    * Over-the-shoulder lateral offset, in metres. The orbit pivot is shifted
    * this far screen-right of the player, so the player renders slightly
    * left of screen centre while the crosshair still aims along the camera's
@@ -48,4 +54,10 @@ export const THIRD_PERSON_CAMERA = {
   minimumCameraHeight: 0.2,
   /** Closest the dolly-in may bring the camera to the orbit pivot, in metres. */
   minimumCameraDistance: 1.2,
+  /**
+   * Gap (metres) maintained between the camera and the nearest build
+   * structure surface when the orbit path is obstructed. Prevents the
+   * camera from rendering exactly on the structure face (Z-fighting).
+   */
+  buildObstructionGap: 0.1,
 } as const;

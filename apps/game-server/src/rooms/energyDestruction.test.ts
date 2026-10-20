@@ -90,7 +90,7 @@ expect(pl(ra.state,rb.sessionId).energy).toBe(ENERGY.maxEnergy);
 });
 
 it("exact floor cost",async()=>{
-ra.send(BE.PLACEMENT_REQUEST,{sequence:200,buildType:"floor",grid:{x:1,y:0,z:1},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:200,buildType:"floor",grid:{x:0,y:0,z:0},rotation:0});
 const ev=await wfe(eu,(e)=>e.playerId===ra.sessionId&&e.energy===95,5000,"eu");
 expect(ev.energy).toBe(95);
 const pe=await wfe(spA,(e)=>e.structure.createdSequence===200,5000,"pl");
@@ -114,7 +114,7 @@ expect(pl(ra.state,ra.sessionId).energy).toBe(ENERGY.maxEnergy);
 it("no double charge",async()=>{
 await W(400);
 const b=pl(ra.state,ra.sessionId).energy;
-ra.send(BE.PLACEMENT_REQUEST,{sequence:201,buildType:"wall",grid:{x:6,y:0,z:0},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:201,buildType:"wall",grid:{x:2,y:0,z:0},rotation:0});
 await W(300);
 const rr=rej.find(r=>r.sequence===201);
 expect(rr).toBeDefined();
@@ -125,9 +125,9 @@ expect(pl(ra.state,ra.sessionId).energy).toBeGreaterThanOrEqual(b);
 it("no charge on rate-limit rejection",async()=>{
 await W(400);
 const lenB=rej.length;
-ra.send(BE.PLACEMENT_REQUEST,{sequence:210,buildType:"floor",grid:{x:1,y:0,z:2},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:210,buildType:"floor",grid:{x:0,y:0,z:1},rotation:0});
 await W(100);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:211,buildType:"wall",grid:{x:2,y:0,z:2},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:211,buildType:"wall",grid:{x:1,y:0,z:1},rotation:0});
 await W(500);
 const rr=rej.slice(lenB).find(r=>r.sequence===211&&r.reason==="rate_limited");
 expect(rr).toBeDefined();
@@ -136,14 +136,14 @@ expect(pl(ra.state,ra.sessionId).energy).toBeGreaterThanOrEqual(95);
 
 it("wall cost 10",async()=>{
 await W(400);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:202,buildType:"wall",grid:{x:2,y:0,z:2},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:202,buildType:"wall",grid:{x:1,y:0,z:1},rotation:0});
 const ev=await wfe(eu,(e)=>e.playerId===ra.sessionId&&e.energy===90,5000,"w");
 expect(ev.energy).toBe(90);
 },15000);
 
 it("damage+destroy+remove",async()=>{
 await W(600);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:203,buildType:"cone",grid:{x:-2,y:0,z:0},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:203,buildType:"cone",grid:{x:1,y:0,z:0},rotation:0});
 await wfe(spA,(e)=>e.structure.createdSequence===203,5000,"cone");
 const sid=spA.find(e=>e.structure.createdSequence===203)!.structure.structureId;
 for(const q of[300,310,320,330]){
@@ -171,7 +171,7 @@ pw.dispose();
 
 it("round cleanup",async()=>{
 await W(400);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:204,buildType:"floor",grid:{x:-2,y:0,z:-2},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:204,buildType:"floor",grid:{x:-2,y:0,z:0},rotation:0});
 await wfe(spA,(e)=>e.structure.createdSequence===204,5000,"fl");
 const targetId=spA.find(e=>e.structure.createdSequence===204)!.structure.structureId;
 for(let i=0;i<30;i++){

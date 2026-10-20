@@ -46,7 +46,7 @@ describe("GameRuntime movement presentation wiring", () => {
       "this.cameraController.setTransientVerticalOffset(this.movementFeedback.updateCameraMotion(dt))",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+      "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",
     );
     expect(setIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(setIdx);
@@ -56,16 +56,18 @@ describe("GameRuntime movement presentation wiring", () => {
     expect(runtime).toContain("this.cameraController.setPitchOffset(this.cameraRecoil.update(dt))");
   });
 
-  it("toggles the build-mode FOV each frame from the existing build-mode state", () => {
+  it("toggles the build-mode FOV each frame from the shared interaction-mode state", () => {
     const buildIdx = runtime.indexOf(
-      "this.cameraController.setBuildMode(this.buildingSystem.controller.isBuildModeActive())",
+      "this.cameraController.setBuildMode(this.interactionMode.isBuildActive()||this.interactionMode.isEditActive())",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+      "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",
     );
     // The FOV toggle is presentation wiring on the existing camera path, set
-    // before the camera update from the build-mode state the runtime already
-    // tracks — no new gameplay or authority source.
+    // before the camera update from the shared interaction-mode state (the
+    // build FOV stays wide through the build-edit layer too, so entering
+    // edit from build never snaps the camera) — no new gameplay or authority
+    // source.
     expect(buildIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(buildIdx);
   });

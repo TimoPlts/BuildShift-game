@@ -5,14 +5,13 @@
  *
  * This module owns NO gameplay state and NO side effects. It only copies and
  * normalises the controller's presentation-only values (mode, targeted
- * structure, chosen edit, allowed edits, accepted/rejected feedback) and
- * quantises them into a stable change-key fragment so the runtime can skip
- * re-emitting when nothing player-visible changed.
+ * structure, pending tile state, accepted/rejected feedback) and quantises
+ * them into a stable change-key fragment so the runtime can skip re-emitting
+ * when nothing player-visible changed.
  */
-import type { BuildEditType } from "@buildshift/protocol";
-import type { BuildEditSelection } from "./buildEditInputController";
+import type { StructureEditState } from "@buildshift/protocol";
 import type { TargetedStructure } from "./structureSelection";
-import type { BuildEditFeedback } from "./buildEditController";
+import type { BuildEditFeedback, BuildEditView } from "./buildEditController";
 
 /** The structure the aim ray currently selects (presentation data). */
 export interface BuildEditTargetHud {
@@ -32,41 +31,74 @@ export interface BuildEditFeedbackHud {
  * it never feeds back into gameplay or networking.
  */
 export interface BuildEditHudState {
-  /** Whether build-edit mode is active (the selection preview is presented). */
+  /** Whether edit mode is active (the tile grid is presented). */
   mode: boolean;
   /** The targeted structure, or `null` when nothing is selected. */
   target: BuildEditTargetHud | null;
-  /** The currently chosen edit (door / window / half_top / half_bottom / clear). */
-  selectedEdit: BuildEditSelection;
-  /** The edit types the target allows (drives the selector row). */
-  allowedEdits: BuildEditType[];
+  /**
+   * The number of open (removed) tiles in the piece's pending edit state
+   * (`0` for ramps, which use a directional variant instead of tiles).
+   */
+  removedTiles: number;
+  /**
+   * The total tile count of the piece's edit grid (`9` wall, `4` floor/cone,
+   * `0` ramp).
+   */
+  totalTiles: number;
+  /**
+   * The ramp variant in the pending state (ramp pieces only), or `null`
+   * for tile-based pieces.
+   */
+  rampVariant: string | null;
   /** The accepted/rejected feedback banner, or `null` when none is pending. */
   feedback: BuildEditFeedbackHud | null;
   /**
-   * Whether the chosen edit can be applied right now: edit mode is on, a
-   * structure is aimed, and the connection is live. Drives the HUD's
-   * valid/invalid state and contextual hint.
+   * Whether the edit can change right now: edit mode is on, a structure is
+   * aimed, and the connection is live. Drives the HUD's valid/invalid state
+   * and contextual hint.
    */
   applyReady: boolean;
+  /** Whether the edit has unconfirmed changes (draft differs from the piece). */
+  unconfirmed?: boolean;
+  /** Why the current edit pattern cannot be confirmed, or `null`. */
+  invalidReason?: string | null;
 }
 
 /** The raw controller presentation values fed into {@link buildBuildEditHudView}. */
 export interface BuildEditHudInput {
   mode: boolean;
   target: TargetedStructure | null;
-  selectedEdit: BuildEditSelection;
-  allowedEdits: readonly BuildEditType[];
+  /** The targeted piece's pending edit state, or `null` when untargeted. */
+  pending: StructureEditState | null;
   feedback: BuildEditFeedback | null;
   /** Whether the canonical network connection is live. */
   connected: boolean;
+  /** The locked piece's edit view (draft vs applied), when editing. */
+  view?: BuildEditView | null;
 }
 
 /**
  * Copies the controller's presentation state into the flat HUD view.
- * Arrays are cloned and the grid is copied so the runtime can hand the view
- * to React without the controller's live objects leaking across frames.
+ * The grid is copied so the runtime can hand the view to React without the
+ * controller's live objects leaking across frames.
  */
 export function buildBuildEditHudView(input: BuildEditHudInput): BuildEditHudState {
+  let removedTiles = 0;
+  let totalTiles = 0;
+  let rampVariant: string | null = null;
+  const pending = input.pending;
+  if (pending !== null) {
+    if (pending.kind === "ramp") {
+      rampVariant = pending.variant;
+    } else {
+      totalTiles = pending.tiles.length;
+      for (const tile of pending.tiles) {
+        if (!tile) {
+          removedTiles++;
+        }
+      }
+    }
+  }
   return {
     mode: input.mode,
     target: input.target
@@ -76,12 +108,15 @@ export function buildBuildEditHudView(input: BuildEditHudInput): BuildEditHudSta
           grid: { x: input.target.grid.x, y: input.target.grid.y, z: input.target.grid.z },
         }
       : null,
-    selectedEdit: input.selectedEdit,
-    allowedEdits: [...input.allowedEdits],
+    removedTiles,
+    totalTiles,
+    rampVariant,
     feedback: input.feedback
       ? { kind: input.feedback.kind, message: input.feedback.message }
       : null,
     applyReady: input.mode && input.target !== null && input.connected,
+    unconfirmed: input.view?.changed ?? false,
+    invalidReason: input.view?.invalidReason ?? null,
   };
 }
 
@@ -96,12 +131,19 @@ export function buildEditHudChangeKey(state: BuildEditHudState): string {
     ? `${state.target.structureId}:${state.target.grid.x},${state.target.grid.y},${state.target.grid.z}`
     : "-";
   const feedback = state.feedback ? `${state.feedback.kind}:${state.feedback.message}` : "-";
+  const tiles =
+    state.rampVariant !== null
+      ? `v:${state.rampVariant}`
+      : state.totalTiles > 0
+        ? `${state.removedTiles}/${state.totalTiles}`
+        : "-";
   return [
     state.mode ? "e" : "-",
     target,
-    state.selectedEdit,
-    state.allowedEdits.join(","),
+    tiles,
     feedback,
     state.applyReady ? "r" : "-",
+    state.unconfirmed ? "u" : "-",
+    state.invalidReason ?? "-",
   ].join("|");
 }

@@ -44,7 +44,7 @@ describe("production runtime arena visuals", () => {
       expect(material).toBeInstanceOf(StandardMaterial);
       expect((material as StandardMaterial).diffuseColor.asArray()).toEqual(color.asArray());
     }
-    for (const name of ["arena-skybox", "arena-wall-n", "arena-wall-s", "arena-wall-e", "arena-wall-w", "arena-center-ring"]) {
+    for (const name of ["arena-skybox", "arena-shell-n", "arena-shell-s", "arena-shell-e", "arena-shell-w", "arena-grid-line-z-2", "arena-spawn-pad-mirror"]) {
       const mesh = scene.getMeshByName(name);
       expect(mesh, name).not.toBeNull();
       expect(mesh!.isPickable).toBe(false);

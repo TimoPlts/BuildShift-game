@@ -37,7 +37,7 @@ function baselineInput(): LocalHudViewInput {
     selectedBuildType: "wall",
     placementValid: null,
     gridPosition: null,
-    buildEdit: { mode: false, target: null, selectedEdit: "door", allowedEdits: [], feedback: null, applyReady: false },
+    buildEdit: { mode: false, target: null, removedTiles: 0, totalTiles: 0, rampVariant: null, feedback: null, applyReady: false },
     roundTimer: null,
     countdownSeconds: 0,
   };
@@ -219,7 +219,7 @@ describe("localHudChangeKey", () => {
 
     const variants: LocalHudView[] = [
       { ...base, buildEdit: { ...base.buildEdit, mode: true } },
-      { ...base, buildEdit: { ...base.buildEdit, selectedEdit: "window" } },
+      { ...base, buildEdit: { ...base.buildEdit, removedTiles: 2, totalTiles: 9 } },
       {
         ...base,
         buildEdit: {
@@ -284,8 +284,9 @@ describe("localHudViewChangeKeyFromInput", () => {
     return {
       mode: false,
       target: null,
-      selectedEdit: "door",
-      allowedEdits: [],
+      removedTiles: 0,
+      totalTiles: 0,
+      rampVariant: null,
       feedback: null,
       applyReady: false,
       ...o,
@@ -342,8 +343,9 @@ describe("localHudViewChangeKeyFromInput", () => {
                 grid: { x: Math.floor(rand() * 9), y: 0, z: Math.floor(rand() * 9) },
               }
             : null,
-          selectedEdit: pick(["door", "window", "half_top", "half_bottom", "clear"] as const),
-          allowedEdits: rand() < 0.5 ? ["door", "window"] : [],
+          removedTiles: Math.floor(rand() * 10),
+          totalTiles: pick([0, 4, 9] as const),
+          rampVariant: pick([null, "full", "half_left", "half_right"] as const),
           feedback: pick(feedbacks),
           applyReady: rand() < 0.3,
         }),

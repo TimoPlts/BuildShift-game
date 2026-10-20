@@ -4,9 +4,9 @@
  * The test toolchain runs vitest in a node environment without a DOM testing
  * library, so the panel is rendered to static markup and asserted on: its
  * visibility rules (nothing when idle, feedback-only after a result, full
- * panel in edit mode), the targeted-structure read-out, the key-hinted edit
- * selector, the contextual control hint (apply vs "Not connected"), and the
- * accepted/rejected/info feedback banners.
+ * panel in edit mode), the targeted-structure read-out, the pending tile
+ * summary (open tiles / ramp variant), the contextual control hint (ready
+ * vs "Not connected"), and the accepted/rejected/info feedback banners.
  */
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
@@ -21,134 +21,130 @@ function render(props: BuildEditHudProps): string {
 }
 
 const baseTarget = { structureId: "wall1", buildType: "wall", grid: { x: 2, y: 0, z: -3 } };
-const wallEdits = ["door", "window", "half_top", "half_bottom"] as const;
+
+function props(overrides: Partial<BuildEditHudProps> = {}): BuildEditHudProps {
+  return {
+    mode: false,
+    target: null,
+    removedTiles: 0,
+    totalTiles: 0,
+    rampVariant: null,
+    feedback: null,
+    applyReady: false,
+    ...overrides,
+  };
+}
 
 describe("BuildEditHud", () => {
   it("renders nothing when idle (mode off, no feedback)", () => {
-    expect(
-      render({
-        mode: false,
-        target: null,
-        selectedEdit: "door",
-        allowedEdits: [],
-        feedback: null,
-        applyReady: false,
-      }),
-    ).toBe("");
+    expect(render(props())).toBe("");
   });
 
   it("renders the full edit panel when in edit mode with a target", () => {
-    const html = render({
-      mode: true,
-      target: baseTarget,
-      selectedEdit: "door",
-      allowedEdits: wallEdits,
-      feedback: null,
-      applyReady: true,
-    });
+    const html = render(
+      props({
+        mode: true,
+        target: baseTarget,
+        removedTiles: 2,
+        totalTiles: 9,
+        feedback: null,
+        applyReady: true,
+      }),
+    );
 
     expect(html).toContain("EDIT MODE");
     expect(html).toContain("Aim: Wall (2, 0, -3)");
-    // Every allowed edit plus "clear" is listed as a key-hinted chip.
-    expect(html).toContain("Door");
-    expect(html).toContain("Window");
-    expect(html).toContain("Top half");
-    expect(html).toContain("Bottom half");
-    expect(html).toContain("Clear");
-    // The selected edit (door) is highlighted.
-    expect(html).toContain("build-edit-hud__edit--selected");
-    // With a target and a live connection, the hint offers to apply and
-    // names the selection keys (5-9) bound by the edit input controller.
-    expect(html).toContain("Enter");
-    expect(html).toContain("apply");
-    expect(html).toContain("5-9");
-    expect(html).toContain("choose");
+    // The pending tile summary reads the open count against the grid.
+    expect(html).toContain("Tiles open: 2/9");
+    // With a target and a live connection, the hint names the drag-select,
+    // confirm, and reset binds from the gameplay action map.
+    expect(html).toContain("Drag LMB select · E/Enter confirm · RMB reset");
+    expect(html).not.toContain("Unconfirmed");
+  });
+
+  it("flags an unconfirmed edit, and an invalid pattern instead", () => {
+    const pending = render(props({ mode: true, target: { structureId: "s", buildType: "wall", grid: { x: 0, y: 0, z: 0 } }, applyReady: true, unconfirmed: true }));
+    expect(pending).toContain("Unconfirmed");
+    const invalid = render(props({ mode: true, target: { structureId: "s", buildType: "floor", grid: { x: 0, y: 0, z: 0 } }, applyReady: true, unconfirmed: true, invalidReason: "Floor cannot be fully opened" }));
+    expect(invalid).toContain("Invalid: Floor cannot be fully opened");
+    expect(invalid).not.toContain("Unconfirmed");
   });
 
   it("shows an accurate aim prompt and a no-target chip when in edit mode but aiming off", () => {
-    const html = render({
-      mode: true,
-      target: null,
-      selectedEdit: "door",
-      allowedEdits: [],
-      feedback: null,
-      applyReady: false,
-    });
+    const html = render(props({ mode: true }));
 
-    // Walls, roofs and floors are all editable — the prompt names all three.
-    expect(html).toContain("Aim at an owned wall, roof, or floor");
+    // Walls, floors, ramps and cones are all editable — the prompt names
+    // all four.
+    expect(html).toContain("Aim at an owned wall, floor, ramp, or cone");
     expect(html).toContain("No target");
     // Without a target there is nothing to apply, so no connection warning.
     expect(html).not.toContain("Not connected");
   });
 
-  it("labels a roof target with its display name", () => {
-    const html = render({
-      mode: true,
-      target: { structureId: "roof1", buildType: "roof", grid: { x: 1, y: 2, z: 3 } },
-      selectedEdit: "half_top",
-      allowedEdits: ["half_top"],
-      feedback: null,
-      applyReady: true,
-    });
+  it("labels a ramp target with its pending variant", () => {
+    const html = render(
+      props({
+        mode: true,
+        target: { structureId: "ramp1", buildType: "ramp", grid: { x: 1, y: 2, z: 3 } },
+        rampVariant: "half_left",
+        applyReady: true,
+      }),
+    );
 
-    expect(html).toContain("Aim: Roof (1, 2, 3)");
+    expect(html).toContain("Aim: Ramp (1, 2, 3)");
+    expect(html).toContain("Ramp: left half");
   });
 
-  it("warns that apply is unavailable while disconnected", () => {
-    const html = render({
-      mode: true,
-      target: baseTarget,
-      selectedEdit: "door",
-      allowedEdits: wallEdits,
-      feedback: null,
-      applyReady: false,
-    });
+  it("warns that editing is unavailable while disconnected", () => {
+    const html = render(
+      props({
+        mode: true,
+        target: baseTarget,
+        removedTiles: 1,
+        totalTiles: 9,
+        applyReady: false,
+      }),
+    );
 
     expect(html).toContain("Not connected");
     expect(html).toContain("build-edit-hud__hint--warn");
-    expect(html).not.toContain("apply");
+    expect(html).not.toContain("select");
   });
 
   it("shows only the accepted feedback banner after the mode has ended", () => {
-    const html = render({
-      mode: false,
-      target: null,
-      selectedEdit: "door",
-      allowedEdits: [],
-      feedback: { kind: "accepted", message: "Edit applied: Door" },
-      applyReady: false,
-    });
+    const html = render(
+      props({ feedback: { kind: "accepted", message: "Edit confirmed" } }),
+    );
 
     expect(html).toContain("build-edit-hud__feedback--accepted");
-    expect(html).toContain("Edit applied: Door");
+    expect(html).toContain("Edit confirmed");
     // The full edit panel is not shown when the mode is off.
     expect(html).not.toContain("EDIT MODE");
   });
 
   it("marks a rejected feedback banner distinctly", () => {
-    const html = render({
-      mode: true,
-      target: baseTarget,
-      selectedEdit: "window",
-      allowedEdits: wallEdits,
-      feedback: { kind: "rejected", message: "Not your structure" },
-      applyReady: true,
-    });
+    const html = render(
+      props({
+        mode: true,
+        target: baseTarget,
+        feedback: { kind: "rejected", message: "Not your structure" },
+        applyReady: true,
+      }),
+    );
 
     expect(html).toContain("build-edit-hud__feedback--rejected");
     expect(html).toContain("Not your structure");
   });
 
   it("renders an informational banner without a pass/fail glyph", () => {
-    const html = render({
-      mode: true,
-      target: baseTarget,
-      selectedEdit: "door",
-      allowedEdits: wallEdits,
-      feedback: { kind: "info", message: "Edit mode on" },
-      applyReady: true,
-    });
+    const html = render(
+      props({
+        mode: true,
+        target: baseTarget,
+        feedback: { kind: "info", message: "Edit mode on" },
+        applyReady: true,
+      }),
+    );
 
     expect(html).toContain("build-edit-hud__feedback--info");
     expect(html).toContain("Edit mode on");

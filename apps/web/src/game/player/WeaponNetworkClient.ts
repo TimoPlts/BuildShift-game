@@ -56,7 +56,7 @@ import {
   type SwitchPredictionResult,
   type ReloadPredictionResult,
 } from "./WeaponPrediction";
-import type { StructureOpeningPattern, WeaponId } from "@buildshift/protocol";
+import type { WeaponId } from "@buildshift/protocol";
 import { isWeaponId } from "@buildshift/protocol";
 import type { WeaponInputFrame } from "../input/InputManager";
 
@@ -204,19 +204,6 @@ export class WeaponNetworkClient {
       this.networkClient.sendWeaponReload();
     }
     return result;
-  }
-
-  /**
-   * Request a build edit on a placed structure.
-   *
-   * Sends the edit intent to the server. The server validates ownership,
-   * structure existence, and edit legality, then broadcasts the result.
-   */
-  public requestBuildEdit(
-    structureId: string,
-    editPattern: StructureOpeningPattern,
-  ): boolean {
-    return this.networkClient.sendBuildEdit(structureId, editPattern);
   }
 
   /**

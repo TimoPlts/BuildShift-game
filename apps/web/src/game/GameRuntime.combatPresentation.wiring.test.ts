@@ -62,7 +62,7 @@ describe("GameRuntime combat presentation wiring", () => {
       "this.cameraController.setPitchOffset(this.cameraRecoil.update(dt))",
     );
     const updateIdx = runtime.indexOf(
-      "this.cameraController.update(this.playerController.getFeetPositionInto(this._feetPos))",
+      "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",
     );
     expect(setIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(setIdx);

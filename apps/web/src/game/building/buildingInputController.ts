@@ -1,56 +1,66 @@
 /**
- * buildingInputController — browser input for the build-mode controls.
+ * buildingInputController — browser input for the build-mode keyboard
+ * controls.
  *
- * Owns the *player intent* signals for building (docs/TECHNICAL_ARCHITECTURE.md
- * §9 "Client Owns ... Keyboard state, Mouse state, Build ghost preview"):
+ * Owns the *player intent* signals for building that live on the keyboard
+ * (docs/TECHNICAL_ARCHITECTURE.md §9 "Client Owns ... Keyboard state, Mouse
+ * state, Build ghost preview"), resolved through the shared gameplay
+ * {@link ActionMap} (no literal key codes):
  *
- *  - `B`            toggle build mode on/off
- *  - `1` / `2` / `3` / `4`   select wall / floor / ramp / cone
- *  - `Q` / `E`      rotate the selected placement (counter-clockwise / clockwise)
- *  - left mouse button (while in build mode)   place-structure intent edge
+ *  - `buildWall` / `buildFloor` / `buildRamp` / `buildCone` — dedicated
+ *    build binds: select that piece **and** enter building in one press, from
+ *    weapon, build, or edit mode (no mode key required first); each equip
+ *    starts the piece facing the player's current direction (camera yaw via
+ *    {@link BuildingInputController.setFacingSource}) and the rotation then
+ *    stays locked — camera turns never change it,
+ *  - `weaponSlot1` / `weaponSlot2` — leave building for weapon mode (the
+ *    weapon switch itself is handled by the weapon input),
+ *  - `buildRotateLeft` / `buildRotateRight` — rotate while building (the only
+ *    post-equip rotation changes),
+ *  - `buildToggle` — optional legacy build-mode toggle (never required).
+ *
+ * The shared left mouse button is NOT listened to here: its browser state is
+ * owned by the centralized {@link InputManager} (movement/fire module), and
+ * its build-mode meaning (placement press edge + held rapid placement) is
+ * decided by the single {@link routePrimaryAction} policy. This keeps every
+ * browser input signal in exactly one owner.
  *
  * All signals are only latched while the canvas holds browser pointer lock —
  * the same rule the movement/fire {@link InputManager} uses, so a stale key
- * or click can never produce a building intent after the pointer is
- * released. Releasing pointer lock (or hiding the tab) exits build mode and
- * drops any pending place press, mirroring the fire-input safety behaviour.
+ * can never produce a building intent after the pointer is released.
+ * Releasing pointer lock (or hiding the tab) exits build mode, mirroring the
+ * fire-input safety behaviour.
  *
- * The controller is a *pure intent source*: it reports state and edges but
- * never talks to the network and never decides placement validity. The
+ * The controller is a *pure intent source*: it reports state but never talks
+ * to the network and never decides placement validity. The
  * {@link BuildingController} consumes these signals.
  *
  * Testability: the event targets (window / document) are injectable via
  * {@link BuildingInputEnvironment} so unit tests can drive the controller
  * without a real DOM.
  */
+import { facingPlacementRotation } from "@buildshift/game-config";
 import type { BuildType, GridRotation } from "@buildshift/protocol";
+import type { InteractionModeCoordinator } from "../input/interactionMode";
+import { ActionMap, BUILD_PIECE_ACTIONS, DEFAULT_ACTION_BINDINGS, attachMouseBindPresses, pressedBindingCode } from "../input/actionBindings";
 
-/** The key that toggles build mode. */
-export const BUILD_MODE_TOGGLE_KEY = "KeyB";
+/** The default key of the optional legacy build-mode toggle. */
+export const BUILD_MODE_TOGGLE_KEY = DEFAULT_ACTION_BINDINGS.buildToggle[0]!;
 
-/** Maps number-row keys to build types (1=wall, 2=floor, 3=ramp, 4=cone). */
-export const BUILD_TYPE_KEYS: Readonly<Record<string, BuildType>> = {
-  Digit1: "wall",
-  Digit2: "floor",
-  Digit3: "ramp",
-  Digit4: "cone",
-};
+/** Default dedicated build binds → build types (derived from the action map). */
+export const BUILD_TYPE_KEYS: Readonly<Record<string, BuildType>> = Object.freeze(
+  Object.fromEntries(BUILD_PIECE_ACTIONS.flatMap(([action, type]) => DEFAULT_ACTION_BINDINGS[action].map((code) => [code, type]))),
+);
 
-/** The key that rotates the placement counter-clockwise. */
-export const ROTATE_LEFT_KEY = "KeyQ";
+/** The default key that rotates the placement counter-clockwise. */
+export const ROTATE_LEFT_KEY = DEFAULT_ACTION_BINDINGS.buildRotateLeft[0]!;
 
-/** The key that rotates the placement clockwise. */
-export const ROTATE_RIGHT_KEY = "KeyE";
+/** Build-piece action → build type. */
+const BUILD_PIECE_TYPE: Readonly<Record<(typeof BUILD_PIECE_ACTIONS)[number][0], BuildType>> =
+  Object.fromEntries(BUILD_PIECE_ACTIONS) as Record<(typeof BUILD_PIECE_ACTIONS)[number][0], BuildType>;
 
-/** The minimum building-input event shape the controller reads. */
-interface KeyboardLikeEvent {
-  code: string;
-  repeat: boolean;
-}
-
-interface MouseLikeEvent {
-  button: number;
-}
+/** The default key that rotates the placement clockwise (build mode only). */
+export const ROTATE_RIGHT_KEY = DEFAULT_ACTION_BINDINGS.buildRotateRight[0]!;
 
 /** A minimal DOM event target (window or document). */
 export interface InputEventTarget {
@@ -65,8 +75,6 @@ export interface InputEventTarget {
 export interface BuildingInputEnvironment {
   /** Receives `keydown` / `keyup` (normally `window`). */
   readonly keyTarget: InputEventTarget;
-  /** Receives `mousedown` (normally `window`). */
-  readonly mouseTarget: InputEventTarget;
   /** Receives `pointerlockchange` (normally `document`). */
   readonly pointerLockTarget: InputEventTarget;
   /** Receives `visibilitychange` (normally `document`). */
@@ -83,7 +91,6 @@ export function defaultBuildingInputEnvironment(
 ): BuildingInputEnvironment {
   return {
     keyTarget: window,
-    mouseTarget: window,
     pointerLockTarget: document,
     visibilityTarget: document,
     getPointerLockElement: () => document.pointerLockElement,
@@ -93,6 +100,13 @@ export function defaultBuildingInputEnvironment(
 
 /**
  * Owns the build-mode keyboard/mouse intent signals.
+ *
+ * Mode ownership: when constructed with a shared `InteractionModeCoordinator`,
+ * the build binds drive the coordinator (not a private flag) and
+ * `isBuildModeActive()` reports the coordinator's effective mode — so build
+ * and edit can never be "active" at once. Without a coordinator the controller
+ * keeps its own flag (used by standalone unit tests). The coordinator is a
+ * pure state machine with no listeners of its own.
  */
 export class BuildingInputController {
   private readonly canvas: HTMLCanvasElement;
@@ -100,18 +114,26 @@ export class BuildingInputController {
   private buildModeActive = false;
   private selectedBuildType: BuildType = "wall";
   private rotation: GridRotation = 0;
-  /** Latched place-press edge, pending the next frame's poll. */
-  private placePressed = false;
+  /** The player's current facing yaw (camera), read once per piece EQUIP. */
+  private facingYaw: (() => number) | null = null;
+  private readonly detachMouseBinds: () => void;
   private disposed = false;
+  private readonly mode: InteractionModeCoordinator | null;
+  private readonly actions: ActionMap;
 
   public constructor(
     canvas: HTMLCanvasElement,
     env?: BuildingInputEnvironment,
+    mode?: InteractionModeCoordinator,
+    actions?: ActionMap,
   ) {
     this.canvas = canvas;
     this.env = env ?? defaultBuildingInputEnvironment(canvas);
+    this.mode = mode ?? null;
+    this.actions = actions ?? new ActionMap();
     this.env.keyTarget.addEventListener("keydown", this.handleKeyDown);
-    this.env.mouseTarget.addEventListener("mousedown", this.handleMouseDown);
+    // Mouse binds (e.g. the side buttons) drive the same actions as keys.
+    this.detachMouseBinds = attachMouseBindPresses(this.env.keyTarget, (code) => this.handleKeyDown({ code, repeat: false }));
     this.env.pointerLockTarget.addEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -122,9 +144,14 @@ export class BuildingInputController {
     );
   }
 
-  /** True while build mode is active (the placement preview is presented). */
+  /**
+   * Effective build-mode state. With a shared coordinator this is the
+   * coordinator's topmost mode (build is inactive while the edit layer is on
+   * top), so the controller never places while editing. Without a
+   * coordinator it is the local flag (legacy behavior).
+   */
   public isBuildModeActive(): boolean {
-    return this.buildModeActive;
+    return this.mode ? this.mode.isBuildActive() : this.buildModeActive;
   }
 
   /** The currently selected build type (wall / floor / ramp / cone). */
@@ -138,15 +165,18 @@ export class BuildingInputController {
   }
 
   /**
-   * Returns whether a place press (left-click while in build mode) is
-   * pending, and clears the latch. Polled once per render frame by the
-   * runtime — never inside the key/mouse handlers, so a press can never be
-   * consumed before a frame actually runs.
+   * The source of the player's facing yaw (the camera yaw). Each piece equip
+   * initializes the selected rotation from it (shared
+   * `facingPlacementRotation`); camera turns afterwards never change it.
    */
-  public consumePlacePressed(): boolean {
-    const pressed = this.placePressed;
-    this.placePressed = false;
-    return pressed;
+  public setFacingSource(yaw: () => number): void {
+    this.facingYaw = yaw;
+  }
+
+  private initRotationFromFacing(): void {
+    if (!this.facingYaw) return;
+    const yaw = this.facingYaw();
+    if (Number.isFinite(yaw)) this.rotation = facingPlacementRotation(this.selectedBuildType, yaw) as GridRotation;
   }
 
   /** Removes all listeners and drops every latched intent. */
@@ -156,7 +186,7 @@ export class BuildingInputController {
     }
     this.disposed = true;
     this.env.keyTarget.removeEventListener("keydown", this.handleKeyDown);
-    this.env.mouseTarget.removeEventListener("mousedown", this.handleMouseDown);
+    this.detachMouseBinds();
     this.env.pointerLockTarget.removeEventListener(
       "pointerlockchange",
       this.handlePointerLockChange,
@@ -178,8 +208,8 @@ export class BuildingInputController {
     if (this.disposed || this.env.isHidden()) {
       return;
     }
-    const e = event as KeyboardLikeEvent;
-    if (typeof e?.code !== "string" || e.repeat) {
+    const code = pressedBindingCode(event);
+    if (code === null) {
       return;
     }
     // Gameplay building intent only while the canvas holds pointer lock —
@@ -189,38 +219,41 @@ export class BuildingInputController {
       return;
     }
 
-    if (e.code === BUILD_MODE_TOGGLE_KEY) {
-      this.buildModeActive = !this.buildModeActive;
-      return;
+    for (const action of this.actions.actionsFor(code)) {
+      switch (action) {
+        case "buildToggle":
+          if (this.mode) this.mode.toggleBuild();
+          else this.buildModeActive = !this.buildModeActive;
+          if (this.isBuildModeActive()) this.initRotationFromFacing();
+          break;
+        case "buildWall":
+        case "buildFloor":
+        case "buildRamp":
+        case "buildCone":
+          // One press: piece + build layer. The routed primary hold keeps
+          // placing with the new piece if the button is already down.
+          this.selectedBuildType = BUILD_PIECE_TYPE[action];
+          // Equip: the piece starts facing where the player looks, then stays
+          // locked — only the rotate binds change it until the next equip.
+          this.initRotationFromFacing();
+          if (this.mode) this.mode.selectBuild();
+          else this.buildModeActive = true;
+          break;
+        case "weaponSlot1":
+        case "weaponSlot2":
+          if (this.mode) this.mode.selectWeapon();
+          else this.buildModeActive = false;
+          break;
+        case "buildRotateLeft":
+          if (this.isBuildModeActive()) this.rotation = ((this.rotation + 3) % 4) as GridRotation;
+          break;
+        case "buildRotateRight":
+          if (this.isBuildModeActive()) this.rotation = ((this.rotation + 1) % 4) as GridRotation;
+          break;
+        default:
+          break;
+      }
     }
-    const type = BUILD_TYPE_KEYS[e.code];
-    if (type !== undefined) {
-      this.selectedBuildType = type;
-      return;
-    }
-    if (e.code === ROTATE_LEFT_KEY) {
-      this.rotation = ((this.rotation + 3) % 4) as GridRotation;
-      return;
-    }
-    if (e.code === ROTATE_RIGHT_KEY) {
-      this.rotation = ((this.rotation + 1) % 4) as GridRotation;
-    }
-  };
-
-  private readonly handleMouseDown = (event: unknown): void => {
-    if (this.disposed) {
-      return;
-    }
-    const e = event as MouseLikeEvent;
-    if (e?.button !== 0) {
-      return;
-    }
-    // The place edge only latches while pointer-locked AND in build mode —
-    // outside build mode the left button belongs to the fire input.
-    if (!this.isPointerLocked() || !this.buildModeActive) {
-      return;
-    }
-    this.placePressed = true;
   };
 
   private readonly handlePointerLockChange = (): void => {
@@ -240,11 +273,14 @@ export class BuildingInputController {
 
   /**
    * Drops every latched intent and exits build mode. Triggered by pointer
-   * lock release and hidden-tab transitions — so a stale click or key can
-   * never fire a build after the player is no longer "in" the game view.
+   * lock release and hidden-tab transitions — so a stale key can never
+   * fire a build after the player is no longer "in" the game view.
    */
   private clearIntents(): void {
+    if (this.mode) {
+      this.mode.clearAll();
+      return;
+    }
     this.buildModeActive = false;
-    this.placePressed = false;
   }
 }

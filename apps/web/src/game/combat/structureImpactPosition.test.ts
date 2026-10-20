@@ -6,7 +6,7 @@
  * structure's mid-height) for the impact spark. It returns null for unknown
  * structures so the runtime skips presentation rather than inventing a
  * location. The expected values below are derived from the shared
- * `@buildshift/game-config` build grid (cellSize 2, layerHeight 1.5, groundY 0)
+ * `@buildshift/game-config` build grid (cellSize ≈ 5.12, layerHeight ≈ 3.84, groundY 0)
  * and per-build footprints.
  */
 import { describe, expect, it } from "vitest";
@@ -32,21 +32,21 @@ describe("resolveStructureImpactPosition", () => {
   });
 
   it("maps the anchor grid cell to the structure's world-space centre", () => {
-    // wall footprint [1,2,1] at grid (2,0,3): anchor (4,0,6),
-    // mid-height = (2 layers * 1.5) / 2 = 1.5 -> (4, 1.5, 6).
+    // wall footprint [1,1,1] at grid (2,0,3): anchor (10.24,0,15.36),
+    // mid-height = (1 layer * 3.84) / 2 = 1.92 -> (10.24, 1.92, 15.36).
     const building: BuildingState = {
       structures: { s1: makeStructure() },
     };
     expect(resolveStructureImpactPosition(building, "s1")).toEqual({
-      x: 4,
-      y: 1.5,
-      z: 6,
+      x: 10.24,
+      y: 1.92,
+      z: 15.36,
     });
   });
 
   it("raises the impact to mid-height for stacked / elevated layers", () => {
-    // floor footprint [1,1,1] at layer 1 (grid y=1): anchor y = (1-0)*1.5 = 1.5,
-    // mid-height = (1 layer * 1.5) / 2 = 0.75 -> y = 2.25.
+    // floor footprint [1,1,1] at layer 1 (grid y=1): anchor y = (1-0)*3.84 = 3.84,
+    // mid-height = (1 layer * 3.84) / 2 = 1.92 -> y = 5.76.
     const building: BuildingState = {
       structures: {
         f1: makeStructure({
@@ -58,7 +58,7 @@ describe("resolveStructureImpactPosition", () => {
     };
     expect(resolveStructureImpactPosition(building, "f1")).toEqual({
       x: 0,
-      y: 2.25,
+      y: 5.76,
       z: 0,
     });
   });
@@ -74,8 +74,8 @@ describe("resolveStructureImpactPosition", () => {
     };
     const pos = resolveStructureImpactPosition(building, "w2");
     expect(pos).not.toBeNull();
-    expect(pos!.x).toBe(-8);
-    expect(pos!.z).toBe(14);
-    expect(pos!.y).toBe(1.5); // wall mid-height on the ground layer
+    expect(pos!.x).toBe(-20.48);
+    expect(pos!.z).toBe(35.84);
+    expect(pos!.y).toBe(1.92); // wall mid-height on the ground layer
   });
 });

@@ -17,10 +17,7 @@
  * authoritative server's collider maths (`wc` in `state/buildingState.ts`)
  * so the client's selectable volume and the server's physical volume agree.
  */
-import {
-  BUILD_GRID,
-  getStructureConfig,
-} from "@buildshift/game-config";
+import { structureBounds } from "@buildshift/game-config";
 import type {
   BuildingState,
   StructureState,
@@ -77,31 +74,24 @@ const _aabbCtr: Vec3Like = { x: 0, y: 0, z: 0 };
 const _aabbHe: Vec3Like = { x: 0, y: 0, z: 0 };
 
 /**
- * World AABB centre + half-extents for a structure, mirroring the server's
- * `wc` (grid anchor + footprint, rotation swaps X/Z extents, then scaled by
- * the shared cell size / layer height). Writes into the module-level scratch
- * vectors and returns them.
+ * World AABB centre + half-extents of a structure's canonical geometry
+ * (shared `structureBounds`): a wall is bounded on its tile edge, a ramp by
+ * its one tile. Writes into the module-level scratch vectors and returns them
+ * — consume synchronously (shared by per-structure selection and per-frame
+ * tile hit-testing).
  */
-function structureAabb(
+export function structureAabb(
   buildType: StructureState["buildType"],
   grid: StructureState["grid"],
   rotation: StructureState["rotation"],
 ): { ctr: Vec3Like; he: Vec3Like } {
-  const footprint = getStructureConfig(buildType)?.footprint ?? [1, 1, 1];
-  const w = footprint[0];
-  const h = footprint[1];
-  const d = footprint[2];
-  const rotated = rotation === 1 || rotation === 3;
-  const xs = rotated ? d : w;
-  const zs = rotated ? w : d;
-  const cs = BUILD_GRID.cellSize;
-  const lh = BUILD_GRID.layerHeight;
-  _aabbCtr.x = ((grid.x * 2 + xs - 1) / 2) * cs;
-  _aabbCtr.y = grid.y * lh + (h * lh) / 2;
-  _aabbCtr.z = ((grid.z * 2 + zs - 1) / 2) * cs;
-  _aabbHe.x = (xs * cs) / 2;
-  _aabbHe.y = (h * lh) / 2;
-  _aabbHe.z = (zs * cs) / 2;
+  const { min, max } = structureBounds({ buildType, grid, rotation });
+  _aabbCtr.x = (min[0] + max[0]) / 2;
+  _aabbCtr.y = (min[1] + max[1]) / 2;
+  _aabbCtr.z = (min[2] + max[2]) / 2;
+  _aabbHe.x = (max[0] - min[0]) / 2;
+  _aabbHe.y = (max[1] - min[1]) / 2;
+  _aabbHe.z = (max[2] - min[2]) / 2;
   return { ctr: _aabbCtr, he: _aabbHe };
 }
 
@@ -109,7 +99,7 @@ function structureAabb(
  * Slab-method ray / AABB intersection. Returns the distance to the box's
  * near face when the ray enters it within `[0, maxRange]`, else `null`.
  */
-function rayAabbDistance(
+export function rayAabbDistance(
   origin: Vec3Like,
   dir: Vec3Like,
   ctr: Vec3Like,

@@ -141,7 +141,7 @@ describe("round reset / rematch cleanup", () => {
 
   it("clears the build-edit presentation state on a connection drop", () => {
     expect(runtime).toContain(
-      "}else{this.buildEditSystem.clearOnDisconnect();}this.debugHud.state.connectionState",
+      "}else{this.buildEditSystem.clearOnDisconnect();this.buildStructureRenderer.setLocalSessionId(null);}this.debugHud.state.connectionState",
     );
   });
 });

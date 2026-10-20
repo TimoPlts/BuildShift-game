@@ -92,11 +92,11 @@ describe("Disconnection integration", () => {
       expect(ph(a.state)).toBe(MatchPhase.IN_PROGRESS);
       expect(cr(a.state)).toBe(1);
       // A builds wall + floor
-      sb(a, 100, "wall", { x: -4, y: 0, z: 0 });
+      sb(a, 100, "wall", { x: -1, y: 0, z: 0 });
       await wfs(a, () => pl.length >= 1, 5000);
       expect(pl[0].structure.ownerId).toBe(sidA);
       await wait(500);
-      sb(a, 200, "floor", { x: -3, y: 0, z: 1 });
+      sb(a, 200, "floor", { x: 0, y: 0, z: 1 });
       await wfs(a, () => pl.length >= 2, 5000);
       expect(pl[1].structure.ownerId).toBe(sidA);
       // Wait for the state patch to reflect the reduced energy before asserting.
