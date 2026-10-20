@@ -9,10 +9,14 @@
  *
  *  - `buildWall` / `buildFloor` / `buildRamp` / `buildCone` — dedicated
  *    build binds: select that piece **and** enter building in one press, from
- *    weapon, build, or edit mode (no mode key required first),
+ *    weapon, build, or edit mode (no mode key required first); each equip
+ *    starts the piece facing the player's current direction (camera yaw via
+ *    {@link BuildingInputController.setFacingSource}) and the rotation then
+ *    stays locked — camera turns never change it,
  *  - `weaponSlot1` / `weaponSlot2` — leave building for weapon mode (the
  *    weapon switch itself is handled by the weapon input),
- *  - `buildRotateLeft` / `buildRotateRight` — rotate while building,
+ *  - `buildRotateLeft` / `buildRotateRight` — rotate while building (the only
+ *    post-equip rotation changes),
  *  - `buildToggle` — optional legacy build-mode toggle (never required).
  *
  * The shared left mouse button is NOT listened to here: its browser state is
@@ -35,6 +39,7 @@
  * {@link BuildingInputEnvironment} so unit tests can drive the controller
  * without a real DOM.
  */
+import { facingPlacementRotation } from "@buildshift/game-config";
 import type { BuildType, GridRotation } from "@buildshift/protocol";
 import type { InteractionModeCoordinator } from "../input/interactionMode";
 import { ActionMap, BUILD_PIECE_ACTIONS, DEFAULT_ACTION_BINDINGS, attachMouseBindPresses, pressedBindingCode } from "../input/actionBindings";
@@ -109,6 +114,8 @@ export class BuildingInputController {
   private buildModeActive = false;
   private selectedBuildType: BuildType = "wall";
   private rotation: GridRotation = 0;
+  /** The player's current facing yaw (camera), read once per piece EQUIP. */
+  private facingYaw: (() => number) | null = null;
   private readonly detachMouseBinds: () => void;
   private disposed = false;
   private readonly mode: InteractionModeCoordinator | null;
@@ -157,6 +164,21 @@ export class BuildingInputController {
     return this.rotation;
   }
 
+  /**
+   * The source of the player's facing yaw (the camera yaw). Each piece equip
+   * initializes the selected rotation from it (shared
+   * `facingPlacementRotation`); camera turns afterwards never change it.
+   */
+  public setFacingSource(yaw: () => number): void {
+    this.facingYaw = yaw;
+  }
+
+  private initRotationFromFacing(): void {
+    if (!this.facingYaw) return;
+    const yaw = this.facingYaw();
+    if (Number.isFinite(yaw)) this.rotation = facingPlacementRotation(this.selectedBuildType, yaw) as GridRotation;
+  }
+
   /** Removes all listeners and drops every latched intent. */
   public dispose(): void {
     if (this.disposed) {
@@ -202,6 +224,7 @@ export class BuildingInputController {
         case "buildToggle":
           if (this.mode) this.mode.toggleBuild();
           else this.buildModeActive = !this.buildModeActive;
+          if (this.isBuildModeActive()) this.initRotationFromFacing();
           break;
         case "buildWall":
         case "buildFloor":
@@ -210,6 +233,9 @@ export class BuildingInputController {
           // One press: piece + build layer. The routed primary hold keeps
           // placing with the new piece if the button is already down.
           this.selectedBuildType = BUILD_PIECE_TYPE[action];
+          // Equip: the piece starts facing where the player looks, then stays
+          // locked — only the rotate binds change it until the next equip.
+          this.initRotationFromFacing();
           if (this.mode) this.mode.selectBuild();
           else this.buildModeActive = true;
           break;

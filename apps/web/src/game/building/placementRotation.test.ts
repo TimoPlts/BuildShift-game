@@ -98,14 +98,18 @@ describe("placement preview rotation (shared canonical rule)", () => {
     }
   });
 
-  it("walls snap to the aimed tile's nearest edge (the selected rotation does not apply)", () => {
+  it("walls keep the selected (locked) orientation: the aim only picks the nearer parallel edge of the aimed tile", () => {
     const cs = BUILD_GRID.cellSize;
-    const at = (dx: number, dz: number) => computePlacementPreview({
+    const at = (dx: number, dz: number, rotation: GridRotation) => computePlacementPreview({
       aimOrigin: { x: dx, y: 5, z: dz }, aimDirection: { x: 0, y: -1, z: 0 }, playerPosition: { x: 0, y: 0, z: 0 },
-      buildType: "wall", rotation: 2, occupied: [],
+      buildType: "wall", rotation, occupied: [],
     });
-    expect([at(0.3, -cs / 2 + 0.4).rotation, at(cs / 2 - 0.4, 0.2).rotation, at(-0.1, cs / 2 - 0.3).rotation, at(-cs / 2 + 0.2, 0.5).rotation]).toEqual([0, 1, 2, 3]);
-    for (const p of [at(0.3, -2), at(2, 0.3)]) expect(p.grid).toEqual({ x: 0, y: 0, z: 0 });
+    const aims: Array<[number, number]> = [[0.3, -cs / 2 + 0.4], [cs / 2 - 0.4, 0.2], [-0.1, cs / 2 - 0.3], [-cs / 2 + 0.2, 0.5]];
+    // Z-edge orientation (selected 2): never an X edge, wherever the aim lands.
+    expect(aims.map(([x, z]) => at(x, z, 2).rotation)).toEqual([0, 2, 2, 2]);
+    // X-edge orientation (selected 1).
+    expect(aims.map(([x, z]) => at(x, z, 1).rotation)).toEqual([1, 1, 3, 3]);
+    for (const p of [at(0.3, -2, 2), at(2, 0.3, 1)]) expect(p.grid).toEqual({ x: 0, y: 0, z: 0 });
   });
 
   it.each(["floor", "cone"] as const)("%s stays valid after any selected rotation and normalizes it to 0", (type) => {
@@ -201,9 +205,9 @@ describe("rotation binds, turbo and piece switching", () => {
     f.key("KeyR"); // rotation 1 selected
     const plan: Array<[string, BuildType, number]> = [["Mouse3", "wall", -2], ["KeyQ", "floor", -1], ["Mouse4", "ramp", 0], ["KeyF", "cone", 2]];
     for (const [code, , x] of plan) { f.key(code); f.frame(x, 0, true); }
-    // The wall snaps to the aimed edge (aim at the tile centre → its −Z edge);
-    // the ramp keeps the selected rotation; floor / cone normalize to 0.
-    expect(f.sent.map(r => [r.buildType, r.rotation])).toEqual([["wall", 0], ["floor", 0], ["ramp", 1], ["cone", 0]]);
+    // The wall keeps the selected X-edge orientation (aim at the tile centre →
+    // its −X edge); the ramp keeps the selected rotation; floor / cone normalize to 0.
+    expect(f.sent.map(r => [r.buildType, r.rotation])).toEqual([["wall", 3], ["floor", 0], ["ramp", 1], ["cone", 0]]);
     for (const r of f.sent) expect(isValidPlacementRotation(r.buildType as string, r.rotation as number)).toBe(true);
     // The selection itself is preserved for the next rotatable piece.
     expect(f.input.getRotation()).toBe(1);
@@ -252,5 +256,113 @@ describe("placement preview range (shared full-3D rule)", () => {
     elevated(true);
     expect(f.sent).toHaveLength(0);
     f.dispose();
+  });
+});
+
+describe("equip-facing orientation (the piece starts where the player looks, then stays locked)", () => {
+  const H = Math.PI / 2;
+  /** Fixture with a camera yaw source; every piece bind is an equip. */
+  const facingFixture = () => {
+    const f = createFixture();
+    let yaw = 0;
+    f.input.setFacingSource(() => yaw);
+    return { ...f, look: (y: number) => { yaw = y; } };
+  };
+
+  it.each([
+    ["north (−Z)", 0, 3, 0],
+    ["east (+X)", H, 0, 1],
+    ["south (+Z)", Math.PI, 1, 2],
+    ["west (−X)", -H, 2, 3],
+  ] as const)("facing %s: an equipped ramp rises that way and a wall stands on that edge", (_name, yaw, ramp, wall) => {
+    const f = facingFixture();
+    f.look(yaw);
+    f.key("Mouse4"); // ramp
+    expect(f.input.getRotation()).toBe(ramp);
+    f.key("Mouse3"); // wall
+    expect(f.input.getRotation()).toBe(wall);
+    f.dispose();
+  });
+
+  it("camera turns after the equip never change the rotation; only R / X do, one quarter turn each", () => {
+    const f = facingFixture();
+    f.look(0);
+    f.key("Mouse4"); // ramp facing north → 3
+    for (const yaw of [H, Math.PI, -H, 0.3, -2.9]) {
+      f.look(yaw);
+      f.frame(0, 0, false);
+      expect(f.input.getRotation()).toBe(3);
+      expect(f.controller.getPreview().rotation).toBe(3);
+    }
+    f.key("KeyR");
+    expect(f.input.getRotation()).toBe(0);
+    f.key("KeyX");
+    f.key("KeyX");
+    expect(f.input.getRotation()).toBe(2);
+    f.dispose();
+  });
+
+  it("switching piece while building re-initializes from the current facing (and only then)", () => {
+    const f = facingFixture();
+    f.look(H);
+    f.key("Mouse3"); // wall facing east → 1
+    expect(f.input.getRotation()).toBe(1);
+    f.look(0);
+    f.key("Mouse4"); // ramp facing north → 3
+    expect(f.input.getRotation()).toBe(3);
+    f.look(-H); // turn west without re-equipping: the ramp stays north
+    expect(f.input.getRotation()).toBe(3);
+    f.key("KeyR"); // exactly one quarter turn
+    expect(f.input.getRotation()).toBe(0);
+    f.key("Mouse4"); // re-equip: facing west → 2
+    expect(f.input.getRotation()).toBe(2);
+    f.dispose();
+  });
+
+  it("the placement request carries the equipped orientation, whatever the camera does meanwhile", () => {
+    const f = facingFixture();
+    f.look(H);
+    f.key("Mouse4"); // ramp facing east → 0
+    f.look(-H);
+    f.frame(0, 0, true);
+    expect(f.sent.map((r) => [r.buildType, r.rotation])).toEqual([["ramp", 0]]);
+    f.dispose();
+  });
+});
+
+describe("aiming up with no structure in the way targets the next layer (the ceiling)", () => {
+  const up = (buildType: BuildType, playerY: number, occupied: OccupiedStructure[] = []) => computePlacementPreview({
+    aimOrigin: { x: 0.3, y: playerY + 2, z: 1.5 }, aimDirection: { x: 0, y: Math.sin(0.9), z: -Math.cos(0.9) },
+    playerPosition: { x: 0, y: playerY, z: 0 }, buildType, rotation: 0, occupied,
+  });
+  it("from the ground: a floor above the player's tile on layer 1 (a box roof)", () => {
+    const p = up("floor", 0);
+    expect([p.valid, p.grid]).toEqual([true, { x: 0, y: 1, z: 0 }]);
+  });
+  it("from a layer-1 floor: the next roof on layer 2; a wall there keeps the locked orientation", () => {
+    expect(up("floor", BUILD_GRID.layerHeight + 0.15).grid).toEqual({ x: 0, y: 2, z: 0 });
+    expect(up("wall", BUILD_GRID.layerHeight + 0.15).rotation % 2).toBe(0);
+  });
+  it("a structure nearer than the ceiling still wins (build from its surface)", () => {
+    const p = up("floor", 0, [{ buildType: "floor", grid: { x: 0, y: 1, z: 0 } }]); // the roof already there: hit its underside
+    expect(p.grid?.y).toBe(1);
+    expect(p.grid).not.toEqual({ x: 0, y: 1, z: 0 });
+  });
+  it("the top layer's ceiling is out of the build bounds (invalid, not wrapped)", () => {
+    const p = up("floor", 2 * BUILD_GRID.layerHeight + 0.15);
+    expect([p.valid, p.reason, p.grid?.y]).toEqual([false, "out_of_bounds", 3]);
+  });
+});
+
+describe("aiming up: a structure beyond the ceiling plane but within reach still wins", () => {
+  it("the upper face of a layer-1 wall (behind the ceiling crossing) stacks the layer-2 wall", () => {
+    const cs = BUILD_GRID.cellSize, lh = BUILD_GRID.layerHeight;
+    const walls: OccupiedStructure[] = [{ buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0 }, { buildType: "wall", grid: { x: 0, y: 1, z: 0 }, rotation: 0 }];
+    const origin = { x: 0.2, y: 3, z: 4 };
+    const target = { x: 0.2, y: lh + 0.8 * lh, z: -cs / 2 + 0.384 };
+    const d = { x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z };
+    const n = Math.hypot(d.x, d.y, d.z);
+    const p = computePlacementPreview({ aimOrigin: origin, aimDirection: { x: d.x / n, y: d.y / n, z: d.z / n }, playerPosition: { x: 0, y: 0, z: 1 }, buildType: "wall", rotation: 0, occupied: walls });
+    expect([p.valid, p.grid, p.rotation]).toEqual([true, { x: 0, y: 2, z: 0 }, 0]);
   });
 });

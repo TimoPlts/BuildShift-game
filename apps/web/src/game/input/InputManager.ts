@@ -115,6 +115,7 @@ export class InputManager {
     canvas.addEventListener("mousedown", this.handleMouseDown);
     canvas.addEventListener("mouseup", this.handleMouseUp);
     for (const type of NAVIGATION_MOUSE_EVENTS) window.addEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    window.addEventListener("contextmenu", this.suppressContextMenu, { capture: true });
     this.detachMouseBinds = attachMouseBindPresses(window, this.handleMouseBindPress, this.handleMouseBindRelease);
     window.addEventListener("keydown", this.handleKeyDown);
     window.addEventListener("keyup", this.handleKeyUp);
@@ -291,6 +292,7 @@ export class InputManager {
     this.canvas.removeEventListener("mousedown", this.handleMouseDown);
     this.canvas.removeEventListener("mouseup", this.handleMouseUp);
     for (const type of NAVIGATION_MOUSE_EVENTS) window.removeEventListener(type, this.suppressSideButtonNavigation, { capture: true });
+    window.removeEventListener("contextmenu", this.suppressContextMenu, { capture: true });
     this.detachMouseBinds();
     window.removeEventListener("keydown", this.handleKeyDown);
     window.removeEventListener("keyup", this.handleKeyUp);
@@ -364,6 +366,14 @@ export class InputManager {
    * the game holds pointer lock (or the press lands on the game canvas) their
    * default action is cancelled so a build bind never navigates away.
    */
+  /**
+   * The right mouse button is a gameplay bind (edit reset): no browser
+   * context menu while the game holds pointer lock or over the game canvas.
+   */
+  private readonly suppressContextMenu = (event: Event): void => {
+    if (this.pointerLocked || event.target === this.canvas) event.preventDefault();
+  };
+
   private readonly suppressSideButtonNavigation = (event: Event): void => {
     const button = (event as MouseEvent).button;
     if (button !== 3 && button !== 4) return;

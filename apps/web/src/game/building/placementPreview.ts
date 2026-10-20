@@ -13,8 +13,9 @@
  *        hit point + face normal → the adjacent slot to build FROM that
  *        surface (shared `resolveSurfacePlacement`: wall above a wall, air
  *        floor beside a floor, floor/ramp past a ramp's high end, …)
- *      → otherwise the build plane of the player's layer → the tile
- *        containing the hit (walls: snap to the aimed edge)
+ *      → otherwise the build plane of the player's layer (aiming down) or
+ *        of the layer above it (aiming up: the "ceiling") → the tile
+ *        containing the hit (walls: the locked orientation's nearer edge)
  *      → normalize the selected rotation
  *      → validate rotation / build bounds / range / slot occupancy
  *
@@ -25,12 +26,13 @@
  */
 import {
   BUILD_GRID,
+  BUILD_RANGE,
   buildCellAt,
   raycastStructureSurface,
   resolveSurfacePlacement,
   structureCuboids,
   structureSlots,
-  wallEdgeRotation,
+  wallEdgeForOrientation,
   isValidPlacementRotation,
   isWithinPlacementRange,
   isWithinBuildBounds,
@@ -221,13 +223,25 @@ export function computePlacementPreview(
   //    t = (planeY − origin.y) / dir.y, positive when it points down enough.
   //    An existing structure face nearer than that plane takes precedence:
   //    the player builds FROM that surface.
-  const layer = buildLayerAt(playerPosition.y);
-  const planeY = layer * BUILD_GRID.layerHeight;
+  //    Aiming UP (no structure in the way) targets the next layer's base
+  //    plane instead — the "ceiling" above the player's layer — so pieces go
+  //    on top of / above the current level without aiming at a surface.
+  const playerLayer = buildLayerAt(playerPosition.y);
   const dirY = aimDirection.y;
-  const planeT = Number.isFinite(dirY) && dirY < -MIN_AIM_DOWNGRADE ? (planeY - aimOrigin.y) / dirY : NaN;
+  const up = Number.isFinite(dirY) && dirY > MIN_AIM_DOWNGRADE;
+  const layer = up ? playerLayer + 1 : playerLayer;
+  const planeY = layer * BUILD_GRID.layerHeight;
+  const planeT = Number.isFinite(dirY) && (up || dirY < -MIN_AIM_DOWNGRADE) ? (planeY - aimOrigin.y) / dirY : NaN;
   const planeHit = Number.isFinite(planeT) && planeT >= 0;
-  const surface = occupied.length
-    ? raycastStructureSurface(aimOrigin, aimDirection, planeHit ? Math.min(planeT, SURFACE_TARGET_DISTANCE) : SURFACE_TARGET_DISTANCE, surfaceGeometry(occupied))
+  // Down: the layer plane is a real floor, so only structures in front of it
+  // count. Up: the ceiling is only open air — any structure the ray meets
+  // within building reach of the player is the surface to build from.
+  const hit = occupied.length
+    ? raycastStructureSurface(aimOrigin, aimDirection, planeHit && !up ? Math.min(planeT, SURFACE_TARGET_DISTANCE) : SURFACE_TARGET_DISTANCE, surfaceGeometry(occupied))
+    : null;
+  const surface = hit && (!up || !planeHit || hit.distance <= planeT ||
+    Math.hypot(hit.point.x - playerPosition.x, hit.point.y - playerPosition.y, hit.point.z - playerPosition.z) <= BUILD_RANGE.maxPlacementDistance + BUILD_GRID.cellSize)
+    ? hit
     : null;
 
   let grid: GridPosition;
@@ -241,8 +255,10 @@ export function computePlacementPreview(
     // The tile whose canonical geometry contains the hit point.
     grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
     if (buildType === "wall") {
-      // Walls are edge pieces: snap to the aimed tile's nearest edge.
-      rotation = wallEdgeRotation(grid, hitX, hitZ) as GridRotation;
+      // Walls are edge pieces with a LOCKED orientation (set on equip from
+      // the facing, changed only by rotate): of the aimed tile's two edges
+      // with that orientation, the one nearer the hit.
+      rotation = wallEdgeForOrientation(grid, hitX, hitZ, rotation) as GridRotation;
     }
   } else {
     return {

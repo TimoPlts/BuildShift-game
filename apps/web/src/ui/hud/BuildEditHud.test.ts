@@ -58,7 +58,7 @@ describe("BuildEditHud", () => {
     expect(html).toContain("Tiles open: 2/9");
     // With a target and a live connection, the hint names the drag-select,
     // confirm, and reset binds from the gameplay action map.
-    expect(html).toContain("Drag LMB select · E/Enter confirm · T reset");
+    expect(html).toContain("Drag LMB select · E/Enter confirm · RMB reset");
     expect(html).not.toContain("Unconfirmed");
   });
 

@@ -130,12 +130,13 @@ describe("placementPreview", () => {
     }));
     expect(computePlacementPreview(mi({ occupied })).valid).toBe(true);
   });
-  it("wall snaps to the aimed edge whatever rotation is selected", () => {
+  it("a wall keeps its locked orientation: the camera aim only picks the nearer of the two parallel edges", () => {
     for (const rotation of [0, 1, 2, 3] as const) {
-      // Aim straight down 2 m toward +X from the tile centre → the +X edge.
+      // Aim straight down 2 m toward +X (0.1 m toward +Z) from the tile centre.
       const p = computePlacementPreview(mi({ buildType: "wall", rotation, aimOrigin: { x: 2, y: 5, z: 0.1 } }));
       expect(p.valid).toBe(true);
-      expect(p.rotation).toBe(1);
+      // Z-edge orientation (0/2) → the +Z edge; X-edge orientation (1/3) → the +X edge.
+      expect(p.rotation).toBe(rotation % 2 === 0 ? 2 : 1);
     }
   });
   it("ABSENT_PREVIEW frozen", () => {

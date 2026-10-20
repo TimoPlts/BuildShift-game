@@ -21,8 +21,8 @@
  *    discard the draft.
  *
  * The real {@link BuildEditInputController} (standalone, default bindings:
- * edit G, confirm Enter, reset T) is driven through fake event targets and a
- * fake network.
+ * edit E, confirm Enter / E, reset RMB (T secondary)) is driven through fake
+ * event targets and a fake network.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import type {
@@ -197,7 +197,7 @@ function setup(structures: StructureState[] = [wall("w1")], options?: { confirmO
   const sent = () => network.sent.filter((m) => m.type === EDIT_GRID_ACTION_MESSAGE).map((m) => m.payload as Record<string, unknown>);
   const setBuilding = (next: StructureState[]) => { building = buildingOf(next); };
   live.push(() => { controller.dispose(); input.dispose(); });
-  return { controller, input, network, env, pointerLock, press, frame, enterEdit, drag, draftTiles, removed, sent, setBuilding };
+  return { controller, input, network, env, key, pointerLock, press, frame, enterEdit, drag, draftTiles, removed, sent, setBuilding };
 }
 
 const canvas = {};
@@ -420,6 +420,81 @@ describe("BuildEditController — reset", () => {
     t.frame(wallAim(4));
     t.press("Enter");
     t.frame(wallAim(4));
+    expect(t.sent()).toEqual([]);
+  });
+});
+
+describe("BuildEditController — right mouse button reset (E → RMB → E)", () => {
+  /** A real right-button click on the shared input surface. */
+  const rmb = (t: ReturnType<typeof setup>) => {
+    t.key.dispatch("mousedown", { type: "mousedown", button: 2, buttons: 2 });
+    t.key.dispatch("mouseup", { type: "mouseup", button: 2, buttons: 0 });
+  };
+  const edited = (): StructureState => wall("w1", undefined, { editGrid: { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] } });
+
+  it("RMB resets the local draft to the default form at once and sends nothing; E confirms the reset", () => {
+    const t = setup([edited()]);
+    t.enterEdit();
+    expect(t.removed()).toEqual([4, 7]);
+    rmb(t);
+    t.frame(wallAim(4));
+    expect(t.removed()).toEqual([]); // the preview shows the full wall immediately
+    expect(t.sent()).toEqual([]); // nothing authoritative yet
+    t.press("KeyE"); // the edit bind again: confirm + exit
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([
+      { structureId: "w1", action: "reset" },
+      { structureId: "w1", action: "confirm" },
+    ]);
+    expect(t.controller.getMode()).toBe(false);
+  });
+
+  it("E → drag → RMB → E on an unedited wall: the partial drag is discarded and nothing is sent", () => {
+    const t = setup();
+    t.enterEdit();
+    t.drag([wallAim(3), wallAim(4)]);
+    expect(t.removed()).toEqual([3, 4]);
+    rmb(t);
+    t.frame(wallAim(4));
+    expect(t.removed()).toEqual([]);
+    t.press("KeyE");
+    t.frame(wallAim(4));
+    expect(t.sent()).toEqual([]); // already the authoritative form: no-op, safe
+  });
+
+  it("RMB twice and on an already-default draft is safe (idempotent)", () => {
+    const t = setup([edited()]);
+    t.enterEdit();
+    rmb(t);
+    t.frame(wallAim(4));
+    rmb(t);
+    t.frame(wallAim(4));
+    expect(t.removed()).toEqual([]);
+    t.press("KeyE");
+    t.frame(wallAim(4));
+    expect(t.sent().map((m) => m.action)).toEqual(["reset", "confirm"]);
+  });
+
+  it("a rejected reset rolls back to the authoritative edited form", () => {
+    const t = setup([edited()]);
+    t.enterEdit();
+    rmb(t);
+    t.frame(wallAim(4));
+    t.press("KeyE");
+    t.frame(wallAim(4));
+    t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
+    t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
+    expect(t.controller.getFeedback()).toMatchObject({ kind: "rejected" });
+    t.enterEdit();
+    expect(t.removed()).toEqual([4, 7]);
+  });
+
+  it("RMB outside the edit layer does nothing", () => {
+    const t = setup([edited()]);
+    rmb(t);
+    t.frame(wallAim(4));
+    t.enterEdit();
+    expect(t.removed()).toEqual([4, 7]);
     expect(t.sent()).toEqual([]);
   });
 });

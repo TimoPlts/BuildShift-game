@@ -102,7 +102,9 @@ export const DEFAULT_ACTION_BINDINGS: ActionBindings = Object.freeze({
   edit: ["KeyE"],
   editSelect: ["Mouse0"],
   editConfirm: ["Enter"],
-  editReset: ["KeyT", "Backspace"],
+  // Right mouse button resets the local edit draft (confirmed by `edit`
+  // again); T / Backspace remain secondary reset binds.
+  editReset: ["Mouse2", "KeyT", "Backspace"],
   // Unbound by default: leaving edit through any action commits it.
   editCancel: [],
   primaryAction: ["Mouse0"],

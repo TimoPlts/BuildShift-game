@@ -3,7 +3,7 @@
  * rays against canonical geometry → hit face → the slot to build FROM it.
  */
 import { describe, expect, it } from "vitest";
-import { BUILD_GRID, slotsConflict, structureSlots } from "./building.js";
+import { BUILD_GRID, facingPlacementRotation, quarterTurnFromYaw, slotsConflict, structureSlots, wallEdgeForOrientation } from "./building.js";
 import type { StructureGeometryInput } from "./editGeometry.js";
 import { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection } from "./surfacePlacement.js";
 
@@ -199,5 +199,67 @@ describe("edited pieces", () => {
     tiles[4] = false; // centre window
     const wall = piece("wall", { x: 0, y: 0, z: 0 }, 0, { kind: "wall", tiles });
     expect(raycastStructureSurface({ x: 0, y: lh / 2, z: -9 }, { x: 0, y: 0, z: 1 }, 40, [wall])).toBeNull();
+  });
+});
+
+describe("equip-facing orientation (shared)", () => {
+  const H = Math.PI / 2;
+  it("maps the four cardinal facings to a quarter turn (yaw 0 = −Z, +π/2 = +X, π = +Z, −π/2 = −X)", () => {
+    expect([0, H, Math.PI, -H].map(quarterTurnFromYaw)).toEqual([0, 1, 2, 3]);
+    expect(quarterTurnFromYaw(-Math.PI)).toBe(2); // the ±π wrap is one direction
+    expect(quarterTurnFromYaw(2 * Math.PI + H)).toBe(1); // any winding
+  });
+  it("is deterministic around each cardinal (±44°) and at the exact diagonals", () => {
+    const d = (44 * Math.PI) / 180;
+    for (const [yaw, q] of [[0, 0], [H, 1], [Math.PI, 2], [-H, 3]] as const) {
+      expect([quarterTurnFromYaw(yaw - d), quarterTurnFromYaw(yaw + d)]).toEqual([q, q]);
+    }
+    expect(quarterTurnFromYaw(Math.PI / 4)).toBe(quarterTurnFromYaw(Math.PI / 4)); // stable
+    expect(quarterTurnFromYaw(-0.0)).toBe(0);
+  });
+  it("walls face the edge ahead; ramps rise away from the player; floors / cones are rotation-invariant", () => {
+    // Facing north (−Z): wall on the −Z edge (0), ramp rising −Z (3).
+    expect([0, H, Math.PI, -H].map((y) => facingPlacementRotation("wall", y))).toEqual([0, 1, 2, 3]);
+    expect([0, H, Math.PI, -H].map((y) => facingPlacementRotation("ramp", y))).toEqual([3, 0, 1, 2]);
+    for (const y of [0, H, Math.PI, -H]) expect([facingPlacementRotation("floor", y), facingPlacementRotation("cone", y)]).toEqual([0, 0]);
+    // The ramp's high end is in the facing direction.
+    for (const [yaw, dir] of [[0, [0, -1]], [H, [1, 0]], [Math.PI, [0, 1]], [-H, [-1, 0]]] as const) {
+      expect(rampHighDirection({ buildType: "ramp", grid: { x: 0, y: 0, z: 0 }, rotation: facingPlacementRotation("ramp", yaw) })).toEqual(dir);
+    }
+  });
+  it("a locked wall orientation only picks the nearer parallel edge", () => {
+    expect([wallEdgeForOrientation({ x: 0, y: 0, z: 0 }, 0.4, -1, 0), wallEdgeForOrientation({ x: 0, y: 0, z: 0 }, 0.4, 1, 0)]).toEqual([0, 2]);
+    expect([wallEdgeForOrientation({ x: 0, y: 0, z: 0 }, -1, 2.4, 1), wallEdgeForOrientation({ x: 0, y: 0, z: 0 }, 1, 2.4, 3)]).toEqual([3, 1]);
+  });
+});
+
+describe("vertical stacking from surfaces (source structure grid / layer)", () => {
+  it("floor above a wall box: the near wall's top → the box tile one layer up (from outside, aiming in)", () => {
+    const near = piece("wall", { x: 0, y: 0, z: 0 }, 2); // the box tile (0,0,0)'s +Z edge, seen from z > 2.56
+    const r = aim([near], { x: 0, y: 3.2, z: 7 }, { x: 0, y: lh - 0.1, z: cs / 2 + 0.384 }, "floor");
+    expect(r.grid).toEqual({ x: 0, y: 1, z: 0 });
+  });
+  it("cone above an elevated floor: on that floor's tile and layer", () => {
+    const floor = piece("floor", { x: 1, y: 1, z: 0 });
+    expect(aim([floor], { x: cs, y: lh + 3, z: -4 }, { x: cs + 0.4, y: lh + 0.15, z: 0.6 }, "cone").grid).toEqual({ x: 1, y: 1, z: 0 });
+  });
+  it("ramp above a floor: on that floor's tile, keeping the equipped (selected) rotation", () => {
+    const floor = piece("floor", { x: 0, y: 1, z: -1 });
+    expect(aim([floor], { x: 0, y: lh + 3, z: 0 }, { x: 0.3, y: lh + 0.15, z: -cs + 0.4 }, "ramp", 2)).toMatchObject({ grid: { x: 0, y: 1, z: -1 }, rotation: 2 });
+  });
+  it("floor above a ramp's high end → the next layer past it; above a floor-topped wall → the next layer", () => {
+    const ramp = piece("ramp", { x: 0, y: 1, z: 0 }, 1); // a ramp on layer 1
+    expect(aim([ramp], { x: 0.4, y: lh + 4.5, z: -5 }, { x: 0.4, y: lh + lh * 0.85, z: 1.8 }, "floor").grid).toEqual({ x: 0, y: 2, z: 1 });
+    const upper = piece("wall", { x: 0, y: 1, z: 0 }, 0);
+    const r = aim([upper], { x: 0, y: lh + 2.5, z: -9 }, { x: 0.2, y: lh + lh * 0.9, z: -cs / 2 - 0.384 }, "wall");
+    expect([r.grid, r.rotation]).toEqual([{ x: 0, y: 2, z: 0 }, 0]);
+  });
+  it("two stacked boxes: every wall / floor slot of both levels is distinct, the same x/z on another layer is a different slot", () => {
+    const level = (y: number) => [0, 1, 2, 3].map((r) => piece("wall", { x: 0, y, z: 0 }, r)).concat(piece("floor", { x: 0, y: y + 1, z: 0 }));
+    const all = [...level(0), ...level(1)];
+    const slots = all.flatMap((s) => structureSlots(s.buildType, s.grid, s.rotation));
+    expect(new Set(slots).size).toBe(slots.length);
+    expect(slotsConflict(piece("wall", { x: 0, y: 1, z: 0 }, 0), piece("wall", { x: 0, y: 0, z: 0 }, 0))).toBe(false);
+    expect(slotsConflict(piece("wall", { x: 0, y: 1, z: 0 }, 0), piece("wall", { x: 0, y: 1, z: -1 }, 2))).toBe(true); // same edge, same layer
   });
 });

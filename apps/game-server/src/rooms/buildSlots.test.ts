@@ -143,4 +143,66 @@ describe("canonical build slots (authoritative)", () => {
     expect(highUnder).not.toBeNull(); // the low end blocks at y = 1
     expect(rayStructureIntersection({ x: -8, y: 0.5, z: 2.0 }, { x: 1, y: 0, z: 0 }, 50, geometryOf(ramp))).toBeNull(); // open under the high end
   });
+
+  // ─── Vertical stacking: the same x/z on another layer is another slot ──────
+
+  /** One box level on tile (0, y, 0): four edge walls on layer y, the roof floor on layer y + 1. */
+  const boxLevel = async (y: number) => {
+    const walls = [];
+    for (const r of [0, 1, 2, 3]) walls.push(await place(a, "wall", { x: 0, y, z: 0 }, r));
+    const roof = await place(a, "floor", { x: 0, y: y + 1, z: 0 });
+    return { walls, roof };
+  };
+
+  it("walls stack on one edge, layer 0 → 1 → 2; the same edge on the same layer is rejected without Energy", async () => {
+    for (const y of [0, 1, 2]) {
+      const r = await place(a, "wall", { x: 0, y, z: 0 }, 0);
+      expect(r.reason, `layer ${y}`).toBeNull();
+      expect(r.energyDelta).toBe(-getStructureConfig("wall")!.cost);
+    }
+    // The same slot named from the neighbour tile (shared edge) on layer 1.
+    const dup = await place(b, "wall", { x: 0, y: 1, z: -1 }, 2);
+    expect(dup.reason).toBe("overlap");
+    expect(dup.energyDelta).toBe(0);
+    expect([...internal.occ].filter((k: string) => k.startsWith("wall-z:0,")).sort()).toEqual(["wall-z:0,0,0", "wall-z:0,1,0", "wall-z:0,2,0"]);
+    expectOccupancyMatchesStructures();
+  });
+
+  it("two stacked boxes (4 walls + roof, twice) all coexist without a false overlap", async () => {
+    const lower = await boxLevel(0);
+    const upper = await boxLevel(1);
+    for (const r of [...lower.walls, lower.roof, ...upper.walls, upper.roof]) expect(r.reason).toBeNull();
+    expect(internal.bld.structures.size).toBe(10);
+    expectOccupancyMatchesStructures();
+  });
+
+  it("destroying a piece on one layer frees only that layer's slot", async () => {
+    const lower = await boxLevel(0);
+    const upper = await boxLevel(1);
+    const lowerNorth = lower.walls[0]!.structure;
+    internal.ks(upper.walls[0]!.structure.structureId, "b");
+    expect(internal.bld.structures.has(lowerNorth.structureId)).toBe(true);
+    expect(internal.occ.has("wall-z:0,0,0")).toBe(true);
+    expect(internal.occ.has("wall-z:0,1,0")).toBe(false);
+    expectOccupancyMatchesStructures();
+    expect((await place(b, "wall", { x: 0, y: 1, z: 0 }, 0)).reason).toBeNull(); // the freed upper slot
+    expect((await place(b, "wall", { x: 0, y: 0, z: 0 }, 0)).reason).toBe("overlap"); // the lower one stays taken
+  });
+
+  it("round reset and rematch clear every layer's slots and colliders", async () => {
+    await boxLevel(0);
+    await boxLevel(1);
+    internal.bc();
+    expect([internal.bld.structures.size, internal.occ.size]).toEqual([0, 0]);
+    expectOccupancyMatchesStructures();
+    internal.br();
+    await boxLevel(0);
+    await boxLevel(1);
+    internal.resetMatch();
+    expect([internal.bld.structures.size, internal.occ.size]).toEqual([0, 0]);
+    expectOccupancyMatchesStructures();
+    internal.br();
+    const again = await boxLevel(1); // the upper layer is placeable again
+    expect([...again.walls, again.roof].every((r) => r.reason === null)).toBe(true);
+  });
 });

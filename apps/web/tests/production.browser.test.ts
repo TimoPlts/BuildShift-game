@@ -3047,6 +3047,9 @@ test.describe("Physical edited-geometry acceptance", () => {
     pitch = 0;
     constructor(private readonly page: Page) {}
     async to(yaw: number, pitch: number): Promise<void> {
+      // The camera clamps pitch to [−π/3, π/2.6]; clamp the request the same
+      // way so the tracked pitch never drifts from the real one.
+      pitch = Math.min(Math.PI / 2.6 - 0.002, Math.max(-Math.PI / 3 + 0.002, pitch));
       const dx = Math.round((this.yaw - yaw) / LOOK_SENSITIVITY);
       const dy = Math.round((this.pitch - pitch) / LOOK_SENSITIVITY);
       if (dx !== 0 || dy !== 0) await lookBy(this.page, dx, dy);
@@ -3062,16 +3065,21 @@ test.describe("Physical edited-geometry acceptance", () => {
     }
     /** Aim the crosshair at world point `t` (iterates on the live camera). */
     async at(t: { x: number; y: number; z: number }): Promise<void> {
-      for (let i = 0; i < 6; i++) {
+      // Steep aims move the orbit camera a lot per step, and near walls the
+      // camera obstruction guard moves it discontinuously: after a few full
+      // corrections, take damped half steps so the fixed point settles.
+      for (let i = 0; i < 16; i++) {
         await sleep(120); // let the camera follow the last look
         const c = await this.camera();
         const dx = t.x - c.x;
         const dy = t.y - c.y;
         const dz = t.z - c.z;
-        const yaw = Math.atan2(dx, -dz);
-        const pitch = Math.atan2(dy, Math.hypot(dx, dz));
-        if (Math.abs(yaw - this.yaw) < 0.004 && Math.abs(pitch - this.pitch) < 0.004) return;
-        await this.to(yaw, pitch);
+        const raw = Math.atan2(dx, -dz);
+        const dYaw = Math.atan2(Math.sin(raw - this.yaw), Math.cos(raw - this.yaw)); // shortest turn
+        const dPitch = Math.atan2(dy, Math.hypot(dx, dz)) - this.pitch;
+        if (Math.abs(dYaw) < 0.004 && Math.abs(dPitch) < 0.004) return;
+        const k = i >= 4 ? 0.5 : 1;
+        await this.to(this.yaw + dYaw * k, this.pitch + dPitch * k);
       }
       await sleep(120);
     }
@@ -3314,7 +3322,9 @@ test.describe("Physical edited-geometry acceptance", () => {
     await sleep(120);
     await fireWeapon(a);
     await waitStructure(a, expectPiece, label).catch(async (error) => {
-      throw new Error(`${label}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await a.evaluate(() => (window as any).__rejections ?? []) })}`, { cause: error });
+      const ray = await a.evaluate(() => { const c = (window as any).__buildshiftEngine.scenes[0].activeCamera; const p = c.position, t = c.getTarget(); return { o: [p.x, p.y, p.z], t: [t.x, t.y, t.z] }; });
+      const lookDiag = await a.evaluate(() => (document.querySelector(".devdiag-overlay")?.textContent ?? "").match(/Look:[^\n]*/)?.[0] ?? "");
+      throw new Error(`${label}: ${JSON.stringify({ pose: await authPose(a), lookDiag, aimTracked: { yaw: aim.yaw, pitch: aim.pitch }, ray, hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await a.evaluate(() => (window as any).__rejections ?? []) })}`, { cause: error });
     });
   }
 
@@ -3366,9 +3376,8 @@ test.describe("Physical edited-geometry acceptance", () => {
   /** Real-input one-tile ramp (rotation 3: climbs toward −Z, the W direction) at tile (1,-1). */
   async function placeRampReal(a: Page, aim: CrosshairAim) {
     await aim.at(cellCentre(1, -1));
+    // Equipped while facing north (−Z): the ramp starts rising north (rotation 3).
     await pressKey(a, "Mouse4");
-    await sleep(120);
-    await pressKey(a, "KeyX"); // rotate left: 0 → 3
     await sleep(120);
     await fireWeapon(a);
     await waitStructure(a, (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === 3, "real-input ramp");
@@ -3457,7 +3466,7 @@ test.describe("Physical edited-geometry acceptance", () => {
     } finally { await context.close(); }
   });
 
-  test("scenario F — LMB held through each bind switch: wall → ramp → wall → floor → wall → ramp, no overlap rejection (real binds)", { timeout: 120_000 }, async () => {
+  test("scenario F — rapid real binds: wall → ramp → wall → floor → wall → ramp, each equipped facing the target, no overlap rejection", { timeout: 120_000 }, async () => {
     test.setTimeout(120_000);
     const { context, a, aId, step } = await openFreshDuel("scenario F", { width: 480, height: 270 });
     try {
@@ -3466,38 +3475,33 @@ test.describe("Physical edited-geometry acceptance", () => {
       // A wall is identified by its canonical edge slot (an edge can be named from either tile).
       const onWallSlot = (gx: number, gz: number, r: number) => (s: Placed) =>
         s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: gx, y: 0, z: gz }, r)[0];
-      const plan: Array<[string, string, { x: number; y: number; z: number }, (s: Placed) => boolean]> = [
-        ["Mouse3", "wall", edgeAim(0, -1, 0), onWallSlot(0, -1, 0)],
-        ["Mouse4", "ramp", cellCentre(0, -1), (s) => s.buildType === "ramp" && s.grid.x === 0 && s.grid.z === -1],
-        ["Mouse3", "wall", edgeAim(0, -1, 1), onWallSlot(0, -1, 1)],
+      // [bind, extra keys after the equip, piece, aim, expected]. The equip
+      // takes the facing (north, so Z-edge walls); R turns a wall onto the
+      // X edges.
+      const plan: Array<[string, string[], string, { x: number; y: number; z: number }, (s: Placed) => boolean]> = [
+        ["Mouse3", [], "wall", edgeAim(0, -1, 0), onWallSlot(0, -1, 0)],
+        ["Mouse4", [], "ramp", cellCentre(0, -1), (s) => s.buildType === "ramp" && s.grid.x === 0 && s.grid.z === -1],
+        ["Mouse3", ["KeyR"], "wall", { x: 2.1, y: LH / 2, z: -CS }, onWallSlot(0, -1, 1)], // on the ramp's surface near that side
         // (The ramp owns tile (0,-1)'s surface — aiming at or past it builds FROM it — so the floor takes an unobstructed tile.)
-        ["KeyQ", "floor", cellCentre(1, -2), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 0 && s.grid.z === -2],
-        ["Mouse3", "wall", edgeAim(0, -1, 3), onWallSlot(0, -1, 3)],
-        ["Mouse4", "ramp", cellCentre(1, -1), (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1],
+        ["KeyQ", [], "floor", cellCentre(1, -2), (s) => s.buildType === "floor" && s.grid.x === 1 && s.grid.y === 0 && s.grid.z === -2],
+        ["Mouse3", ["KeyR"], "wall", { x: -2.1, y: LH / 2, z: -CS }, onWallSlot(0, -1, 3)], // on the ramp's surface near that side
+        ["Mouse4", [], "ramp", cellCentre(1, -1), (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1],
       ];
-      try {
-        for (const [code, type, point, match] of plan) {
-          // Converge the crosshair on the target with the primary up (the
-          // iterative aim passes intermediate aims), then look up into open
-          // sky by an exact amount (no candidate), hold the primary, switch
-          // piece there, and look back down by exactly the same amount: the
-          // held primary places the new piece once, on the target.
-          await setPrimaryFire(a, false);
-          await aim.at(point);
-          const target = { yaw: aim.yaw, pitch: aim.pitch };
-          await aim.to(target.yaw, 0.7);
-          await sleep(100);
-          await setPrimaryFire(a, true);
-          await pressKey(a, code);
-          await sleep(100);
-          await aim.to(target.yaw, target.pitch);
-          await waitStructure(a, match, `held ${type}`).catch(async (error) => {
-            throw new Error(`held ${type}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await rejections(a) })}`, { cause: error });
-          });
-          step(`${type} placed`);
-        }
-      } finally {
-        await setPrimaryFire(a, false);
+      for (const [code, extra, type, point, match] of plan) {
+        // Equip facing north (the locked orientation), aim at the target,
+        // click once. (Held-primary building is covered by stack F and the
+        // surface F chord: a held primary keeps building from each new
+        // piece's surface, which is turbo, not a stray.)
+        await aim.to(0, -0.35);
+        await pressKey(a, code);
+        for (const k of extra) await pressKey(a, k);
+        await sleep(120);
+        await aim.at(point);
+        await fireWeapon(a);
+        await waitStructure(a, match, `${type}`).catch(async (error) => {
+          throw new Error(`${type}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a), rejections: await rejections(a) })}`, { cause: error });
+        });
+        step(`${type} placed`);
       }
       const mine = (await structuresOf(a)).filter((s) => s.ownerId === aId);
       expect(mine).toHaveLength(6);
@@ -3653,28 +3657,21 @@ test.describe("Physical edited-geometry acceptance", () => {
       await pressKey(a, "KeyE");
       await expect.poll(() => editModeOn(a), { timeout: 3_000 }).toBe(false);
       step("E opens and closes the edit layer");
-      // The primary held through side-button switches: converge on the target
-      // with the primary up, then (in open sky, exact look deltas) hold it,
-      // press the side button, and look back — one placement per switch.
+      // A side-button chord with the primary held at one fixed aim: Mouse 5
+      // equips the ramp (facing the target), the held primary places it, then
+      // Mouse 4 while STILL held builds a wall FROM the new ramp's surface
+      // (one of its tile's edge slots) — no release, no aim movement.
       // (Leaving edit with E returned to the build layer: the held primary never fires.)
       expect(await buildModeActive(a)).toBe(true);
-      const heldPlace = async (code: string, point: { x: number; y: number; z: number }, match: (s: Placed) => boolean, label: string) => {
-        await setPrimaryFire(a, false);
-        await aim.at(point);
-        const target = { yaw: aim.yaw, pitch: aim.pitch };
-        await aim.to(target.yaw, 0.7);
-        await sleep(100);
-        await setPrimaryFire(a, true);
-        await pressKey(a, code);
-        await sleep(100);
-        await aim.to(target.yaw, target.pitch);
-        await waitStructure(a, match, label);
-      };
-      const wallSlot = (gx: number, gz: number, r: number) => (s: Placed) =>
-        s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: gx, y: 0, z: gz }, r)[0];
+      const tileEdges = (gx: number, gz: number) => new Set([0, 1, 2, 3].map((r) => structureSlots("wall", { x: gx, y: 0, z: gz }, r)[0]));
+      await aim.at(cellCentre(1, 1));
+      await pressKey(a, "Mouse4");
+      await sleep(120);
+      await setPrimaryFire(a, true);
       try {
-        await heldPlace("Mouse4", cellCentre(1, 1), isPiece("ramp", 1, 0, 1), "held Mouse 5 ramp");
-        await heldPlace("Mouse3", edgeAim(-1, 1, 2), wallSlot(-1, 1, 2), "held → Mouse 4 wall");
+        await waitStructure(a, isPiece("ramp", 1, 0, 1), "held Mouse 5 ramp");
+        await pressKey(a, "Mouse3");
+        await waitStructure(a, (s) => s.buildType === "wall" && tileEdges(1, 1).has(structureSlots("wall", s.grid, s.rotation)[0]), "held → Mouse 4 wall from the ramp");
       } finally { await setPrimaryFire(a, false); }
       step("held primary: Mouse5 ramp → Mouse4 wall without a release");
       expect(a.url()).toBe(url);
@@ -3683,6 +3680,233 @@ test.describe("Physical edited-geometry acceptance", () => {
       expect((await mine()).map((s) => s.buildType).sort()).toEqual(["cone", "ramp", "ramp", "wall", "wall"]);
       expect(await editSends(a)).toEqual([]);
       expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  // ─── Equip-facing orientation, RMB edit reset, vertical stacking (real input) ──
+
+  const H = Math.PI / 2;
+  /** Equip with the camera facing `yaw` (looking slightly down), then aim at `target` and click. */
+  async function equipFacingThenPlace(a: Page, aim: CrosshairAim, yaw: number, code: string, extra: string[], target: { x: number; y: number; z: number }, match: (s: Placed) => boolean, label: string) {
+    await aim.to(yaw, -0.35);
+    await sleep(150);
+    await pressKey(a, code);
+    for (const k of extra) await pressKey(a, k);
+    await sleep(120);
+    await aim.at(target); // the camera turns toward the target: the equipped rotation must not follow
+    await fireWeapon(a);
+    await waitStructure(a, match, label).catch(async (error) => {
+      throw new Error(`${label}: ${JSON.stringify({ pose: await authPose(a), hud: (await a.locator(".build-hud").textContent())?.replace(/\s+/g, " "), structures: await structuresOf(a) })}`, { cause: error });
+    });
+  }
+
+  test("orientation A — each equip faces where the player looks; camera turns never rotate the piece; only R / X do (real input)", { timeout: 150_000 }, async () => {
+    test.setTimeout(150_000);
+    const { context, a, step } = await openFreshDuel("orientation A", { width: 480, height: 270 });
+    try {
+      const aim = new CrosshairAim(a);
+      const wallAxis = (gx: number, gz: number, zAxis: boolean) => (s: Placed) => s.buildType === "wall" && s.grid.x === gx && s.grid.z === gz && (s.rotation % 2 === 0) === zAxis;
+      // Walls first (no ramps in the way yet). Facing north → a Z-edge wall;
+      // facing east → an X-edge wall (each on the far edge of the aimed tile).
+      await equipFacingThenPlace(a, aim, 0, "Mouse3", [], { x: CS, y: 0, z: -CS - 1.4 }, wallAxis(1, -1, true), "wall equipped facing north");
+      await equipFacingThenPlace(a, aim, H, "Mouse3", [], { x: 2 * CS + 1.3, y: 0, z: 0 }, wallAxis(2, 0, false), "wall equipped facing east");
+      // Equipped facing north, placed while the camera looks east: still a Z-edge wall.
+      await equipFacingThenPlace(a, aim, 0, "Mouse3", [], { x: 2 * CS + 1.3, y: 0, z: 0.6 }, wallAxis(2, 0, true), "north wall placed looking east");
+      step("walls: equipped orientation kept while the camera turned");
+      // Lock: equipped facing north, placed while looking north-east → still north (3).
+      await equipFacingThenPlace(a, aim, 0, "Mouse4", [], cellCentre(2, -1), isPiece("ramp", 2, 0, -1, 3), "north ramp placed looking north-east");
+      // Only R / X turn it: R once → 0; X twice → 1 (camera turns in between change nothing).
+      await equipFacingThenPlace(a, aim, 0, "Mouse4", ["KeyR"], cellCentre(0, -1), isPiece("ramp", 0, 0, -1, 0), "north ramp + R");
+      await equipFacingThenPlace(a, aim, 0, "Mouse4", ["KeyX", "KeyX"], cellCentre(0, 1), isPiece("ramp", 0, 0, 1, 1), "north ramp + X X");
+      // Ramps for each cardinal facing: the ramp rises the way the player faced at the equip.
+      const ramps: Array<[string, number, number, number, number]> = [["north", 0, 1, -1, 3], ["west", -H, 0, 0, 2], ["south", Math.PI, 1, 1, 1], ["east", H, 2, 0, 0]];
+      for (const [name, yaw, gx, gz, rotation] of ramps) {
+        await equipFacingThenPlace(a, aim, yaw, "Mouse4", [], cellCentre(gx, gz), isPiece("ramp", gx, 0, gz, rotation), `ramp equipped facing ${name}`);
+        step(`ramp equipped facing ${name} → rotation ${rotation}`);
+      }
+      step("camera turns never rotated the ramp; R / X turned it one quarter each");
+    } finally { await context.close(); }
+  });
+
+  test("edit reset B — E → drag → E, then E → RMB → E restores the default wall on both clients; E → drag → RMB → E sends nothing (real input)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, b, aId, id, aim, step } = await openWallEditDuel("edit reset B");
+    try {
+      await a.evaluate(() => { const w = window as any; w.__ctxMenus = []; window.addEventListener("contextmenu", (e) => w.__ctxMenus.push(e.defaultPrevented)); });
+      const rmb = async () => { await a.mouse.down({ button: "right" }); await sleep(60); await a.mouse.up({ button: "right" }); };
+      const ammo = await getMagazineAmmo(a);
+      const count = (await structuresOf(a)).length;
+      const full: AcceptanceEditGrid = { kind: "wall", tiles: Array(9).fill(true) };
+      // E → drag a doorway (tiles 7 → 4) → E confirms.
+      await aim.at(wallTile(1, 0, 7));
+      await pressKey(a, "KeyE");
+      await expect(a.locator(".build-edit-hud__target")).toContainText("Wall", { timeout: 5_000 });
+      await setPrimaryFire(a, true);
+      await sleep(150);
+      await aim.at(wallTile(1, 0, 4));
+      await sleep(300);
+      await setPrimaryFire(a, false);
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
+      await pressKey(a, "KeyE");
+      const doorway: AcceptanceEditGrid = { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] };
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: doorway }, "doorway");
+      step("doorway confirmed");
+      // E → RMB: the draft shows the full wall at once, nothing is sent.
+      const sentBefore = (await editSends(a)).length;
+      await pressKey(a, "KeyE");
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
+      await rmb();
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 0/9", { timeout: 2_000 });
+      expect((await editSends(a)).length).toBe(sentBefore);
+      expect(await editModeOn(a)).toBe(true);
+      step("RMB reset the local draft immediately; nothing sent");
+      // E confirms the reset over the canonical route; both clients converge.
+      await pressKey(a, "KeyE");
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: full }, "reset confirmed");
+      expect((await editSends(a)).slice(sentBefore).map((m) => m.action)).toEqual(["reset", "confirm"]);
+      expect(await editModeOn(a)).toBe(false);
+      step("E confirmed the reset: default wall on both clients");
+      // E → drag → RMB → E on the default wall: nothing to send.
+      const sentAfter = (await editSends(a)).length;
+      await aim.at(wallTile(1, 0, 3));
+      await pressKey(a, "KeyE");
+      await setPrimaryFire(a, true);
+      await sleep(150);
+      await aim.at(wallTile(1, 0, 5));
+      await sleep(300);
+      await setPrimaryFire(a, false);
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 3/9", { timeout: 5_000 });
+      await rmb();
+      await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 0/9", { timeout: 2_000 });
+      await pressKey(a, "KeyE");
+      await sleep(500);
+      expect((await editSends(a)).length).toBe(sentAfter);
+      await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: full }, "still default");
+      // No context menu, no shot, no placement.
+      const menus: boolean[] = await a.evaluate(() => (window as any).__ctxMenus);
+      expect(menus.every(Boolean)).toBe(true);
+      expect(await getMagazineAmmo(a)).toBe(ammo);
+      expect((await structuresOf(a)).length).toBe(count);
+      step(`no context menu (${menus.length} suppressed), no shot, no placement`);
+    } finally { await context.close(); }
+  });
+
+  test("stack D — two-level box: 4 walls + roof, then 4 walls + roof on top, all coexisting (real input)", { timeout: 180_000 }, async () => {
+    test.setTimeout(180_000);
+    const { context, a, aId, step } = await openFreshDuel("stack D", { width: 480, height: 270 });
+    try {
+      await installPoseTrace(a);
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      const T = { x: 1, z: -2 }; // the box tile; the player starts south of it at (5, 0, 0)
+      const wallSlotOf = (y: number, r: number) => (s: Placed) => s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: T.x, y, z: T.z }, r)[0];
+      // Layer 0: far (−Z) wall facing north; the X-edge walls with one R.
+      await equipFacingThenPlace(a, aim, 0, "Mouse3", [], { x: CS, y: 0, z: -2 * CS - 1.8 }, wallSlotOf(0, 0), "L0 far wall");
+      await equipFacingThenPlace(a, aim, 0, "Mouse3", ["KeyR"], { x: CS + 1.9, y: 0, z: -2 * CS }, wallSlotOf(0, 1), "L0 east wall");
+      await equipFacingThenPlace(a, aim, 0, "Mouse3", ["KeyR"], { x: CS - 1.9, y: 0, z: -2 * CS }, wallSlotOf(0, 3), "L0 west wall");
+      // The ramp up to the box (tile (1,-1), rising north to the box's near edge).
+      await placeRampReal(a, aim);
+      // The near wall from the ramp's high end (that ramp tile's −Z edge = the box's +Z edge), then the roof past it.
+      await buildFromSurface(a, aim, "Mouse3", { x: CS + 0.3, y: 0.92 * LH, z: -1.5 * CS + 0.35 }, wallSlotOf(0, 2), "L0 near wall from the ramp");
+      await buildFromSurface(a, aim, "KeyQ", { x: CS + 0.3, y: 0.8 * LH, z: -1.5 * CS + 1.0 }, isPiece("floor", T.x, 1, T.z), "roof from the ramp's high end");
+      step("level 0: 4 walls + roof");
+      // Climb onto the roof.
+      await aim.to(0, 0);
+      await holdKey(a, "stack D", "KeyW", "p.z <= arg.z", { z: -2 * CS + 1.6 }, "up the ramp onto the roof", true);
+      await aim.to(0, 0);
+      await holdKey(a, "stack D", "KeyW", "p.z <= arg.z", { z: -2 * CS + 0.3 }, "to the roof's middle (crouched: a short, precise stop)", true);
+      await settleInputs(a, 10);
+      await settleInputs(a, 10);
+      const onRoof = await authPose(a);
+      step(`on the roof ${JSON.stringify(onRoof)}`);
+      expect(onRoof.y).toBeCloseTo(LH + 0.15, 4);
+      // Layer 1 walls from the roof's top near each edge (the near edge last).
+      await buildFromSurface(a, aim, "Mouse3", { x: CS, y: LH + 0.15, z: -2 * CS - 2.2 }, wallSlotOf(1, 0), "L1 far wall");
+      await buildFromSurface(a, aim, "Mouse3", { x: CS + 2.2, y: LH + 0.15, z: -2 * CS - 0.6 }, wallSlotOf(1, 1), "L1 east wall");
+      await buildFromSurface(a, aim, "Mouse3", { x: CS - 2.2, y: LH + 0.15, z: -2 * CS - 0.6 }, wallSlotOf(1, 3), "L1 west wall");
+      await buildFromSurface(a, aim, "Mouse3", { x: CS + 0.2, y: LH + 0.15, z: -2 * CS + 2.2 }, wallSlotOf(1, 2), "L1 near wall");
+      // The top roof: aim up inside the box.
+      await buildFromSurface(a, aim, "KeyQ", { x: CS, y: 2 * LH - 0.05, z: -2 * CS }, isPiece("floor", T.x, 2, T.z), "top roof");
+      step("level 1: 4 walls + roof");
+      const box = (await structuresOf(a)).filter((s) => s.ownerId === aId && s.buildType !== "ramp");
+      expect(box.map((s) => `${s.buildType}@${s.grid.y}`).sort()).toEqual(["floor@1", "floor@2", "wall@0", "wall@0", "wall@0", "wall@0", "wall@1", "wall@1", "wall@1", "wall@1"]);
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("stack E — vertical chain: ramp → floor → ramp → floor → cone while climbing (real input)", { timeout: 180_000 }, async () => {
+    test.setTimeout(180_000);
+    const { context, a, step } = await openFreshDuel("stack E", { width: 480, height: 270 });
+    try {
+      await installPoseTrace(a);
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      await placeRampReal(a, aim); // (1,0,-1), rising north
+      await aim.to(0, 0);
+      await holdKey(a, "stack E", "KeyW", "p.y >= 1.6", {}, "climb part way", true);
+      await settleInputs(a, 10);
+      await buildFromSurface(a, aim, "KeyQ", { x: CS + 0.3, y: 0.9 * LH, z: -1.5 * CS + 0.5 }, isPiece("floor", 1, 1, -2), "floor from the ramp's high end");
+      await aim.to(0, 0);
+      await holdKey(a, "stack E", "KeyW", "p.z <= arg.z", { z: -2 * CS + 0.6 }, "onto the floor");
+      await settleInputs(a, 10);
+      // An air floor west, then the second ramp on it, equipped facing west.
+      await buildFromSurface(a, aim, "KeyQ", { x: CS - 2.0, y: LH + 0.15, z: -2 * CS + 0.4 }, isPiece("floor", 0, 1, -2), "air floor west");
+      await aim.to(-H, -0.35);
+      await sleep(150);
+      await pressKey(a, "Mouse4"); // facing west → rises −X
+      await sleep(120);
+      await aim.at({ x: 0.6, y: LH + 0.15, z: -2 * CS + 0.3 });
+      await fireWeapon(a);
+      await waitStructure(a, isPiece("ramp", 0, 1, -2, 2), "second ramp on the air floor, rising west");
+      step("second ramp on layer 1, rising west");
+      await aim.to(-H, 0);
+      await holdKey(a, "stack E", "KeyW", "p.y >= arg.y", { y: LH + 1.6 }, "climb the second ramp part way", true);
+      await settleInputs(a, 10);
+      await buildFromSurface(a, aim, "KeyQ", { x: -CS / 2 + 0.5, y: LH + 0.9 * LH, z: -2 * CS + 0.3 }, isPiece("floor", -1, 2, -2), "floor from the second ramp's high end");
+      await aim.to(-H, 0);
+      await holdKey(a, "stack E", "KeyW", "p.x <= arg.x", { x: -CS + 0.6 }, "onto the top floor");
+      await settleInputs(a, 10);
+      const top = await authPose(a);
+      step(`on the layer-2 floor ${JSON.stringify(top)}`);
+      expect(top.y).toBeCloseTo(2 * LH + 0.15, 4);
+      await buildFromSurface(a, aim, "KeyF", { x: -CS - 1.2, y: 2 * LH + 0.15, z: -2 * CS + 0.8 }, isPiece("cone", -1, 2, -2), "cone on the top floor");
+      step("cone on the layer-2 floor");
+      expect(await rejections(a)).toEqual([]);
+    } finally { await context.close(); }
+  });
+
+  test("stack F — fast build with LMB held: wall ×3 straight up, then floor, cone and ramp on top without a release (real binds)", { timeout: 120_000 }, async () => {
+    test.setTimeout(120_000);
+    const { context, a, aId, step } = await openFreshDuel("stack F", { width: 480, height: 270 });
+    try {
+      await recordRejections(a);
+      const aim = new CrosshairAim(a);
+      // Aims computed with the primary up (camera only, nothing placed yet).
+      const face = -0.5 * CS + 0.384; // wall (1,·,-1) r2's face toward the player
+      const targets = [edgeAim(1, -1, 2), { x: CS + 0.4, y: 0.8 * LH, z: face }, { x: CS + 0.4, y: LH + 0.8 * LH, z: face }];
+      const aims: Array<{ yaw: number; pitch: number }> = [];
+      for (const t of targets) { await aim.at(t); aims.push({ yaw: aim.yaw, pitch: aim.pitch }); }
+      await aim.to(aims[0]!.yaw, aims[0]!.pitch);
+      await pressKey(a, "Mouse3"); // facing north: Z-edge walls
+      await sleep(120);
+      await setPrimaryFire(a, true);
+      try {
+        for (const [i, layer] of [0, 1, 2].entries()) {
+          await aim.to(aims[i]!.yaw, aims[i]!.pitch); // one exact look jump per layer
+          await waitStructure(a, isPiece("wall", 1, layer, -1, 2), `held wall layer ${layer}`);
+          step(`wall layer ${layer}`);
+        }
+        // Same aim (the layer-1 wall's upper face), primary still held: switch pieces.
+        for (const [code, type] of [["KeyQ", "floor"], ["KeyF", "cone"], ["Mouse4", "ramp"]] as const) {
+          await pressKey(a, code);
+          await waitStructure(a, isPiece(type, 1, 2, -1), `held ${type} on top`);
+          step(`${type} on layer 2`);
+        }
+      } finally { await setPrimaryFire(a, false); }
+      await sleep(400);
+      const mine = (await structuresOf(a)).filter((s) => s.ownerId === aId);
+      expect(mine.map((s) => `${s.buildType}@${s.grid.y}`).sort()).toEqual(["cone@2", "floor@2", "ramp@2", "wall@0", "wall@1", "wall@2"]);
+      expect((await rejections(a)).filter((r) => r.reason === "overlap")).toEqual([]);
     } finally { await context.close(); }
   });
 

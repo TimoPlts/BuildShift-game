@@ -81,10 +81,28 @@ describe("InputManager side mouse buttons", () => {
     expect(input.pollJumpPressed()).toBe(false);
   });
 
+  it("the right mouse button (edit reset) opens no context menu during gameplay and never fires", () => {
+    lock();
+    const menu = { type: "contextmenu", button: 2, target: null, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    win.dispatch("contextmenu", menu);
+    expect(menu.defaultPrevented).toBe(true);
+    mouse("mousedown", 2);
+    expect(input.isFireHeld()).toBe(false);
+    expect(input.consumeFirePressed()).toBe(false);
+    mouse("mouseup", 2);
+    expect(input.isPointerLocked()).toBe(true); // RMB never releases the lock
+  });
+
+  it("outside gameplay (no lock, not the canvas) the context menu is left alone", () => {
+    const menu = { type: "contextmenu", button: 2, target: { tagName: "DIV" }, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; } };
+    win.dispatch("contextmenu", menu);
+    expect(menu.defaultPrevented).toBe(false);
+  });
+
   it("removes the navigation guards on dispose", () => {
-    expect(win.count("auxclick")).toBe(1);
+    expect([win.count("auxclick"), win.count("contextmenu")]).toEqual([1, 1]);
     input.dispose();
-    expect(win.count("auxclick")).toBe(0);
+    expect([win.count("auxclick"), win.count("contextmenu")]).toEqual([0, 0]);
     create();
   });
 });

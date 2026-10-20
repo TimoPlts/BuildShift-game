@@ -348,6 +348,44 @@ export function wallEdgeRotation(grid: BuildCell, x: number, z: number): number 
 }
 
 /**
+ * The wall rotation for a LOCKED wall orientation at world point `(x, z)` of
+ * tile `grid`: the selected rotation fixes the wall's axis (r0/r2 stand on
+ * the tile's Z edges, r1/r3 on its X edges); of the two parallel edges, the
+ * one nearer the point is used. The orientation therefore never follows the
+ * camera — only an explicit rotate (or a new equip) changes it.
+ */
+export function wallEdgeForOrientation(grid: BuildCell, x: number, z: number, rotation: number): number {
+  const r = ((rotation % 4) + 4) % 4;
+  if (r === 0 || r === 2) return z - grid.z * BUILD_GRID.cellSize > 0 ? 2 : 0;
+  return x - grid.x * BUILD_GRID.cellSize > 0 ? 1 : 3;
+}
+
+/**
+ * The canonical quarter turn (0–3) nearest a facing yaw (the camera
+ * convention: yaw 0 faces −Z, +π/2 faces +X, ±π faces +Z, −π/2 faces −X).
+ * Deterministic for any finite yaw (exact diagonals round toward +yaw).
+ */
+export function quarterTurnFromYaw(yaw: number): number {
+  const q = Math.round(yaw / (Math.PI / 2));
+  return (((q % 4) + 4) % 4) + 0;
+}
+
+/**
+ * The rotation a build piece starts with when it is EQUIPPED while the player
+ * faces `yaw` (it then stays locked until an explicit rotate):
+ *  - wall: the edge ahead (wall rotation = the edge's outward direction);
+ *  - ramp: rising away from the player (ramp rotation 0 rises +X, 1 +Z,
+ *    2 −X, 3 −Z);
+ *  - floor / cone: rotation-invariant (0).
+ */
+export function facingPlacementRotation(buildType: string, yaw: number): number {
+  const q = quarterTurnFromYaw(yaw); // 0 −Z, 1 +X, 2 +Z, 3 −X
+  if (buildType === "wall") return q;
+  if (buildType === "ramp") return (q + 3) % 4;
+  return normalizePlacementRotation(buildType, 0);
+}
+
+/**
  * The build tile containing world point `(x, z)` on layer `layer`: tiles are
  * centred on `grid × cellSize` (the canonical geometry convention), so the
  * nearest tile centre wins.
