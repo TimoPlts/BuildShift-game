@@ -13,6 +13,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { createFoundationScene } from "./createFoundationScene";
 import {
   ARENA_COLLIDERS,
@@ -20,6 +21,11 @@ import {
   BUILD_GRID,
   PLAYER_SPAWN,
 } from "@buildshift/game-config";
+
+/** World-space size of a mesh (CreateBox bakes dimensions into vertices). */
+function worldSize(mesh: AbstractMesh) {
+  return mesh.getBoundingInfo().boundingBox.extendSizeWorld.scale(2);
+}
 
 /** Canonical snapshot of the collider table (id, position, halfExtents). */
 const CANONICAL_COLLIDERS = ARENA_COLLIDERS.map((c) => ({
@@ -228,5 +234,87 @@ describe("arena presentation — decorative meshes are non-pickable/non-collidab
 
     scene.dispose();
     engine.dispose();
+  });
+});
+
+describe("arena presentation — decorations derive from canonical config", () => {
+  const [gx, , gz] = GROUND.position;
+  const [hx, , hz] = GROUND.halfExtents;
+
+  const buildSpanX =
+    (BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize;
+  const buildSpanZ =
+    (BUILD_BOUNDS.maxZ - BUILD_BOUNDS.minZ + 1) * BUILD_GRID.cellSize;
+  const buildLayerSpan =
+    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) * BUILD_GRID.layerHeight;
+
+  it("play-field plate is centred on the ground and spans the build volume", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    const plate = scene.getMeshByName("arena-playfield-plate")!;
+    expect(plate.position.x).toBeCloseTo(gx);
+    expect(plate.position.z).toBeCloseTo(gz);
+    const size = worldSize(plate);
+    expect(size.x).toBeCloseTo(buildSpanX);
+    expect(size.z).toBeCloseTo(buildSpanZ);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("shell walls sit on the ground's half-extents and clear the build layers", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    const north = scene.getMeshByName("arena-shell-n")!;
+    const south = scene.getMeshByName("arena-shell-s")!;
+    const east = scene.getMeshByName("arena-shell-e")!;
+    const west = scene.getMeshByName("arena-shell-w")!;
+
+    expect(north.position.z).toBeCloseTo(gz - hz);
+    expect(south.position.z).toBeCloseTo(gz + hz);
+    expect(east.position.x).toBeCloseTo(gx + hx);
+    expect(west.position.x).toBeCloseTo(gx - hx);
+
+    // The shell must clear every build layer derived from BUILD_BOUNDS.
+    for (const wall of [north, south, east, west]) {
+      expect(worldSize(wall).y).toBeGreaterThanOrEqual(buildLayerSpan);
+    }
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("spawn markers sit on PLAYER_SPAWN and its mirror across the ground centre", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    const pad = scene.getMeshByName("arena-spawn-pad")!;
+    const mirrorPad = scene.getMeshByName("arena-spawn-pad-mirror")!;
+
+    expect(pad.position.x).toBeCloseTo(PLAYER_SPAWN.x);
+    expect(pad.position.z).toBeCloseTo(PLAYER_SPAWN.z);
+
+    // The mirror spawn is the shared spawn reflected across the ground centre.
+    expect(mirrorPad.position.x).toBeCloseTo(gx * 2 - PLAYER_SPAWN.x);
+    expect(mirrorPad.position.z).toBeCloseTo(gz * 2 - PLAYER_SPAWN.z);
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("decorative presentation disposes cleanly with no leftover meshes", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    const meshCountBefore = scene.meshes.length;
+    expect(meshCountBefore).toBeGreaterThan(0);
+
+    expect(() => scene.dispose()).not.toThrow();
+    expect(scene.meshes.length).toBe(0);
+    expect(scene.materials.length).toBe(0);
+
+    expect(() => engine.dispose()).not.toThrow();
   });
 });
