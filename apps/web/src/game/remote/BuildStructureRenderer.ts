@@ -11,6 +11,11 @@
  *    transition for clear rejected-placement feedback.
  *  - Render authoritative structures replicated from the server
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
+ *    Permanent structures use presentation visuals (outer frame + inset
+ *    panels on walls, a thin framed platform for floors, a continuous
+ *    inclined plate for ramps, and a smooth pyramid for cones) that hide
+ *    the canonical collision steps while staying exactly aligned with the
+ *    authoritative `structureCuboids` footprint and openings.
  *  - Play the original BuildShift construction presentation when a
  *    structure is authoritatively accepted: a short, transparent,
  *    lightweight build-up (semi-transparent shell solidifying to full
@@ -53,7 +58,7 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig, structureCuboids } from "@buildshift/game-config";
+import { BUILD_GRID, getStructureConfig, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -61,6 +66,7 @@ import type {
   StructureState,
   BuildingState,
   StructureDurabilityState,
+  StructureEditState,
 } from "@buildshift/protocol";
 import {
   createConstructionEffects,
@@ -125,14 +131,448 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
   );
 }
 
-// ─── Mesh factory per build type ───────────────────────────────────────────
+// ─── Visual geometry (presentation-only) ──────────────────────────────────
+//
+// The *rendered* structure is a visual reinterpretation of the canonical
+// authoritative geometry (`structureCuboids`):
+//  - wall  → visually thin edge panel: an outer frame plus recessed inset
+//    panels (no giant cube); edited walls render one inset panel per
+//    retained canonical 3×3 tile, so openings match exactly.
+//  - floor → a thin framed platform: full-height edge trims around a
+//    slightly lower deck, so the platform edge reads clearly; edited
+//    floors render only the retained canonical quadrants.
+//  - ramp  → a single continuous inclined plate that hides the canonical
+//    16 collision steps while spanning exactly the canonical 1×1 tile
+//    footprint (run, rise, width and turn of every variant).
+//  - cone  → a smooth pyramid (one per retained canonical quadrant when
+//    edited) that hides the canonical stepped levels.
+//
+// Collision, hitscan and movement keep using `structureCuboids` untouched;
+// these visuals never add or remove volume the authoritative state lacks.
+
+/** An axis-aligned visual box in world space. */
+interface VisualBox {
+  center: [number, number, number];
+  size: [number, number, number];
+}
+
+/** A square-basis pyramid visual in world space (apex above the base centre). */
+interface VisualPyramid {
+  center: [number, number, number];
+  diameter: number;
+  depth: number;
+  height: number;
+}
+
+/** The canonical inputs a structure visual derives from (never mutated). */
+interface VisualInput {
+  buildType: BuildType;
+  grid: GridPosition;
+  rotation: GridRotation;
+  editGrid?: StructureEditState;
+}
+
+/** Canonical wall panel thickness — the collision panel's FULL depth
+ * (`cs * 0.075` in `structureCuboids` is the half extent). The visual frame
+ * matches it so the outer envelope is exactly the canonical one. */
+const WALL_FRAME_THICKNESS = BUILD_GRID.cellSize * 0.15;
+/** Inset wall panels are recessed: half the frame thickness. */
+const WALL_INSET_THICKNESS = WALL_FRAME_THICKNESS / 2;
+/** Canonical floor top surface height. */
+const FLOOR_TOP_HEIGHT = 0.15;
 
 /**
- * Create the placement-preview ghost: exactly the canonical default solids
- * for this build type, grid cell and rotation (the same `structureCuboids`
- * the permanent renderer, collision and hitscan use). The root sits at the
- * anchor (+ half the effective height) with no rotation of its own — the
- * rotation is part of the canonical shape — and each solid is a child box.
+ * Visual boxes for a wall: the outer frame plus recessed inset panels when
+ * the wall is whole, or one recessed panel per retained canonical tile when
+ * it is edited (centred on the same tile the collision volume uses).
+ */
+function wallVisualBoxes(input: VisualInput): VisualBox[] {
+  const cs = BUILD_GRID.cellSize;
+  const lh = BUILD_GRID.layerHeight;
+  const y = input.grid.y * lh;
+  const { x, z } = wallEdgeCenter(input.grid, input.rotation);
+  const alongX = input.rotation === 0 || input.rotation === 2;
+  const tiles =
+    input.editGrid?.kind === "wall" && input.editGrid.tiles.length === 9
+      ? input.editGrid.tiles
+      : Array<boolean>(9).fill(true);
+
+  // A box described by its along-wall offset/size and its lateral thickness.
+  const boxAt = (
+    cx: number,
+    cz: number,
+    cy: number,
+    widthU: number,
+    height: number,
+    thicknessV: number,
+  ): VisualBox =>
+    alongX
+      ? { center: [cx, cy, cz], size: [widthU, height, thicknessV] }
+      : { center: [cx, cy, cz], size: [thicknessV, height, widthU] };
+
+  if (tiles.every(Boolean)) {
+    const postW = cs * 0.09;
+    const railH = lh * 0.1;
+    const gap = cs * 0.05;
+    const panelW = (cs - 2 * postW - gap) / 2;
+    const panelH = lh - 2 * railH;
+    const boxes: VisualBox[] = [
+      // Outer frame: a post at each end of the panel edge plus a top and
+      // bottom rail spanning the full edge.
+      boxAt(x + (alongX ? cs / 2 - postW / 2 : 0), z + (alongX ? 0 : cs / 2 - postW / 2), y + lh / 2, postW, lh, WALL_FRAME_THICKNESS),
+      boxAt(x - (alongX ? cs / 2 - postW / 2 : 0), z - (alongX ? 0 : cs / 2 - postW / 2), y + lh / 2, postW, lh, WALL_FRAME_THICKNESS),
+      boxAt(x, z, y + railH / 2, cs, railH, WALL_FRAME_THICKNESS),
+      boxAt(x, z, y + lh - railH / 2, cs, railH, WALL_FRAME_THICKNESS),
+    ];
+    // Two recessed inset panels fill the framed opening.
+    for (const side of [-1, 1]) {
+      const offset = side * (panelW / 2 + gap / 2);
+      boxes.push(
+        boxAt(x + (alongX ? offset : 0), z + (alongX ? 0 : offset), y + lh / 2, panelW, panelH, WALL_INSET_THICKNESS),
+      );
+    }
+    return boxes;
+  }
+
+  // Edited wall: one recessed panel per retained canonical tile. The tile
+  // centres come from `structureCuboids` (one-hot edit grid) so the visual
+  // openings can never drift from the collision openings.
+  const boxes: VisualBox[] = [];
+  for (let i = 0; i < 9; i++) {
+    if (!tiles[i]) continue;
+    const oneHot = Array<boolean>(9).fill(false);
+    oneHot[i] = true;
+    const canonical = structureCuboids({
+      buildType: "wall",
+      grid: input.grid,
+      rotation: input.rotation,
+      editGrid: { kind: "wall", tiles: oneHot },
+    });
+    const { center } = canonical[0]!;
+    boxes.push(boxAt(center.x, center.z, center.y, cs / 3 * 0.96, lh / 3 * 0.96, WALL_INSET_THICKNESS));
+  }
+  return boxes;
+}
+
+/**
+ * Visual boxes for a floor: full-height edge trims around a slightly lower
+ * deck (thin framed platform with readable edges), or — when edited — one
+ * thin slab per retained canonical quadrant.
+ */
+function floorVisualBoxes(input: VisualInput): VisualBox[] {
+  const cs = BUILD_GRID.cellSize;
+  const x = input.grid.x * cs;
+  const y = input.grid.y * BUILD_GRID.layerHeight;
+  const z = input.grid.z * cs;
+  const H = FLOOR_TOP_HEIGHT;
+  const tiles =
+    input.editGrid?.kind === "floor_cone" && input.editGrid.tiles.length === 4
+      ? input.editGrid.tiles
+      : Array<boolean>(4).fill(true);
+
+  if (tiles.every(Boolean)) {
+    const trim = cs * 0.05;
+    const deckH = H - 0.04;
+    const boxes: VisualBox[] = [
+      { center: [x, y + H / 2, z - (cs / 2 - trim / 2)], size: [cs, H, trim] },
+      { center: [x, y + H / 2, z + (cs / 2 - trim / 2)], size: [cs, H, trim] },
+      { center: [x - (cs / 2 - trim / 2), y + H / 2, z], size: [trim, H, cs] },
+      { center: [x + (cs / 2 - trim / 2), y + H / 2, z], size: [trim, H, cs] },
+      { center: [x, y + deckH / 2, z], size: [cs - 2 * trim, deckH, cs - 2 * trim] },
+    ];
+    return boxes;
+  }
+
+  const boxes: VisualBox[] = [];
+  for (let i = 0; i < 4; i++) {
+    if (!tiles[i]) continue;
+    const qx = x + ((i % 2) - 0.5) * cs / 2;
+    const qz = z + (Math.floor(i / 2) - 0.5) * cs / 2;
+    boxes.push({
+      center: [qx, y + (H - 0.03) / 2, qz],
+      size: [cs / 2 - 0.1, H - 0.03, cs / 2 - 0.1],
+    });
+  }
+  return boxes;
+}
+
+/**
+ * Visual pyramids for a cone: one smooth pyramid over the whole tile when
+ * unedited, or one per retained canonical quadrant when edited. A quadrant
+ * pyramid shrinks linearly toward its apex exactly like the canonical
+ * stepped quadrants, so the openings stay where the collision has them.
+ */
+function coneVisualPyramids(input: VisualInput): VisualPyramid[] {
+  const cs = BUILD_GRID.cellSize;
+  const lh = BUILD_GRID.layerHeight;
+  const x = input.grid.x * cs;
+  const yBase = input.grid.y * lh;
+  const z = input.grid.z * cs;
+  const tiles =
+    input.editGrid?.kind === "floor_cone" && input.editGrid.tiles.length === 4
+      ? input.editGrid.tiles
+      : Array<boolean>(4).fill(true);
+
+  if (tiles.every(Boolean)) {
+    return [{ center: [x, yBase + lh / 2, z], diameter: cs, depth: cs, height: lh }];
+  }
+
+  const pyramids: VisualPyramid[] = [];
+  for (let i = 0; i < 4; i++) {
+    if (!tiles[i]) continue;
+    pyramids.push({
+      center: [x + ((i % 2) - 0.5) * cs / 2, yBase + lh / 2, z + (Math.floor(i / 2) - 0.5) * cs / 2],
+      diameter: cs / 2,
+      depth: cs / 2,
+      height: lh,
+    });
+  }
+  return pyramids;
+}
+
+/** Plate thickness of the ramp visual (a touch more than the 0.3 m collision slabs, so its underside swallows the steps). */
+const RAMP_PLATE_THICKNESS = 0.34;
+/** Longitudinal tessellation of the ramp plate (straight plate — 12 is plenty smooth). */
+const RAMP_PLATE_SEGMENTS = 12;
+
+/**
+ * Tiny closed-geometry builder: quads/triangles with their own vertices
+ * (flat normals) and the winding the shared material's back-face culling
+ * expects — the triangle whose normal (a−b)×(c−b) points along the given
+ * outward direction is emitted as the front face.
+ */
+class FlatGeometry {
+  private positions: number[] = [];
+  private normals: number[] = [];
+  private indices: number[] = [];
+
+  private readonly at = (base: number, i: number): Vector3 =>
+    new Vector3(this.positions[(base + i) * 3]!, this.positions[(base + i) * 3 + 1]!, this.positions[(base + i) * 3 + 2]!);
+
+  private addFace(corners: [number, number, number][], outNormal: Vector3, isQuad: boolean): void {
+    const base = this.positions.length / 3;
+    for (const [x, y, z] of corners) this.positions.push(x, y, z);
+    const a = this.at(base, 0);
+    const b = this.at(base, 1);
+    const c = this.at(base, 2);
+    const faceNormal = Vector3.Cross(a.subtract(b), c.subtract(b));
+    const n = outNormal.normalize();
+    const forward = faceNormal.dot(n) >= 0;
+    if (isQuad) {
+      if (forward) this.indices.push(base, base + 1, base + 2, base, base + 2, base + 3);
+      else this.indices.push(base, base + 2, base + 1, base, base + 3, base + 2);
+    } else if (forward) {
+      this.indices.push(base, base + 1, base + 2);
+    } else {
+      this.indices.push(base, base + 2, base + 1);
+    }
+    for (let i = 0; i < corners.length; i++) this.normals.push(n.x, n.y, n.z);
+  }
+
+  addQuad(corners: [number, number, number][], outNormal: Vector3): void {
+    this.addFace(corners, outNormal, true);
+  }
+
+  addTriangle(corners: [number, number, number][], outNormal: Vector3): void {
+    this.addFace(corners, outNormal, false);
+  }
+
+  build(scene: Scene, name: string): Mesh {
+    const mesh = new Mesh(name, scene);
+    mesh.setVerticesData("position", this.positions);
+    mesh.setVerticesData("normal", this.normals);
+    mesh.setIndices(this.indices);
+    return mesh;
+  }
+}
+
+/**
+ * Build the continuous ramp plate: a closed, planar inclined slab spanning
+ * exactly the canonical 1×1 tile footprint. The top surface follows the
+ * canonical walking line (from the tile base at one end to one layer up at
+ * the other, reversed for flipped/descending orientations), the width and
+ * lateral shear follow the canonical variant (full / flipped / half_left /
+ * half_right / turn_left / turn_right), and the plate is closed (top,
+ * bottom, side and end faces) so it reads solid from every angle while the
+ * canonical collision steps remain hidden underneath. Vertices are emitted
+ * in tile-relative coordinates (origin: tile centre at the layer base).
+ */
+function buildRampPlateMesh(
+  scene: Scene,
+  rotation: GridRotation,
+  variant: string,
+): Mesh {
+  const cs = BUILD_GRID.cellSize;
+  const lh = BUILD_GRID.layerHeight;
+  const alongX = rotation === 0 || rotation === 2;
+  const reversed = (rotation === 2 || rotation === 3) !== (variant === "flipped");
+  const ascent = reversed ? -1 : 1;
+  // Lateral sign of the climber's left side (same convention as the
+  // canonical step slabs in `structureCuboids`).
+  const leftSign = alongX ? ascent : -ascent;
+  const side = variant === "half_left" ? 1 : variant === "half_right" ? -1 : 0;
+  const turn = variant === "turn_left" ? -1 : variant === "turn_right" ? 1 : 0;
+
+  const S = RAMP_PLATE_SEGMENTS;
+  const geo = new FlatGeometry();
+
+  // One station per longitudinal segment boundary: the four plate corners
+  // (top lo, top hi, bottom hi, bottom lo) at parameter u.
+  const cornersAt = (u: number): [number, number, number][] => {
+    const run = -cs / 2 + u * cs;
+    const topY = lh * (reversed ? 1 - u : u);
+    const bottomY = Math.max(0, topY - RAMP_PLATE_THICKNESS);
+    let lo: number;
+    let hi: number;
+    if (side !== 0) {
+      const lateral = side * leftSign * cs / 4;
+      lo = lateral - cs / 4;
+      hi = lateral + cs / 4;
+    } else if (turn !== 0) {
+      const lateral = turn * u * cs / 4;
+      lo = lateral - cs / 4;
+      hi = lateral + cs / 4;
+    } else {
+      lo = -cs / 2;
+      hi = cs / 2;
+    }
+    const point = (lateral: number, y: number): [number, number, number] =>
+      alongX ? [run, y, lateral] : [lateral, y, run];
+    return [point(lo, topY), point(hi, topY), point(hi, bottomY), point(lo, bottomY)];
+  };
+
+  const runDir = alongX ? new Vector3(1, 0, 0) : new Vector3(0, 0, 1);
+  const latDir = alongX ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
+  const eRun = runDir.scale(cs).add(new Vector3(0, lh, 0)).normalize();
+  const nTop = runDir.scale(-lh).add(new Vector3(0, cs, 0)).normalize();
+  const nBottom = nTop.negate();
+  const nLo = latDir.negate();
+  const nHi = latDir;
+  const nCapStart = eRun.negate();
+  const nCapEnd = eRun;
+
+  const stations = Array.from({ length: S + 1 }, (_, s) => cornersAt(s / S));
+  for (let s = 0; s < S; s++) {
+    const p = stations[s]!;
+    const q = stations[s + 1]!;
+    geo.addQuad([p[0]!, p[1]!, q[1]!, q[0]!], nTop); // top
+    geo.addQuad([p[3]!, q[3]!, q[2]!, p[2]!], nBottom); // bottom
+    geo.addQuad([p[3]!, q[3]!, q[0]!, p[0]!], nLo); // low-lateral side
+    geo.addQuad([p[1]!, p[2]!, q[2]!, q[1]!], nHi); // high-lateral side
+  }
+  const first = stations[0]!;
+  const last = stations[S]!;
+  geo.addQuad([first[0]!, first[1]!, first[2]!, first[3]!], nCapStart); // low end
+  geo.addQuad([last[0]!, last[3]!, last[2]!, last[1]!], nCapEnd); // high end
+
+  return geo.build(scene, "");
+}
+
+/**
+ * Build the smooth pyramid visual (four slanted faces + base) with its base
+ * centred on the origin — this Babylon build has no `CreatePyramid`, so the
+ * solid is emitted as a flat-shaded closed mesh.
+ */
+function buildPyramidMesh(
+  scene: Scene,
+  name: string,
+  diameter: number,
+  depth: number,
+  height: number,
+): Mesh {
+  const d2 = diameter / 2;
+  const z2 = depth / 2;
+  const A: [number, number, number] = [-d2, 0, -z2];
+  const B: [number, number, number] = [d2, 0, -z2];
+  const C: [number, number, number] = [d2, 0, z2];
+  const D: [number, number, number] = [-d2, 0, z2];
+  const P: [number, number, number] = [0, height, 0];
+  const geo = new FlatGeometry();
+  geo.addTriangle([A, B, P], new Vector3(0, 0, -1));
+  geo.addTriangle([B, C, P], new Vector3(1, 0, 0));
+  geo.addTriangle([C, D, P], new Vector3(0, 0, 1));
+  geo.addTriangle([D, A, P], new Vector3(-1, 0, 0));
+  geo.addQuad([A, B, C, D], new Vector3(0, -1, 0));
+  return geo.build(scene, name);
+}
+
+/**
+ * Populate a structure root with its presentation visuals, relative to the
+ * root pose (anchor + half the effective height). Rebuilding disposes any
+ * existing children, so this is safe to call on every geometry change.
+ * Children carry no material here — the caller assigns the shared
+ * structure material to the root and every child.
+ */
+function fillStructureVisual(
+  scene: Scene,
+  root: AbstractMesh,
+  id: string,
+  input: VisualInput,
+): void {
+  for (const child of root.getChildMeshes(false)) child.dispose();
+  const base = gridToWorld(input.grid);
+  const baseY = base.y + getEffectiveHeight(input.buildType) / 2;
+  const rel = (cx: number, cy: number, cz: number) =>
+    new Vector3(cx - base.x, cy - baseY, cz - base.z);
+
+  const finish = (mesh: Mesh, index: number, cx: number, cy: number, cz: number): void => {
+    mesh.name = `visual-${id}-${index}`;
+    mesh.parent = root;
+    mesh.position = rel(cx, cy, cz);
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    if (root.material) mesh.material = root.material;
+  };
+
+  if (input.buildType === "ramp") {
+    const variant = input.editGrid?.kind === "ramp" ? input.editGrid.variant : "full";
+    const plate = buildRampPlateMesh(scene, input.rotation, variant);
+    // Tile-relative origin (tile centre at the layer base) → relative offset.
+    finish(
+      plate,
+      0,
+      input.grid.x * BUILD_GRID.cellSize,
+      input.grid.y * BUILD_GRID.layerHeight,
+      input.grid.z * BUILD_GRID.cellSize,
+    );
+    return;
+  }
+
+  if (input.buildType === "cone") {
+    let index = 0;
+    for (const py of coneVisualPyramids(input)) {
+      const mesh = buildPyramidMesh(
+        scene,
+        `visual-${id}-${index}`,
+        py.diameter,
+        py.depth,
+        py.height,
+      );
+      // The pyramid mesh's local origin is its base centre (not its bounding
+      // centre like CreateBox), so offset down by half its height.
+      finish(mesh, index, py.center[0], py.center[1] - py.height / 2, py.center[2]);
+      index += 1;
+    }
+    return;
+  }
+
+  const boxes = input.buildType === "wall" ? wallVisualBoxes(input) : floorVisualBoxes(input);
+  for (const [index, part] of boxes.entries()) {
+    const mesh = MeshBuilder.CreateBox(`visual-${id}-${index}`, {
+      width: part.size[0],
+      height: part.size[1],
+      depth: part.size[2],
+    }, scene);
+    finish(mesh, index, part.center[0], part.center[1], part.center[2]);
+  }
+}
+
+/**
+ * Create the placement-preview ghost: the same presentation visuals as the
+ * permanent renderer, grid cell and rotation, with no edit state. The root
+ * sits at the anchor (+ half the effective height) with no rotation of its
+ * own — the rotation is part of the canonical shape — and the visuals are
+ * child meshes sharing the preview material.
  */
 function createStructureMesh(
   scene: Scene,
@@ -146,17 +586,7 @@ function createStructureMesh(
   root.position = new Vector3(worldPos.x, worldPos.y + getEffectiveHeight(buildType) / 2, worldPos.z);
   root.isPickable = false;
   root.checkCollisions = false;
-  for (const [index, { center, halfExtents }] of structureCuboids({ buildType, grid, rotation }).entries()) {
-    const part = MeshBuilder.CreateBox(`${name}-solid-${index}`, {
-      width: halfExtents.x * 2,
-      height: halfExtents.y * 2,
-      depth: halfExtents.z * 2,
-    }, scene);
-    part.parent = root;
-    part.position.set(center.x - root.position.x, center.y - root.position.y, center.z - root.position.z);
-    part.isPickable = false;
-    part.checkCollisions = false;
-  }
+  fillStructureVisual(scene, root, name, { buildType, grid, rotation });
   return root;
 }
 
@@ -279,38 +709,14 @@ function geometryKey(structure: StructureState): string {
   return `${structure.buildType}:${structure.rotation}:${state}`;
 }
 
-/** A non-rendered root carries the existing effects/material. Child boxes are
- * exactly the canonical solid volumes, relative to the anchored root pose. */
+/** A non-rendered root carries the existing effects/material. Child meshes
+ * are the presentation visuals, relative to the anchored root pose. */
 function createReplicatedMesh(scene: Scene, structure: StructureState): AbstractMesh {
   const root = new Mesh(`structure-${structure.structureId}`, scene);
   root.isPickable = false;
   root.checkCollisions = false;
-  fillReplicatedMesh(scene, root, structure);
+  fillStructureVisual(scene, root, structure.structureId, structure);
   return root;
-}
-
-function fillReplicatedMesh(scene: Scene, root: AbstractMesh, structure: StructureState): void {
-  for (const child of root.getChildMeshes(false)) child.dispose();
-  const base = gridToWorld(structure.grid);
-  const baseY = base.y + getEffectiveHeight(structure.buildType) / 2;
-  for (const [index, cuboid] of structureCuboids({
-    buildType: structure.buildType,
-    grid: structure.grid,
-    rotation: structure.rotation,
-    editGrid: structure.editGrid,
-  }).entries()) {
-    const { center, halfExtents } = cuboid;
-    const part = MeshBuilder.CreateBox(`build-solid-${structure.structureId}-${index}`, {
-      width: halfExtents.x * 2,
-      height: halfExtents.y * 2,
-      depth: halfExtents.z * 2,
-    }, scene);
-    part.parent = root;
-    part.position.set(center.x - base.x, center.y - baseY, center.z - base.z);
-    part.material = root.material;
-    part.isPickable = false;
-    part.checkCollisions = false;
-  }
 }
 
 // ─── BuildStructureRenderer ────────────────────────────────────────────────
@@ -503,6 +909,8 @@ export class BuildStructureRenderer {
       const mesh = MeshBuilder.CreateBox("build-edit-result-preview", {
         width: w,
         height: h / 2,
+        // Match the canonical wall panel's full depth (the panel is thin,
+        // not a thick slab).
         depth: d * 0.15,
       }, this.scene);
       const mat = new StandardMaterial(
@@ -817,7 +1225,7 @@ export class BuildStructureRenderer {
 
     const nextGeometryKey = geometryKey(structure);
     if (nextGeometryKey !== runtime.geometryKey || gridChanged) {
-      fillReplicatedMesh(this.scene, runtime.mesh, structure);
+      fillStructureVisual(this.scene, runtime.mesh, structure.structureId, structure);
       runtime.geometryKey = nextGeometryKey;
       runtime.dirty = true;
     }

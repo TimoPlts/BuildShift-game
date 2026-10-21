@@ -13,8 +13,9 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core/scene";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import type { BuildingState, StructureState, StructureDurabilityState } from "@buildshift/protocol";
-import { structureCuboids } from "@buildshift/game-config";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
+import type { BuildingState, StructureState, StructureDurabilityState, GridRotation } from "@buildshift/protocol";
+import { BUILD_GRID, structureBounds } from "@buildshift/game-config";
 import { BuildStructureRenderer } from "./BuildStructureRenderer";
 
 function structure(
@@ -337,40 +338,295 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
-  // ─── Authoritative edit geometry ──────────────────────────────────────────
+  // ─── Visual presentation ─────────────────────────────────────────────────
 
-  describe("replicated edit geometry", () => {
-    it("rebuilds wall openings from the grid and restores the exact full mesh", () => {
+  describe("visual presentation", () => {
+    /** Union of the world-space bounding boxes of one structure's visual parts. */
+    function visualBounds(structureId: string): { min: Vector3; max: Vector3 } {
+      const root = scene.getMeshByName(`structure-${structureId}`)!;
+      let min: Vector3 | null = null;
+      let max: Vector3 | null = null;
+      for (const part of root.getChildMeshes(false)) {
+        part.computeWorldMatrix(true);
+        const bb = part.getBoundingInfo().boundingBox;
+        const pmin = new Vector3(bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z);
+        const pmax = new Vector3(bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z);
+        if (!min || !max) {
+          min = pmin;
+          max = pmax;
+        } else {
+          min = Vector3.Minimize(min, pmin);
+          max = Vector3.Maximize(max, pmax);
+        }
+      }
+      return { min: min!, max: max! };
+    }
+
+    const CS = BUILD_GRID.cellSize;
+    const LH = BUILD_GRID.layerHeight;
+
+    /** Full world-space size of a mesh's bounding box. */
+    const boxSize = (bb: { minimumWorld: Vector3; maximumWorld: Vector3 }) =>
+      bb.maximumWorld.subtract(bb.minimumWorld);
+
+    it("aligns every build type with its canonical footprint", () => {
+      const grid = { x: 1, y: 0, z: -2 };
+      for (const buildType of ["wall", "floor", "ramp", "cone"] as const) {
+        const rotations: GridRotation[] = buildType === "floor" || buildType === "cone" ? [0] : [0, 1, 2, 3];
+        for (const rotation of rotations) {
+          renderer.syncStructures({
+            structures: { piece: { ...structure("piece", buildType), rotation, grid } },
+          });
+          advance(300);
+          const expected = structureBounds({ buildType, grid, rotation });
+          const { min, max } = visualBounds("piece");
+          expect(min.x).toBeCloseTo(expected.min[0]!, 3);
+          expect(min.y).toBeCloseTo(expected.min[1]!, 3);
+          expect(min.z).toBeCloseTo(expected.min[2]!, 3);
+          expect(max.x).toBeCloseTo(expected.max[0]!, 3);
+          expect(max.y).toBeCloseTo(expected.max[1]!, 3);
+          expect(max.z).toBeCloseTo(expected.max[2]!, 3);
+          renderer.syncStructures({ structures: {} });
+          advance(300); // dispose before the next case
+        }
+      }
+    });
+
+    it("renders walls as a thin outer frame with recessed inset panels (no giant cube)", () => {
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
+      advance(300);
+      const root = scene.getMeshByName("structure-wall") as Mesh;
+      const parts = root.getChildMeshes(false) as Mesh[];
+      // 2 posts + 2 rails + 2 inset panels.
+      expect(parts).toHaveLength(6);
+      // Rotation 0: the wall runs along X, so its thickness is the Z extent.
+      const thicknesses = parts.map((part) => {
+        part.computeWorldMatrix(true);
+        return boxSize(part.getBoundingInfo().boundingBox).z;
+      });
+      // Four frame members at the canonical panel thickness (cs*0.15 full),
+      // two panels recessed to half that thickness.
+      const frame = thicknesses.filter((t) => Math.abs(t - CS * 0.15) < 1e-3);
+      const insets = thicknesses.filter((t) => Math.abs(t - CS * 0.075) < 1e-3);
+      expect(frame).toHaveLength(4);
+      expect(insets).toHaveLength(2);
+      // Visually thin in at least one axis — no chunky cube.
+      for (const part of parts) {
+        part.computeWorldMatrix(true);
+        const size = boxSize(part.getBoundingInfo().boundingBox);
+        expect(Math.min(size.x, size.y, size.z)).toBeLessThan(CS / 2);
+      }
+    });
+
+    it("renders floors as a thin framed platform with a readable edge", () => {
+      renderer.syncStructures({ structures: { floor: structure("floor", "floor") } });
+      advance(300);
+      const root = scene.getMeshByName("structure-floor") as Mesh;
+      const parts = root.getChildMeshes(false) as Mesh[];
+      // 4 edge trims + 1 inner deck.
+      expect(parts).toHaveLength(5);
+      const heights = parts.map((part) => {
+        part.computeWorldMatrix(true);
+        return boxSize(part.getBoundingInfo().boundingBox).y;
+      }).sort((a, b) => a - b);
+      // The deck top sits slightly below the full-height edge trims, so the
+      // platform edge reads clearly.
+      expect(heights[0]!).toBeCloseTo(0.11, 3);
+      expect(heights[4]!).toBeCloseTo(0.15, 3);
+      const { min, max } = visualBounds("floor");
+      expect(max.y - min.y).toBeCloseTo(0.15, 3);
+    });
+
+    it("renders ramps as one continuous plate aligned with the canonical 1x1 footprint", () => {
+      const grid = { x: 0, y: 0, z: 0 };
+      for (const rotation of [0, 1, 2, 3] as GridRotation[]) {
+        renderer.syncStructures({
+          structures: { ramp: { ...structure("ramp", "ramp"), rotation, grid } },
+        });
+        advance(300);
+        const root = scene.getMeshByName("structure-ramp") as Mesh;
+        const parts = root.getChildMeshes(false) as Mesh[];
+        // One plate, not the 16 canonical collision step boxes.
+        expect(parts).toHaveLength(1);
+        parts[0]!.computeWorldMatrix(true);
+        const size = boxSize(parts[0]!.getBoundingInfo().boundingBox);
+        expect(size.x).toBeCloseTo(CS, 3);
+        expect(size.y).toBeCloseTo(LH, 3);
+        expect(size.z).toBeCloseTo(CS, 3);
+        renderer.syncStructures({ structures: {} });
+        advance(300);
+      }
+    });
+
+    it("keeps ramp edit variants aligned with their canonical run, width and turn", () => {
+      const grid = { x: 0, y: 0, z: 0 };
+      const syncRamp = (variant: string) => {
+        renderer.syncStructures({
+          structures: { ramp: { ...structure("ramp", "ramp", "", grid), editGrid: { kind: "ramp", variant: variant as never } } },
+        });
+        advance(300);
+        const part = (scene.getMeshByName("structure-ramp") as Mesh).getChildMeshes(false)[0] as Mesh;
+        part.computeWorldMatrix(true);
+        return part;
+      };
+      const worldY = (part: Mesh, y: number) =>
+        ((part.parent as Mesh | null)?.position.y ?? 0) + part.position.y + y;
+      const extremumVertex = (part: Mesh, highest: boolean) => {
+        const positions = part.getVerticesData("position") as number[];
+        const vertexCount = positions.length / 3;
+        let best = 0;
+        for (let v = 1; v < vertexCount; v++) {
+          const y = worldY(part, positions[v * 3 + 1]!);
+          const bestY = worldY(part, positions[best * 3 + 1]!);
+          if (highest ? y > bestY : y < bestY) best = v;
+        }
+        return { x: positions[best * 3]!, y: worldY(part, positions[best * 3 + 1]!), z: positions[best * 3 + 2]! };
+      };
+      const topVertex = (part: Mesh) => extremumVertex(part, true);
+      const bottomVertex = (part: Mesh) => extremumVertex(part, false);
+
+      // full: rises from −X to +X at rotation 0.
+      let part = syncRamp("full");
+      let top = topVertex(part);
+      expect(top.y).toBeCloseTo(LH, 3);
+      expect(top.x).toBeCloseTo(CS / 2, 3);
+
+      // flipped: the high end moves to −X.
+      part = syncRamp("flipped");
+      top = topVertex(part);
+      expect(top.x).toBeCloseTo(-CS / 2, 3);
+
+      // half_left / half_right: half the canonical WIDTH, on the climber's
+      // left/right side (facing up a rotation-0 ramp, left is +Z).
+      part = syncRamp("half_left");
+      expect(boxSize(part.getBoundingInfo().boundingBox).z).toBeCloseTo(CS / 2, 3);
+      expect(part.getBoundingInfo().boundingBox.centerWorld.z).toBeCloseTo(CS / 4, 3);
+      part = syncRamp("half_right");
+      expect(part.getBoundingInfo().boundingBox.centerWorld.z).toBeCloseTo(-CS / 4, 3);
+
+      // turn_right: the strip shears from the tile centre to the +Z edge.
+      part = syncRamp("turn_right");
+      const bb = part.getBoundingInfo().boundingBox;
+      expect(bb.minimumWorld.z).toBeCloseTo(-CS / 4, 3);
+      expect(bb.maximumWorld.z).toBeCloseTo(CS / 2, 3);
+      const bottom = bottomVertex(part);
+      expect(bottom.y).toBeCloseTo(0, 3);
+      expect(bottom.x).toBeCloseTo(-CS / 2, 3);
+
+      renderer.syncStructures({ structures: {} });
+      advance(300);
+    });
+
+    it("renders edited walls from the canonical tile grid (openings match)", () => {
       const wall = structure("wall", "wall");
       renderer.syncStructures({ structures: { wall } });
       advance(300);
-      const original = scene.getMeshByName("build-solid-wall-0") as Mesh;
-      expect(original).not.toBeNull();
-      const editGrid = { kind: "wall" as const, tiles: [true, true, true, true, false, true, true, true, true] };
-      renderer.syncStructures({ structures: { wall: { ...wall, editGrid } } });
-      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(8);
-      expect(scene.getMeshByName("structure-wall")).not.toBeNull();
-      renderer.syncStructures({ structures: { wall: { ...wall, editGrid: { kind: "wall", tiles: Array(9).fill(true) } } } });
-      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(1);
-      expect(scene.getMeshByName("build-solid-wall-0")).not.toBe(original);
+      expect(scene.meshes.filter((m) => m.name.startsWith("visual-wall-"))).toHaveLength(6);
+
+      const tiles = [true, true, true, true, false, true, true, true, true]; // centre removed
+      renderer.syncStructures({ structures: { wall: { ...wall, editGrid: { kind: "wall", tiles } } } });
+      const parts = (scene.getMeshByName("structure-wall") as Mesh).getChildMeshes(false) as Mesh[];
+      // One inset panel per retained tile — no frame.
+      expect(parts).toHaveLength(8);
+
+      // No visual geometry may cover the removed tile's canonical centre.
+      const hole = { x: 0, y: LH / 2, z: -CS / 2 };
+      for (const part of parts) {
+        part.computeWorldMatrix(true);
+        const bb = part.getBoundingInfo().boundingBox;
+        const covers =
+          bb.minimumWorld.x <= hole.x + 0.01 && bb.maximumWorld.x >= hole.x - 0.01 &&
+          bb.minimumWorld.y <= hole.y + 0.01 && bb.maximumWorld.y >= hole.y - 0.01 &&
+          bb.minimumWorld.z <= hole.z + 0.01 && bb.maximumWorld.z >= hole.z - 0.01;
+        expect(covers, "a panel must not cover the removed tile").toBe(false);
+      }
+
+      // Restoring the full grid brings back the framed treatment.
+      renderer.syncStructures({
+        structures: { wall: { ...wall, editGrid: { kind: "wall", tiles: Array(9).fill(true) } } },
+      });
+      expect(scene.meshes.filter((m) => m.name.startsWith("visual-wall-"))).toHaveLength(6);
     });
 
-    it.each(["wall", "floor", "cone", "ramp"] as const)("matches the shared %s geometry", (buildType) => {
-      const s = structure("piece", buildType);
-      const editGrid = buildType === "wall" ? { kind: "wall" as const, tiles: [true, false, true, true, true, true, true, true, true] }
-        : buildType === "ramp" ? { kind: "ramp" as const, variant: "half_right" as const }
-        : { kind: "floor_cone" as const, tiles: [true, false, true, true] };
-      const edited = { ...s, editGrid };
-      renderer.syncStructures({ structures: { piece: edited } });
+    it("renders edited floors and cones with only the retained canonical quadrants", () => {
+      renderer.syncStructures({
+        structures: {
+          floor: { ...structure("floor", "floor"), editGrid: { kind: "floor_cone", tiles: [true, false, true, true] } },
+          cone: { ...structure("cone", "cone"), editGrid: { kind: "floor_cone", tiles: [true, true, true, false] } },
+        },
+      });
       advance(300);
-      const expected = structureCuboids({ buildType, grid: s.grid, rotation: s.rotation, editGrid });
-      const parts = scene.meshes.filter((m) => m.name.startsWith("build-solid-piece-")) as Mesh[];
-      expect(parts).toHaveLength(expected.length);
-      for (let i = 0; i < expected.length; i++) {
-        expect(parts[i]!.getAbsolutePosition().x).toBeCloseTo(expected[i]!.center.x, 4);
-        expect(parts[i]!.getAbsolutePosition().y).toBeCloseTo(expected[i]!.center.y, 4);
-        expect(parts[i]!.getAbsolutePosition().z).toBeCloseTo(expected[i]!.center.z, 4);
+
+      // Floor: three slabs, none over the removed (+X, −Z) quadrant.
+      const floorParts = (scene.getMeshByName("structure-floor") as Mesh).getChildMeshes(false) as Mesh[];
+      expect(floorParts).toHaveLength(3);
+      const missing = { x: CS / 4, z: -CS / 4 };
+      for (const part of floorParts) {
+        part.computeWorldMatrix(true);
+        const bb = part.getBoundingInfo().boundingBox;
+        const covers =
+          bb.minimumWorld.x <= missing.x + 0.01 && bb.maximumWorld.x >= missing.x - 0.01 &&
+          bb.minimumWorld.z <= missing.z + 0.01 && bb.maximumWorld.z >= missing.z - 0.01;
+        expect(covers, "a slab must not cover the removed quadrant").toBe(false);
       }
+
+      // Cone: one smooth pyramid per retained quadrant (tile 3 removed →
+      // quadrants 0, 1 and 2 remain), each seated on its quadrant.
+      const coneParts = (scene.getMeshByName("structure-cone") as Mesh).getChildMeshes(false) as Mesh[];
+      expect(coneParts).toHaveLength(3);
+      const centres = coneParts.map((part) => {
+        part.computeWorldMatrix(true);
+        const c = part.getBoundingInfo().boundingBox.centerWorld;
+        return { x: c.x, z: c.z, h: boxSize(part.getBoundingInfo().boundingBox).y };
+      }).sort((a, b) => (a.x - b.x) || (a.z - b.z));
+      expect(centres[0]!.x).toBeCloseTo(-CS / 4, 3);
+      expect(centres[0]!.z).toBeCloseTo(-CS / 4, 3);
+      expect(centres[1]!.x).toBeCloseTo(-CS / 4, 3);
+      expect(centres[1]!.z).toBeCloseTo(CS / 4, 3);
+      expect(centres[2]!.x).toBeCloseTo(CS / 4, 3);
+      expect(centres[2]!.z).toBeCloseTo(-CS / 4, 3);
+      for (const c of centres) expect(c.h).toBeCloseTo(LH, 3);
+    });
+
+    it("keeps every decorative mesh non-pickable and non-colliding", () => {
+      renderer.syncStructures({
+        structures: {
+          wall: structure("wall", "wall"),
+          floor: structure("floor", "floor"),
+          ramp: structure("ramp", "ramp"),
+          cone: structure("cone", "cone"),
+        },
+      });
+      advance(300);
+      for (const id of ["wall", "floor", "ramp", "cone"]) {
+        const root = scene.getMeshByName(`structure-${id}`)!;
+        expect(root.isPickable).toBe(false);
+        const parts = root.getChildMeshes(false);
+        expect(parts.length).toBeGreaterThan(0);
+        for (const part of parts) {
+          expect(part.isPickable).toBe(false);
+          expect(part.checkCollisions).toBe(false);
+        }
+      }
+    });
+
+    it("does not leak decorative meshes or materials through create/destroy cycles", () => {
+      const baseMeshes = scene.meshes.length;
+      const baseMaterials = scene.materials.length;
+      for (let i = 0; i < 5; i++) {
+        const id = `cycle-${i}`;
+        const types: StructureState["buildType"][] = ["wall", "floor", "ramp", "cone"];
+        renderer.syncStructures({
+          structures: Object.fromEntries(types.map((t, j) => [`${id}-${j}`, structure(`${id}-${j}`, t)])),
+        });
+        advance(60); // interrupt mid build-up
+        renderer.syncStructures({ structures: {} });
+        advance(300); // destruction fades complete
+        expect(scene.meshes.filter((m) => m.name.startsWith("visual-"))).toHaveLength(0);
+        expect(scene.materials.filter((m) => m.name.startsWith("structure-material-"))).toHaveLength(0);
+      }
+      expect(scene.meshes.length).toBe(baseMeshes);
+      expect(scene.materials.length).toBe(baseMaterials);
     });
   });
 
@@ -722,33 +978,47 @@ describe("BuildStructureRenderer", () => {
       expect(settled.position.x).toBeCloseTo(10.24, 3);
     });
 
-    it("builds the ghost as the exact canonical solids for each rotation (rebuilt on rotate)", () => {
+    it("builds the ghost aligned to the canonical bounds for each rotation (rebuilt on rotate)", () => {
       const grid = { x: 0, y: 0, z: 0 };
-      const ghostBoxes = () => {
+      const ghostBounds = () => {
         const root = scene.getMeshByName("build-preview") as Mesh;
         expect(root.rotation.y).toBe(0);
-        return root.getChildMeshes().map((m) => {
-          m.computeWorldMatrix(true);
-          const bb = m.getBoundingInfo().boundingBox;
-          return [bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z, bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z];
-        });
+        const parts = root.getChildMeshes();
+        expect(parts.length).toBeGreaterThan(0);
+        let min: Vector3 | null = null;
+        let max: Vector3 | null = null;
+        for (const part of parts) {
+          part.computeWorldMatrix(true);
+          const bb = part.getBoundingInfo().boundingBox;
+          const pmin = new Vector3(bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z);
+          const pmax = new Vector3(bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z);
+          if (!min || !max) {
+            min = pmin;
+            max = pmax;
+          } else {
+            min = Vector3.Minimize(min, pmin);
+            max = Vector3.Maximize(max, pmax);
+          }
+        }
+        return { min: min!, max: max! };
       };
-      const canonical = (buildType: "ramp" | "cone", rotation: number) => structureCuboids({ buildType, grid, rotation })
-        .map(({ center: c, halfExtents: h }) => [c.x - h.x, c.y - h.y, c.z - h.z, c.x + h.x, c.y + h.y, c.z + h.z]);
-      for (const rotation of [0, 1, 2, 3] as const) {
-        renderer.showPreview("ramp", grid, rotation, true);
-        for (let i = 0; i < 40; i++) advance(16);
-        const boxes = ghostBoxes();
-        const expected = canonical("ramp", rotation);
-        expect(boxes).toHaveLength(expected.length);
-        for (const [i, e] of expected.entries()) for (const [k, v] of e.entries()) expect(boxes[i]![k]).toBeCloseTo(v, 4);
+
+      for (const buildType of ["wall", "floor", "ramp", "cone"] as const) {
+        const rotations: GridRotation[] = buildType === "floor" || buildType === "cone" ? [0] : [0, 1, 2, 3];
+        for (const rotation of rotations) {
+          renderer.showPreview(buildType, grid, rotation, true);
+          for (let i = 0; i < 40; i++) advance(16);
+          const expected = structureBounds({ buildType, grid, rotation });
+          const { min, max } = ghostBounds();
+          expect(min.x).toBeCloseTo(expected.min[0]!, 3);
+          expect(min.y).toBeCloseTo(expected.min[1]!, 3);
+          expect(min.z).toBeCloseTo(expected.min[2]!, 3);
+          expect(max.x).toBeCloseTo(expected.max[0]!, 3);
+          expect(max.y).toBeCloseTo(expected.max[1]!, 3);
+          expect(max.z).toBeCloseTo(expected.max[2]!, 3);
+        }
+        renderer.hidePreview();
       }
-      renderer.showPreview("cone", grid, 0, true);
-      for (let i = 0; i < 40; i++) advance(16);
-      const cone = ghostBoxes();
-      const expectedCone = canonical("cone", 0);
-      expect(cone).toHaveLength(expectedCone.length);
-      for (const [i, e] of expectedCone.entries()) for (const [k, v] of e.entries()) expect(cone[i]![k]).toBeCloseTo(v, 4);
     });
 
     it("shows a low-opacity ground marker on the snapped cell", () => {
@@ -1060,7 +1330,7 @@ describe("BuildStructureRenderer", () => {
 
       const half = { ...wall, editGrid: { kind: "wall" as const, tiles: [false, false, false, true, true, true, true, true, true] } };
       renderer.syncStructures({ structures: { wall: half } });
-      expect(scene.meshes.filter((m) => m.name.startsWith("build-solid-wall-"))).toHaveLength(6);
+      expect(scene.meshes.filter((m) => m.name.startsWith("visual-wall-"))).toHaveLength(6);
     });
 
     it("still moves the mesh after repeated identical syncs", () => {
