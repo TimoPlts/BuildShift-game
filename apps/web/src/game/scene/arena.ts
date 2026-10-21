@@ -25,32 +25,37 @@ export type ArenaMaterialKind = "ground" | "accent" | "warm" | "neutral";
  * All scene-level color decisions (sky, horizon haze, ground, play-field
  * plate, accent, ambient lighting, perimeter walls, cover pieces) are
  * defined here so the palette is testable and consistent across the
- * dark/blue BuildShift Box Fight presentation.
+ * bright, cool-blue BuildShift Box Fight presentation.
+ *
+ * The palette is deliberately bright and readable (stylized day, not dark
+ * cinematic): every tier steps in lightness so ground, plate, grid, walls,
+ * and cover stay visually distinct, while the accent cyan and the player/
+ * build geometry remain strongly contrasted against the background.
  */
 export const ARENA_PALETTE = {
-  /** Background sky color — deep blue-black night arena. */
-  skyColor: new Color3(0.02, 0.045, 0.1),
-  /** Atmospheric horizon haze (scene fog color) — soft steel-blue. */
-  horizonColor: new Color3(0.045, 0.09, 0.18),
-  /** Diffuse color of the ground slab — dark slate-blue plinth. */
-  groundColor: new Color3(0.1, 0.14, 0.21),
+  /** Background sky color — bright stylized azure day sky. */
+  skyColor: new Color3(0.45, 0.66, 0.88),
+  /** Atmospheric horizon haze (scene fog color) — pale steel-blue. */
+  horizonColor: new Color3(0.6, 0.76, 0.91),
+  /** Diffuse color of the ground slab — readable slate-blue plinth. */
+  groundColor: new Color3(0.32, 0.42, 0.55),
   /** Raised play-field plate above the ground — slightly lighter slate. */
-  playFieldColor: new Color3(0.13, 0.18, 0.27),
+  playFieldColor: new Color3(0.4, 0.51, 0.65),
   /**
    * Floor build-grid line color — one step lighter than the play-field
    * plate so the build lattice reads on the floor.
    */
-  gridColor: new Color3(0.18, 0.25, 0.36),
+  gridColor: new Color3(0.53, 0.64, 0.77),
   /** Accent color — bright cyan for key arena features. */
-  accentColor: new Color3(0.2, 0.78, 1.0),
-  /** Ambient / hemisphere light ground-color bounce — deep blue. */
-  ambientColor: new Color3(0.06, 0.08, 0.14),
-  /** Perimeter wall color — dark navy. */
-  wallColor: new Color3(0.11, 0.16, 0.25),
+  accentColor: new Color3(0.15, 0.85, 1.0),
+  /** Ambient / hemisphere light ground-color bounce — soft sky-lifted slate. */
+  ambientColor: new Color3(0.45, 0.55, 0.66),
+  /** Perimeter wall color — mid blue-grey. */
+  wallColor: new Color3(0.36, 0.46, 0.6),
   /** Wall cap / trim color — brighter steel blue. */
-  trimColor: new Color3(0.3, 0.6, 0.85),
-  /** Cover/obstacle color — medium blue-grey for intentional cover. */
-  coverColor: new Color3(0.2, 0.27, 0.38),
+  trimColor: new Color3(0.55, 0.75, 0.95),
+  /** Cover/obstacle color — light blue-grey for intentional cover. */
+  coverColor: new Color3(0.48, 0.56, 0.68),
 } as const;
 
 /**
@@ -98,31 +103,35 @@ export function getArenaMaterialKind(id: string): ArenaMaterialKind {
  * bounce) and one directional light (down-and-angled key light).
  *
  * Replaces any existing lights in the scene so these two are the only
- * light sources. Colors are sourced from {@link ARENA_PALETTE}.
+ * light sources. This is intentionally a bright, readable stylized
+ * day-time setup — no shadows, tone mapping, bloom, or extra lights — so
+ * the cost stays flat and the scene stays cheap to rebuild.
  */
 export function setupArenaLighting(scene: Scene): void {
-  // Remove any pre-existing lights so the two below are the only sources.
+  // Remove any pre-existing lights (snapshot first: disposing a light
+  // mutates scene.lights mid-iteration). The two below are the only sources.
   for (const light of [...scene.lights]) {
     light.dispose();
   }
 
-  // Hemisphere light – soft ambient fill from above (cool blue bounce).
+  // Hemisphere light – bright cool ambient fill from above, with the
+  // palette ambient color as the ground bounce.
   const hemi = new HemisphericLight(
     "arena-hemisphere",
     new Vector3(0, 1, 0), // light comes from directly above the arena centre
     scene,
   );
-  hemi.intensity = 0.6;
-  hemi.diffuse = ARENA_PALETTE.skyColor.clone().scale(3); // brightened sky tint
-  hemi.groundColor = ARENA_PALETTE.groundColor.clone().scale(1.5);
+  hemi.intensity = 0.9;
+  hemi.diffuse = new Color3(0.85, 0.92, 1.0); // bright cool-white sky tint
+  hemi.groundColor = ARENA_PALETTE.ambientColor.clone();
 
-  // Directional light – key light pointing down and angled, giving the
-  // arena directional depth and readable low-poly silhouettes.
+  // Directional light – near-white key light pointing down and angled,
+  // giving the arena directional depth and readable low-poly silhouettes.
   const dir = new DirectionalLight(
     "arena-directional",
     new Vector3(-0.35, -1, -0.25), // down-and-angled key light
     scene,
   );
-  dir.intensity = 0.8;
-  dir.diffuse = ARENA_PALETTE.ambientColor.clone().scale(3); // cool blue key light
+  dir.intensity = 1.1;
+  dir.diffuse = new Color3(1.0, 0.98, 0.95); // bright neutral-warm key light
 }
