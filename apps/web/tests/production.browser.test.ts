@@ -63,6 +63,37 @@ async function pressKey(page: Page, code: string): Promise<void> {
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", ...at, button: side.button as "back", buttons: 0, clickCount: 1 });
 }
 
+/**
+ * Stable presentation observation for a replicated structure. The renderer's
+ * root is the authoritative structure identity; its child names are an
+ * implementation detail. Include child geometry and local transforms so an
+ * edit must visibly rebuild/change the permanent presentation, including
+ * same-count variants such as a half ramp.
+ */
+async function renderedStructureSignature(page: Page, structureId: string): Promise<string | null> {
+  return page.evaluate((id) => {
+    const root = (window as any).__buildshiftEngine?.scenes?.[0]?.getMeshByName(`structure-${id}`);
+    if (!root || root.isDisposed() || !root.isEnabled()) return null;
+    const children = root.getChildMeshes(false).filter((mesh: any) =>
+      !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0,
+    );
+    if (children.length === 0) return null;
+    return children.map((mesh: any) => {
+      const positions = mesh.getVerticesData("position") ?? [];
+      let sum = 0;
+      let weighted = 0;
+      for (let index = 0; index < positions.length; index += 1) {
+        sum += positions[index];
+        weighted += positions[index] * (index + 1);
+      }
+      return [
+        mesh.getTotalVertices(), positions.length, sum.toFixed(4), weighted.toFixed(4),
+        mesh.position.x.toFixed(4), mesh.position.y.toFixed(4), mesh.position.z.toFixed(4),
+      ].join(":");
+    }).sort().join("|");
+  }, structureId);
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -871,37 +902,32 @@ async function sendEdit(a: Page, structureId: string, action: Record<string, unk
 
 /**
  * Both clients: the authoritative edit state equals `editGrid` and the
- * permanent Babylon solids equal the shared canonical cuboids (world AABBs).
+ * canonical structure presentation root owns visible permanent geometry.
+ * Collision geometry is verified separately by the real-input physics cases;
+ * decorative presentation meshes deliberately do not mirror its cuboids.
  */
 async function expectCanonicalGeometry(
   pages: Page[], id: string, ownerId: string,
   input: { buildType: StructureGeometryInput["buildType"]; grid: { x: number; y: number; z: number }; rotation: number; editGrid: AcceptanceEditGrid },
   label: string,
 ): Promise<void> {
-  const expected = structureCuboids(input)
-    .map(({ center: c, halfExtents: h }) => ({ min: [c.x - h.x, c.y - h.y, c.z - h.z], max: [c.x + h.x, c.y + h.y, c.z + h.z] }));
   await Promise.all(pages.map(async (page) => {
     try {
-      await page.waitForFunction(({ id, ownerId, editGrid, expected }) => {
+      await page.waitForFunction(({ id, ownerId, editGrid }) => {
         const s = (window as any).__buildshiftNetworking.client.deref().state.building.structures[id];
         if (!s || s.ownerId !== ownerId || JSON.stringify(s.editGrid) !== JSON.stringify(editGrid)) return false;
-        const meshes = (window as any).__buildshiftEngine.scenes[0].meshes.filter((m: any) => m.name.startsWith(`build-solid-${id}-`));
-        if (meshes.length !== expected.length) return false;
-        const boxes = meshes.map((m: any) => {
-          m.computeWorldMatrix(true);
-          const bb = m.getBoundingInfo().boundingBox;
-          return { min: [bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z], max: [bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z] };
-        });
-        const near = (u: number[], v: number[]) => u.every((n, i) => Math.abs(n - v[i]!) < 0.01);
-        return expected.every((e: any) => boxes.some((r: any) => near(e.min, r.min) && near(e.max, r.max)));
-      }, { id, ownerId, editGrid: input.editGrid, expected }, { timeout: 10_000 });
+        const root = (window as any).__buildshiftEngine.scenes[0].getMeshByName(`structure-${id}`);
+        return Boolean(root && !root.isDisposed() && root.isEnabled() && root.getChildMeshes(false).some((mesh: any) =>
+          !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0,
+        ));
+      }, { id, ownerId, editGrid: input.editGrid }, { timeout: 10_000 });
     } catch (error) {
       const diagnostic = await page.evaluate((id) => {
         const s = (window as any).__buildshiftNetworking.client.deref().state.building.structures[id];
-        const meshes = (window as any).__buildshiftEngine.scenes[0].meshes.filter((m: any) => m.name.startsWith(`build-solid-${id}-`));
-        return { structure: s, meshes: meshes.map((m: any) => { m.computeWorldMatrix(true); const bb = m.getBoundingInfo().boundingBox; return { name: m.name, min: bb.minimumWorld, max: bb.maximumWorld }; }) };
+        const root = (window as any).__buildshiftEngine.scenes[0].getMeshByName(`structure-${id}`);
+        return { structure: s, root: root ? { enabled: root.isEnabled(), childCount: root.getChildMeshes(false).length } : null };
       }, id);
-      throw new Error(`${label}: replicated state/Babylon geometry mismatch: ${JSON.stringify({ input, expected, ...diagnostic })}`, { cause: error });
+      throw new Error(`${label}: replicated state/presentation-root mismatch: ${JSON.stringify({ input, ...diagnostic })}`, { cause: error });
     }
   }));
 }
@@ -1607,16 +1633,13 @@ test.describe("Production browser smoke", () => {
       expect(ownerSessionId).toBeTruthy();
       const nearEastSpawn = localPosition!.x >= 3;
       const anchorX = nearEastSpawn ? 1 : 0;
-      // Expected permanent part counts come from the shared canonical geometry.
-      const parts = (buildType: "wall" | "floor" | "cone" | "ramp", grid: { x: number; y: number; z: number }, editGrid?: GeometryEditState) =>
-        structureCuboids({ buildType, grid, rotation: 0, editGrid }).length;
       const raw = [
         { buildType: "wall", grid: { x: anchorX, y: 0, z: 0 }, action: { action: "select", tileIndex: 4 }, edited: { kind: "wall", tiles: [true, true, true, true, false, true, true, true, true] } },
         { buildType: "floor", grid: { x: anchorX - 1, y: 1, z: 1 }, action: { action: "select", tileIndex: 0 }, edited: { kind: "floor_cone", tiles: [false, true, true, true] } },
         { buildType: "cone", grid: { x: anchorX, y: 0, z: 2 }, action: { action: "select", tileIndex: 0 }, edited: { kind: "floor_cone", tiles: [false, true, true, true] } },
         { buildType: "ramp", grid: { x: nearEastSpawn ? -1 : 1, y: 0, z: 1 }, action: { action: "select", rampVariant: "half_left" }, edited: { kind: "ramp", variant: "half_left" } },
       ] as const;
-      const cases = raw.map((c) => ({ ...c, editedParts: parts(c.buildType, c.grid, c.edited as GeometryEditState), resetParts: parts(c.buildType, c.grid) }));
+      const cases = raw;
 
       for (const [index, sample] of cases.entries()) {
         if (index > 0) {
@@ -1642,19 +1665,35 @@ test.describe("Production browser smoke", () => {
         }
         const id = await first.evaluate((oldIds) => Object.keys((window as any).__buildshiftNetworking.client.deref().state.building.structures).find((key) => !oldIds.includes(key)), before);
         expect(id).toBeTruthy();
+        const baselineSignatures = await Promise.all([first, second].map((page) => renderedStructureSignature(page, id!)));
+        for (const signature of baselineSignatures) expect(signature).not.toBeNull();
 
         const editSent = await first.evaluate(({ id, action }) =>
           (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, ...action }),
           { id, action: sample.action });
         expect(editSent).toBe(true);
-        for (const page of [first, second]) {
+        for (const [clientIndex, page] of [first, second].entries()) {
           try {
-            await page.waitForFunction(({ id, parts, ownerId }) => {
+            await page.waitForFunction(({ id, ownerId, baseline }) => {
               const state = (window as any).__buildshiftNetworking?.client?.deref()?.state?.building?.structures?.[id];
-              const scene = (window as any).__buildshiftEngine?.scenes?.[0];
-              const count = scene?.meshes?.filter((mesh: any) => mesh.name.startsWith(`build-solid-${id}-`)).length;
-              return state?.editGrid && state.ownerId === ownerId && count === parts;
-            }, { id, parts: sample.editedParts, ownerId: ownerSessionId });
+              const root = (window as any).__buildshiftEngine?.scenes?.[0]?.getMeshByName(`structure-${id}`);
+              if (!root || root.isDisposed() || !root.isEnabled()) return false;
+              const children = root.getChildMeshes(false).filter((mesh: any) =>
+                !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0,
+              );
+              if (children.length === 0) return false;
+              const signature = children.map((mesh: any) => {
+                const positions = mesh.getVerticesData("position") ?? [];
+                let sum = 0;
+                let weighted = 0;
+                for (let index = 0; index < positions.length; index += 1) {
+                  sum += positions[index];
+                  weighted += positions[index] * (index + 1);
+                }
+                return [mesh.getTotalVertices(), positions.length, sum.toFixed(4), weighted.toFixed(4), mesh.position.x.toFixed(4), mesh.position.y.toFixed(4), mesh.position.z.toFixed(4)].join(":");
+              }).sort().join("|");
+              return state?.editGrid && state.ownerId === ownerId && signature !== baseline;
+            }, { id, ownerId: ownerSessionId, baseline: baselineSignatures[clientIndex] });
           } catch (error) {
             const diagnostic = await page.evaluate(() => ({
               state: (window as any).__buildshiftNetworking?.client?.deref()?.state?.building?.structures,
@@ -1665,17 +1704,31 @@ test.describe("Production browser smoke", () => {
         }
 
         await first.evaluate((id) => (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, action: "reset" }), id);
-        for (const page of [first, second]) {
+        for (const [clientIndex, page] of [first, second].entries()) {
           try {
-          await page.waitForFunction(({ id, parts }) => {
+          await page.waitForFunction(({ id, baseline }) => {
             const state = (window as any).__buildshiftNetworking?.client?.deref()?.state?.building?.structures?.[id];
             const reset = state?.editGrid?.kind === "ramp"
               ? state.editGrid.variant === "full"
               : state?.editGrid?.tiles?.every((solid: boolean) => solid);
-            const scene = (window as any).__buildshiftEngine?.scenes?.[0];
-            const count = scene?.meshes?.filter((mesh: any) => mesh.name.startsWith(`build-solid-${id}-`)).length;
-            return reset && count === parts;
-            }, { id, parts: sample.resetParts });
+            const root = (window as any).__buildshiftEngine?.scenes?.[0]?.getMeshByName(`structure-${id}`);
+            if (!root || root.isDisposed() || !root.isEnabled()) return false;
+            const children = root.getChildMeshes(false).filter((mesh: any) =>
+              !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0,
+            );
+            if (children.length === 0) return false;
+            const signature = children.map((mesh: any) => {
+              const positions = mesh.getVerticesData("position") ?? [];
+              let sum = 0;
+              let weighted = 0;
+              for (let index = 0; index < positions.length; index += 1) {
+                sum += positions[index];
+                weighted += positions[index] * (index + 1);
+              }
+              return [mesh.getTotalVertices(), positions.length, sum.toFixed(4), weighted.toFixed(4), mesh.position.x.toFixed(4), mesh.position.y.toFixed(4), mesh.position.z.toFixed(4)].join(":");
+            }).sort().join("|");
+            return reset && signature === baseline;
+            }, { id, baseline: baselineSignatures[clientIndex] });
           } catch (error) {
             const diagnostic = await page.evaluate(() => ({
               state: (window as any).__buildshiftNetworking?.client?.deref()?.state?.building?.structures,
@@ -2043,32 +2096,30 @@ test.describe("Physical edited-geometry acceptance", () => {
       const geometry = { grid, rotation, plane, wallX, wallHalfThickness, opening, contactZ, stageZ, crossedZ,
         collider: { radius, standingHeight, crouchedHeight } };
 
-      // Babylon permanent geometry must equal the canonical cuboids on a page.
-      const expectRendered = async (page: Page, id: string, tiles: boolean[], label: string) => {
-        const expected = structureCuboids({ buildType: "wall", grid, rotation, editGrid: { kind: "wall", tiles } })
-          .map(({ center: c, halfExtents: h }) => ({ min: [c.x - h.x, c.y - h.y, c.z - h.z], max: [c.x + h.x, c.y + h.y, c.z + h.z] }));
+      // Presentation is deliberately independent from canonical collision
+      // cuboids. Assert the replicated edit state and its stable structure
+      // root; the real crouched traversal below proves collision behavior.
+      const expectRendered = async (page: Page, id: string, tiles: boolean[], label: string): Promise<string> => {
         try {
-          await page.waitForFunction(({ id, tiles, ownerId, expected }) => {
+          await page.waitForFunction(({ id, tiles, ownerId }) => {
             const s = (window as any).__buildshiftNetworking.client.deref().state.building.structures[id];
             if (!s || s.ownerId !== ownerId || s.editGrid?.kind !== "wall") return false;
             if (JSON.stringify(s.editGrid.tiles) !== JSON.stringify(tiles)) return false;
-            const meshes = (window as any).__buildshiftEngine.scenes[0].meshes.filter((m: any) => m.name.startsWith(`build-solid-${id}-`));
-            if (meshes.length !== expected.length) return false;
-            const boxes = meshes.map((m: any) => {
-              m.computeWorldMatrix(true);
-              const bb = m.getBoundingInfo().boundingBox;
-              return { min: [bb.minimumWorld.x, bb.minimumWorld.y, bb.minimumWorld.z], max: [bb.maximumWorld.x, bb.maximumWorld.y, bb.maximumWorld.z] };
-            });
-            const near = (u: number[], v: number[]) => u.every((n, i) => Math.abs(n - v[i]!) < 0.01);
-            return expected.every((e: any) => boxes.some((r: any) => near(e.min, r.min) && near(e.max, r.max)));
-          }, { id, tiles, ownerId, expected }, { timeout: 10_000 });
+            const root = (window as any).__buildshiftEngine.scenes[0].getMeshByName(`structure-${id}`);
+            return Boolean(root && !root.isDisposed() && root.isEnabled() && root.getChildMeshes(false).some((mesh: any) =>
+              !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0,
+            ));
+          }, { id, tiles, ownerId }, { timeout: 10_000 });
+          const signature = await renderedStructureSignature(page, id);
+          if (signature === null) throw new Error("structure root has no visible child geometry");
+          return signature;
         } catch (error) {
           const diagnostic = await page.evaluate((id) => {
             const s = (window as any).__buildshiftNetworking.client.deref().state.building.structures[id];
-            const meshes = (window as any).__buildshiftEngine.scenes[0].meshes.filter((m: any) => m.name.startsWith(`build-solid-${id}-`));
-            return { structure: s, meshes: meshes.map((m: any) => { m.computeWorldMatrix(true); const bb = m.getBoundingInfo().boundingBox; return { name: m.name, min: bb.minimumWorld, max: bb.maximumWorld }; }) };
+            const root = (window as any).__buildshiftEngine.scenes[0].getMeshByName(`structure-${id}`);
+            return { structure: s, root: root ? { enabled: root.isEnabled(), childCount: root.getChildMeshes(false).length } : null };
           }, id);
-          throw new Error(`${label}: replicated state/Babylon geometry mismatch: ${JSON.stringify({ geometry, expected, ...diagnostic })}`, { cause: error });
+          throw new Error(`${label}: replicated state/presentation-root mismatch: ${JSON.stringify({ geometry, ...diagnostic })}`, { cause: error });
         }
       };
 
@@ -2094,12 +2145,16 @@ test.describe("Physical edited-geometry acceptance", () => {
         await Promise.all([a, b].map(page => page.waitForFunction(() => Object.keys((window as any).__buildshiftNetworking.client.deref().state.building.structures).length === 1, undefined, { timeout: 10_000 })));
         id = await a.evaluate(() => Object.keys((window as any).__buildshiftNetworking.client.deref().state.building.structures)[0]);
         expect(id).toBeTruthy();
+        const fullTiles = Array(9).fill(true);
+        const fullSignatures = await Promise.all([a, b].map(page => expectRendered(page, id!, fullTiles, "full wall")));
         expect(await a.evaluate((id) => (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, action: "select", tileIndex: 7 }), id)).toBe(true);
-        await Promise.all([a, b].map(page => expectRendered(page, id!, doorwayTiles, "doorway edit")));
+        const doorwaySignatures = await Promise.all([a, b].map(page => expectRendered(page, id!, doorwayTiles, "doorway edit")));
+        doorwaySignatures.forEach((signature, index) => expect(signature).not.toBe(fullSignatures[index]));
         step(`wall ${id} placed; doorway replicated + rendered on both clients`);
         if (phase === "C reset full wall") {
           expect(await a.evaluate((id) => (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, action: "reset" }), id)).toBe(true);
-          await Promise.all([a, b].map(page => expectRendered(page, id!, Array(9).fill(true), "reset")));
+          const resetSignatures = await Promise.all([a, b].map(page => expectRendered(page, id!, fullTiles, "reset")));
+          resetSignatures.forEach((signature, index) => expect(signature).toBe(fullSignatures[index]));
           step("reset replicated + rendered on both clients");
         }
       }
