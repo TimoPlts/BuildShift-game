@@ -2,19 +2,23 @@
  * PlayerPresentation — the modular, self-cleaning Babylon presentation for a
  * single player (local or remote).
  *
- * A lightweight, stylized low-poly humanoid built ONLY from Babylon
- * primitives and materials (no external assets). The body occupies the same
- * capsule-centre origin the authoritative replicated position is defined at
- * (feet at -0.9 m, top of the collider envelope at +0.9 m), so existing
- * camera framing, match-distance readability, and all gameplay code are
- * unchanged.
+ * An original, lightweight stylized competitive humanoid built ONLY from
+ * Babylon primitives and materials (no external assets, no skeletal
+ * animation system). The body is a jointed, athletic, slightly exaggerated
+ * figure with a recognisable silhouette: head (with forward visor + crest),
+ * chest/waist torso, upper arms, forearms, hands, upper legs, lower legs,
+ * and feet. It occupies the same capsule-centre origin the authoritative
+ * replicated position is defined at (feet at -0.9 m, top of the collider
+ * envelope at +0.9 m), so existing camera framing, match-distance
+ * readability, and all gameplay code are unchanged.
  *
  * Visual contract:
- *  - `local`  and `remote` variants use clearly distinct palettes
- *    (green vs red) so the two players are readable at match distance.
- *  - Forward orientation is shown by an emissive face visor on the -Z side of
- *    the head plus asymmetric shoulder pads and a back pack, so the facing
- *    direction is readable from the front AND the back.
+ *  - `local` and `remote` variants use clearly distinct original BuildShift
+ *    palettes (spring-green vs coral) chosen against the dark blue arena so
+ *    the two players read apart at match distance.
+ *  - Forward orientation is shown by an emissive face visor on the -Z side
+ *    of the head plus asymmetric shoulder pads and a back pack, so the
+ *    facing direction is readable from the front AND the back.
  *  - `applyState(wasEliminated, hitFlashFrames)` drives the eliminated /
  *    hit-flash tint. It returns the remaining flash frame count (the same
  *    frame-decay contract the runtime already uses).
@@ -53,7 +57,8 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import type { Observer, Scene } from "@babylonjs/core";
-import { TransformNode } from "@babylonjs/core/Meshes/transformNode";import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
+import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
+import { PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT } from "@buildshift/game-config";
 import {
   DEFAULT_PLAYER_POSE_CONFIG,
   PlayerPoseModel,
@@ -86,23 +91,29 @@ interface PresentationPalette {
   visorEmissive: Color3;
 }
 
-/** Distinct, saturated palettes so the two players read apart at distance. */
+/**
+ * Distinct, saturated palettes so the two players read apart at distance
+ * against the dark blue BuildShift arena. Local is a spring-green athlete
+ * with deep-teal gear; remote is a coral competitor with maroon gear. The
+ * bright emissive visors (mint vs amber) are the dominant identity markers
+ * at match distance.
+ */
 const VARIANT_PALETTES: Record<PlayerVariant, PresentationPalette> = {
   local: {
-    bodyDiffuse: new Color3(0.15, 0.78, 0.35),
+    bodyDiffuse: new Color3(0.18, 0.85, 0.4),
     bodyEmissive: new Color3(0.01, 0.12, 0.04),
-    accentDiffuse: new Color3(0.05, 0.32, 0.30),
+    accentDiffuse: new Color3(0.05, 0.35, 0.33),
     accentEmissive: new Color3(0.01, 0.06, 0.06),
-    visorDiffuse: new Color3(0.6, 1.0, 0.85),
-    visorEmissive: new Color3(0.5, 1.0, 0.75),
+    visorDiffuse: new Color3(0.65, 1.0, 0.85),
+    visorEmissive: new Color3(0.45, 1.0, 0.65),
   },
   remote: {
-    bodyDiffuse: new Color3(0.82, 0.25, 0.15),
-    bodyEmissive: new Color3(0.08, 0.02, 0.01),
-    accentDiffuse: new Color3(0.42, 0.12, 0.08),
+    bodyDiffuse: new Color3(0.9, 0.28, 0.16),
+    bodyEmissive: new Color3(0.09, 0.02, 0.01),
+    accentDiffuse: new Color3(0.45, 0.12, 0.1),
     accentEmissive: new Color3(0.05, 0.01, 0.01),
-    visorDiffuse: new Color3(1.0, 0.75, 0.55),
-    visorEmissive: new Color3(0.95, 0.6, 0.4),
+    visorDiffuse: new Color3(1.0, 0.72, 0.45),
+    visorEmissive: new Color3(0.95, 0.55, 0.25),
   },
 };
 
@@ -127,18 +138,27 @@ const FLASH_EMISSIVE = {
 
 /**
  * Procedural pose tuning (presentation-only radians / metres). The body's
- * local -Z is its forward (the visor side).
+ * local -Z is its forward (the visor side). Hip/shoulder rotations positive
+ * in x swing the limb forward; knee/elbow "bend" values are applied as
+ * NEGATIVE x rotations (flexion).
  */
 const POSE = {
-  /** Forward knee tuck (rotation.x) while jumping: [left, right]. */
-  jumpTuckLeg: [0.60, 0.32] as const,
-  /** Fore/aft leg split while falling: [left, right]. */
+  /** Forward hip tuck (rotation.x) while jumping: [left, right]. */
+  jumpTuckLeg: [0.6, 0.32] as const,
+  /** Knee flexion (radians) while jumping: [left, right]. */
+  jumpKneeBend: [0.95, 0.75] as const,
+  /** Fore/aft hip split while falling: [left, right]. */
   fallLeg: [0.15, -0.15] as const,
-  /** Lateral knee spread (rotation.z, knees OUT) while falling. */
-  fallLegSpread: [-0.22, 0.22] as const,
-  /** Weapon-aim arm lift (rotation.x, forward-up) for [left, right]. */
+  /** Knee flexion (radians) while falling. */
+  fallKneeBend: 0.3,
+  /**
+   * Gait knee flexion: multiplies the backward hip angle of each leg, so
+   * the trailing leg tucks while the leading leg extends.
+   */
+  gaitKneeBend: 0.55,
+  /** Weapon-aim shoulder lift (rotation.x, forward-up) for [left, right]. */
   aimArmX: [-1.38, -1.12] as const,
-  /** How the aim pitch tilts the aiming arms (radians per radian). */
+  /** How the aim pitch tilts the aiming shoulders (radians per radian). */
   aimArmPitchSensitivity: 0.6,
   aimArmXMin: -2.4,
   aimArmXMax: -0.5,
@@ -148,6 +168,14 @@ const POSE = {
   fallArmX: -1.95,
   /** Idle arm sway (radians, driven by the breath oscillator). */
   idleArmSway: 0.03,
+  /** Relaxed elbow flexion (radians) at rest. */
+  idleElbowBend: 0.14,
+  /** Elbow flexion (radians) in the weapon-aim grip. */
+  aimElbowBend: 0.45,
+  /** Elbow flexion (radians) while arms are flung (falling). */
+  fallElbowBend: 0.05,
+  /** Subtle counter-flexion of the elbows across the gait cycle (radians). */
+  gaitElbowBend: 0.08,
   /** Torso lean per radian of aim pitch while aiming (up = slight back). */
   aimSpineLean: 0.22,
   /** Visor tilt per radian of aim pitch. */
@@ -157,7 +185,7 @@ const POSE = {
 } as const;
 
 /** The spine pivot's rest position (waist height, spine-local parent = visualRoot). */
-const SPINE_BASE_Y = -0.18;
+const SPINE_BASE_Y = -0.08;
 
 /**
  * Crouch presentation: the body stays parented to `visualRoot` with its
@@ -202,10 +230,14 @@ export class PlayerPresentation {
   private readonly _visorMesh: Mesh;
   /** Animation pivots (presentation only, below visualRoot). */
   private readonly _spinePivot: TransformNode;
-  private readonly _legLeftPivot: TransformNode;
-  private readonly _legRightPivot: TransformNode;
-  private readonly _armLeftPivot: TransformNode;
-  private readonly _armRightPivot: TransformNode;
+  private readonly _hipLeftPivot: TransformNode;
+  private readonly _hipRightPivot: TransformNode;
+  private readonly _kneeLeftPivot: TransformNode;
+  private readonly _kneeRightPivot: TransformNode;
+  private readonly _shoulderLeftPivot: TransformNode;
+  private readonly _shoulderRightPivot: TransformNode;
+  private readonly _elbowLeftPivot: TransformNode;
+  private readonly _elbowRightPivot: TransformNode;
 
   private readonly _poseModel: PlayerPoseModel;
   private readonly _observer: Observer<Scene>;
@@ -252,123 +284,219 @@ export class PlayerPresentation {
     // Spine at the waist: carries the torso, arms, head, and gear so the
     // upper body can bob / lean / dip as one unit.
     this._spinePivot = this._makePivot(`${namePrefix}-pivot-spine`, scene, 0, SPINE_BASE_Y, 0);
-    // Hips: tops of the leg boxes (legs hang from the hip pivots).
-    this._legLeftPivot = this._makePivot(
-      `${namePrefix}-pivot-leg-left`,
+    // Hips: tops of the thigh segments (legs hang from the hip pivots).
+    this._hipLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-hip-left`,
       scene,
-      -0.115,
-      -0.34,
+      -0.105,
+      -0.2,
       0,
     );
-    this._legRightPivot = this._makePivot(
-      `${namePrefix}-pivot-leg-right`,
+    this._hipRightPivot = this._makePivot(
+      `${namePrefix}-pivot-hip-right`,
       scene,
-      0.115,
-      -0.34,
+      0.105,
+      -0.2,
       0,
     );
-    // Shoulders: tops of the arm boxes, in spine-local space.
-    this._armLeftPivot = this._makePivot(
-      `${namePrefix}-pivot-arm-left`,
+    // Knees: tops of the shin segments, inside the hip pivots.
+    this._kneeLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-knee-left`,
       scene,
-      -0.27,
-      0.36,
+      0,
+      -0.34,
+      0,
+      this._hipLeftPivot,
+    );
+    this._kneeRightPivot = this._makePivot(
+      `${namePrefix}-pivot-knee-right`,
+      scene,
+      0,
+      -0.34,
+      0,
+      this._hipRightPivot,
+    );
+    // Shoulders: tops of the upper-arm segments, in spine-local space.
+    this._shoulderLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-shoulder-left`,
+      scene,
+      -0.25,
+      0.4,
       0,
       this._spinePivot,
     );
-    this._armRightPivot = this._makePivot(
-      `${namePrefix}-pivot-arm-right`,
+    this._shoulderRightPivot = this._makePivot(
+      `${namePrefix}-pivot-shoulder-right`,
       scene,
-      0.27,
-      0.36,
+      0.25,
+      0.4,
       0,
       this._spinePivot,
+    );
+    // Elbows: tops of the forearm segments, inside the shoulder pivots.
+    this._elbowLeftPivot = this._makePivot(
+      `${namePrefix}-pivot-elbow-left`,
+      scene,
+      0,
+      -0.26,
+      0,
+      this._shoulderLeftPivot,
+    );
+    this._elbowRightPivot = this._makePivot(
+      `${namePrefix}-pivot-elbow-right`,
+      scene,
+      0,
+      -0.26,
+      0,
+      this._shoulderRightPivot,
     );
 
-    // --- Body layout (origin = capsule centre; feet at -0.9, top <= +0.9) --
-    // Stylized BuildShift character: inverted-V silhouette with broad
-    // shoulders, narrow legs, and a distinctive head crest. All meshes are
-    // parented under joint pivots so the procedural pose can animate them.
-    // Legs: narrow boxes for an athletic proportion.
+    // --- Body layout (visualRoot-local: feet at y = -0.9, top <= +0.9) ----
+    // Stylized BuildShift competitive athlete: inverted-V silhouette with
+    // broad shoulders, narrow legs, accent gear, and a distinctive head
+    // crest. Every mesh is parented under a joint pivot so the procedural
+    // pose can animate it. Total jointed leg length is exactly 0.70 m,
+    // from the hip (y = -0.2) down to the sole of the foot (y = -0.9).
+    // Pelvis: bridges the legs into the narrower waist (athletic build).
     this._addMesh(
-      this._box(`${namePrefix}-leg-left`, scene, 0.15, 0.56, 0.18),
-      new Vector3(0, -0.28, 0),
-      this._bodyMaterial,
-      this._legLeftPivot,
-    );
-    this._addMesh(
-      this._box(`${namePrefix}-leg-right`, scene, 0.15, 0.56, 0.18),
-      new Vector3(0, -0.28, 0),
-      this._bodyMaterial,
-      this._legRightPivot,
-    );
-    // Pelvis: bridges the legs into the broader torso.
-    this._addMesh(
-      this._box(`${namePrefix}-pelvis`, scene, 0.30, 0.13, 0.20),
-      new Vector3(0, -0.28, 0),
+      this._box(`${namePrefix}-pelvis`, scene, 0.32, 0.18, 0.21),
+      new Vector3(0, -0.12, 0),
       this._bodyMaterial,
     );
-    // Torso: broad shoulders create the inverted-V heroic silhouette.
+    // Upper legs: sturdy thigh boxes for an athletic proportion.
     this._addMesh(
-      this._box(`${namePrefix}-torso`, scene, 0.46, 0.54, 0.24),
-      new Vector3(0, 0.24, 0),
+      this._box(`${namePrefix}-thigh-left`, scene, 0.135, 0.34, 0.15),
+      new Vector3(0, -0.17, 0),
+      this._bodyMaterial,
+      this._hipLeftPivot,
+    );
+    this._addMesh(
+      this._box(`${namePrefix}-thigh-right`, scene, 0.135, 0.34, 0.15),
+      new Vector3(0, -0.17, 0),
+      this._bodyMaterial,
+      this._hipRightPivot,
+    );
+    // Lower legs: slightly narrower shins below the knee.
+    this._addMesh(
+      this._box(`${namePrefix}-shin-left`, scene, 0.11, 0.28, 0.12),
+      new Vector3(0, -0.14, 0),
+      this._bodyMaterial,
+      this._kneeLeftPivot,
+    );
+    this._addMesh(
+      this._box(`${namePrefix}-shin-right`, scene, 0.11, 0.28, 0.12),
+      new Vector3(0, -0.14, 0),
+      this._bodyMaterial,
+      this._kneeRightPivot,
+    );
+    // Feet: accent blocks, extended slightly forward (-Z) so the stance
+    // reads athletic from the front; soles sit exactly at y = -0.9.
+    this._addMesh(
+      this._box(`${namePrefix}-foot-left`, scene, 0.14, 0.09, 0.26),
+      new Vector3(0, -0.315, -0.045),
+      this._accentMaterial,
+      this._kneeLeftPivot,
+    );
+    this._addMesh(
+      this._box(`${namePrefix}-foot-right`, scene, 0.14, 0.09, 0.26),
+      new Vector3(0, -0.315, -0.045),
+      this._accentMaterial,
+      this._kneeRightPivot,
+    );
+    // Torso: narrow waist under a broader chest creates the inverted-V.
+    this._addMesh(
+      this._box(`${namePrefix}-waist`, scene, 0.32, 0.16, 0.2),
+      new Vector3(0, 0.06, 0),
       this._bodyMaterial,
       this._spinePivot,
     );
-    // Arms: slightly thinner than the torso for contrast.
     this._addMesh(
-      this._box(`${namePrefix}-arm-left`, scene, 0.10, 0.44, 0.13),
-      new Vector3(0, -0.22, 0),
+      this._box(`${namePrefix}-chest`, scene, 0.46, 0.34, 0.24),
+      new Vector3(0, 0.32, 0),
       this._bodyMaterial,
-      this._armLeftPivot,
+      this._spinePivot,
+    );
+    // Upper arms: slightly thinner than the chest for contrast.
+    this._addMesh(
+      this._box(`${namePrefix}-upper-arm-left`, scene, 0.1, 0.26, 0.13),
+      new Vector3(0, -0.13, 0),
+      this._bodyMaterial,
+      this._shoulderLeftPivot,
     );
     this._addMesh(
-      this._box(`${namePrefix}-arm-right`, scene, 0.10, 0.44, 0.13),
-      new Vector3(0, -0.22, 0),
+      this._box(`${namePrefix}-upper-arm-right`, scene, 0.1, 0.26, 0.13),
+      new Vector3(0, -0.13, 0),
       this._bodyMaterial,
-      this._armRightPivot,
+      this._shoulderRightPivot,
+    );
+    // Forearms: taper toward the hands.
+    this._addMesh(
+      this._box(`${namePrefix}-forearm-left`, scene, 0.085, 0.22, 0.11),
+      new Vector3(0, -0.11, 0),
+      this._bodyMaterial,
+      this._elbowLeftPivot,
+    );
+    this._addMesh(
+      this._box(`${namePrefix}-forearm-right`, scene, 0.085, 0.22, 0.11),
+      new Vector3(0, -0.11, 0),
+      this._bodyMaterial,
+      this._elbowRightPivot,
+    );
+    // Hands: small accent blocks at the end of the forearms.
+    this._addMesh(
+      this._box(`${namePrefix}-hand-left`, scene, 0.09, 0.1, 0.1),
+      new Vector3(0, -0.24, -0.01),
+      this._accentMaterial,
+      this._elbowLeftPivot,
+    );
+    this._addMesh(
+      this._box(`${namePrefix}-hand-right`, scene, 0.09, 0.1, 0.1),
+      new Vector3(0, -0.24, -0.01),
+      this._accentMaterial,
+      this._elbowRightPivot,
     );
     // Shoulder pads: pronounced accent blocks define the shoulder line.
     this._addMesh(
-      this._box(`${namePrefix}-pad-left`, scene, 0.19, 0.11, 0.18),
-      new Vector3(-0.26, 0.53, 0),
+      this._box(`${namePrefix}-pad-left`, scene, 0.17, 0.1, 0.18),
+      new Vector3(-0.26, 0.43, 0),
       this._accentMaterial,
       this._spinePivot,
     );
     this._addMesh(
-      this._box(`${namePrefix}-pad-right`, scene, 0.19, 0.11, 0.18),
-      new Vector3(0.26, 0.53, 0),
+      this._box(`${namePrefix}-pad-right`, scene, 0.17, 0.1, 0.18),
+      new Vector3(0.26, 0.43, 0),
       this._accentMaterial,
       this._spinePivot,
     );
-    // Head: low-segment sphere with flat shading for a faceted stylized look.
+    // Head: low-segment sphere with flat shading for a faceted stylized
+    // look, in the accent color so the silhouette stays readable.
     const head = MeshBuilder.CreateSphere(
       `${namePrefix}-head`,
-      { diameter: 0.32, segments: 6 },
+      { diameter: 0.3, segments: 6 },
       scene,
     );
     head.convertToFlatShadedMesh();
-    this._addMesh(head, new Vector3(0, 0.66, 0), this._accentMaterial, this._spinePivot);
+    this._addMesh(head, new Vector3(0, 0.62, 0), this._accentMaterial, this._spinePivot);
     // Visor: wide emissive strip on the -Z (forward) face of the head.
     // Primary orientation cue at match distance; tilts with aim pitch.
-    this._visorMesh = this._box(`${namePrefix}-visor`, scene, 0.20, 0.055, 0.05);
+    this._visorMesh = this._box(`${namePrefix}-visor`, scene, 0.21, 0.055, 0.06);
     this._addMesh(
       this._visorMesh,
-      new Vector3(0, 0.68, -0.15),
+      new Vector3(0, 0.63, -0.13),
       this._visorMaterial,
       this._spinePivot,
     );
     // Head crest: small accent ridge on top for a distinctive silhouette.
     this._addMesh(
-      this._box(`${namePrefix}-crest`, scene, 0.06, 0.04, 0.12),
-      new Vector3(0, 0.84, 0),
+      this._box(`${namePrefix}-crest`, scene, 0.06, 0.05, 0.13),
+      new Vector3(0, 0.79, 0),
       this._accentMaterial,
       this._spinePivot,
     );
     // Back pack: accent block on the +Z side for rear-facing readability.
     this._addMesh(
-      this._box(`${namePrefix}-backpack`, scene, 0.19, 0.18, 0.09),
-      new Vector3(0, 0.30, 0.17),
+      this._box(`${namePrefix}-backpack`, scene, 0.2, 0.2, 0.09),
+      new Vector3(0, 0.3, 0.16),
       this._accentMaterial,
       this._spinePivot,
     );
@@ -622,19 +750,28 @@ export class PlayerPresentation {
     const phase = p.walkPhase;
     const swing = Math.sin(phase);
 
-    // --- Legs: grounded gait, blended to the jump tuck and the fall split --
+    // --- Legs: grounded gait at the hips, knee flexion, then the airborne
+    // --- overrides (jump tuck / fall split). Knees flex (negative x).
     let legLeft = p.legSwing * swing;
     let legRight = -p.legSwing * swing;
     legLeft += (POSE.jumpTuckLeg[0] - legLeft) * p.jumpBlend;
     legRight += (POSE.jumpTuckLeg[1] - legRight) * p.jumpBlend;
     legLeft += (POSE.fallLeg[0] - legLeft) * p.fallBlend;
     legRight += (POSE.fallLeg[1] - legRight) * p.fallBlend;
-    this._legLeftPivot.rotation.x = legLeft;
-    this._legRightPivot.rotation.x = legRight;
-    this._legLeftPivot.rotation.z = POSE.fallLegSpread[0] * p.fallBlend;
-    this._legRightPivot.rotation.z = POSE.fallLegSpread[1] * p.fallBlend;
+    this._hipLeftPivot.rotation.x = legLeft;
+    this._hipRightPivot.rotation.x = legRight;
+    // The trailing leg (hip angle negative = swinging back) tucks first.
+    let kneeLeftBend = POSE.gaitKneeBend * Math.max(0, -legLeft);
+    let kneeRightBend = POSE.gaitKneeBend * Math.max(0, -legRight);
+    kneeLeftBend += (POSE.jumpKneeBend[0] - kneeLeftBend) * p.jumpBlend;
+    kneeRightBend += (POSE.jumpKneeBend[1] - kneeRightBend) * p.jumpBlend;
+    kneeLeftBend += (POSE.fallKneeBend - kneeLeftBend) * p.fallBlend;
+    kneeRightBend += (POSE.fallKneeBend - kneeRightBend) * p.fallBlend;
+    this._kneeLeftPivot.rotation.x = -kneeLeftBend;
+    this._kneeRightPivot.rotation.x = -kneeRightBend;
 
-    // --- Arms: counter-swing + breath sway, then the pose overrides --------
+    // --- Arms: counter-swing + breath sway at the shoulders, then the pose
+    // --- overrides; the elbows keep a matching flexion throughout.
     let armLeft = -p.armSwing * swing + POSE.idleArmSway * p.breath;
     let armRight = p.armSwing * swing - POSE.idleArmSway * p.breath;
     // Falling: arms fling up (only for the non-aiming body; the aiming body
@@ -660,10 +797,22 @@ export class PlayerPresentation {
     );
     armLeft += (aimLeft - armLeft) * p.armRaise;
     armRight += (aimRight - armRight) * p.armRaise;
-    this._armLeftPivot.rotation.x = armLeft;
-    this._armRightPivot.rotation.x = armRight;
-    this._armLeftPivot.rotation.z = POSE.aimArmGripZ[0] * p.armRaise;
-    this._armRightPivot.rotation.z = POSE.aimArmGripZ[1] * p.armRaise;
+    this._shoulderLeftPivot.rotation.x = armLeft;
+    this._shoulderRightPivot.rotation.x = armRight;
+    this._shoulderLeftPivot.rotation.z = POSE.aimArmGripZ[0] * p.armRaise;
+    this._shoulderRightPivot.rotation.z = POSE.aimArmGripZ[1] * p.armRaise;
+
+    // Elbow flexion: relaxed base, subtle gait counter-flexion, straightened
+    // arms while flung, drawn in for the aim grip.
+    const counterFlex = POSE.gaitElbowBend * Math.cos(phase);
+    let elbowLeftBend = POSE.idleElbowBend + counterFlex;
+    let elbowRightBend = POSE.idleElbowBend - counterFlex;
+    elbowLeftBend += (POSE.fallElbowBend - elbowLeftBend) * fling;
+    elbowRightBend += (POSE.fallElbowBend - elbowRightBend) * fling;
+    elbowLeftBend += (POSE.aimElbowBend - elbowLeftBend) * p.armRaise;
+    elbowRightBend += (POSE.aimElbowBend - elbowRightBend) * p.armRaise;
+    this._elbowLeftPivot.rotation.x = -elbowLeftBend;
+    this._elbowRightPivot.rotation.x = -elbowRightBend;
 
     // --- Upper body: gait bob, landing dip, forward lean, aim lean ---------
     this._spinePivot.position.y =

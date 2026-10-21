@@ -1,8 +1,10 @@
 /**
- * Behavioral NullEngine tests for PlayerPresentation — the modular low-poly
- * player body:
- *  - built from a bounded set of Babylon primitives/materials, no external
- *    assets, inside the player collider envelope (feet at -0.9 m)
+ * Behavioral NullEngine tests for PlayerPresentation — the stylized
+ * jointed competitive humanoid:
+ *  - built from a bounded set of Babylon primitives/materials (head, torso,
+ *    upper/lower arms, hands, upper/lower legs, feet), no external assets,
+ *    no skeletal animation, inside the player collider envelope (feet at
+ *    -0.9 m)
  *  - local vs remote variants are visually distinct
  *  - setTransform moves the body and orients the forward visor (yaw 0 = -Z,
  *    positive yaw toward +X — the shared movement convention)
@@ -134,8 +136,8 @@ describe("PlayerPresentation", () => {
 
     const meshes = ownedMeshes(rig.scene, "local-player");
     const materials = ownedMaterials(rig.scene, "local-player");
-    // 12 primitive meshes, 3 shared materials — a bounded, lightweight body.
-    expect(meshes).toHaveLength(12);
+    // 21 primitive meshes, 3 shared materials — a bounded, lightweight body.
+    expect(meshes).toHaveLength(21);
     expect(materials).toHaveLength(3);
     // Low-poly: every material is plain (no textures) and every mesh is safe
     // (not pickable, no collisions), parented to visualRoot or an owned pivot.
@@ -147,18 +149,57 @@ describe("PlayerPresentation", () => {
       expect(mesh.checkCollisions).toBe(false);
       expect(mesh.parent?.name.startsWith("local-player")).toBe(true);
     }
-    // Exactly 5 owned animation pivots (spine, 2 legs, 2 arms) plus the
-    // root/visual-root transforms — no other transforms introduced.
+    // Exactly 9 owned animation pivots (spine, 2 hips, 2 knees, 2
+    // shoulders, 2 elbows) plus the root/visual-root transforms — no other
+    // transforms introduced (no skeletal animation system).
     const pivots = rig.scene.transformNodes.filter((t) =>
       t.name.startsWith("local-player-pivot"),
     );
-    expect(pivots).toHaveLength(5);
+    expect(pivots).toHaveLength(9);
+    // The jointed limb segments are all present: head, torso parts, and the
+    // upper/lower + extremity segments.
+    for (const part of [
+      "head",
+      "chest",
+      "waist",
+      "upper-arm-left",
+      "forearm-left",
+      "hand-left",
+      "thigh-left",
+      "shin-left",
+      "foot-left",
+      "upper-arm-right",
+      "forearm-right",
+      "hand-right",
+      "thigh-right",
+      "shin-right",
+      "foot-right",
+    ]) {
+      expect(meshes.some((m) => m.name === `local-player-${part}`), part).toBe(true);
+    }
 
     // The body stands on the same feet line the capsule collider implies
     // (centre at 0, feet at -0.9) and never exceeds the collider envelope.
     const [minY, maxY] = worldYExtent(rig.scene, "local-player");
     expect(minY).toBeCloseTo(-PLAYER_COLLIDER_TOTAL_HEIGHT / 2, 4);
     expect(maxY).toBeLessThanOrEqual(PLAYER_COLLIDER_TOTAL_HEIGHT / 2);
+  });
+
+  it("visual model stays aligned to the canonical feet position", () => {
+    const rig = makeRig(rigs, "local", "local-player");
+
+    // The canonical (feet-based) position stream puts the root at the
+    // canonical feet line (y = 0.5 here). The visual root must lift the
+    // rendered body so the model's feet sit EXACTLY on that line, no matter
+    // where the player is.
+    rig.pres.setTransform({ x: 3, y: 0.5, z: -2 }, 0);
+    const [minY, maxY] = worldYExtent(rig.scene, "local-player");
+    expect(minY).toBeCloseTo(0.5, 4);
+    // ... and the body never extends above the collider envelope at that
+    // feet position.
+    expect(maxY).toBeLessThanOrEqual(
+      0.5 + PLAYER_COLLIDER_TOTAL_HEIGHT,
+    );
   });
 
   it("local and remote variants are visually distinct", () => {
@@ -273,8 +314,8 @@ describe("PlayerPresentation", () => {
 
   it("walking/running animates the gait; idle stops it and breathes", () => {
     const rig = makeRig(rigs, "remote", "p");
-    const leg = pivot(rig.scene, "p-pivot-leg-left");
-    const arm = pivot(rig.scene, "p-pivot-arm-left");
+    const leg = pivot(rig.scene, "p-pivot-hip-left");
+    const arm = pivot(rig.scene, "p-pivot-shoulder-left");
 
     // Run at 4 m/s for 1.5 s (canonical position stream + render frames).
     let maxLeg = 0;
@@ -307,7 +348,7 @@ describe("PlayerPresentation", () => {
 
   it("jump arc: airborne poses, landing dip sinks the spine, then recovers", () => {
     const rig = makeRig(rigs, "remote", "p");
-    const leg = pivot(rig.scene, "p-pivot-leg-left");
+    const leg = pivot(rig.scene, "p-pivot-hip-left");
 
     let sawJump = false;
     let sawFall = false;
@@ -336,10 +377,10 @@ describe("PlayerPresentation", () => {
     expect(maxJumpTuck).toBeGreaterThan(0.3);
     // A full jump lands near 9 m/s: the dip is well above zero ...
     expect(maxDip).toBeGreaterThan(0.4);
-    // ... and it sinks the spine below its rest height (-0.18 + tiny bob).
-    expect(Math.min(...spineYs)).toBeLessThan(-0.25);
+    // ... and it sinks the spine below its rest height (-0.08 + tiny bob).
+    expect(Math.min(...spineYs)).toBeLessThan(-0.125);
     // Then the body recovers to the rest height.
-    expect(Math.abs(spineYs[spineYs.length - 1] - -0.18)).toBeLessThan(0.02);
+    expect(Math.abs(spineYs[spineYs.length - 1] - -0.08)).toBeLessThan(0.02);
   });
 
   it("visual animation never mutates gameplay transforms", () => {
@@ -404,12 +445,15 @@ describe("PlayerPresentation", () => {
 
     expect(rig.pres.pose.armRaise).toBeGreaterThan(0.95);
     expect(rig.pres.pose.aimPitch).toBeCloseTo(0.32, 1);
-    const armLeft = pivot(rig.scene, "p-pivot-arm-left");
-    const armRight = pivot(rig.scene, "p-pivot-arm-right");
+    const armLeft = pivot(rig.scene, "p-pivot-shoulder-left");
+    const armRight = pivot(rig.scene, "p-pivot-shoulder-right");
+    const elbowLeft = pivot(rig.scene, "p-pivot-elbow-left");
     // Hands are raised forward-up (not hanging at the sides) and tilted by
     // the upward aim.
     expect(armLeft.rotation.x).toBeLessThan(-1.0);
     expect(armRight.rotation.x).toBeLessThan(-0.8);
+    // The forearm is drawn in for the two-handed grip (elbow flexion).
+    expect(elbowLeft.rotation.x).toBeLessThan(-0.3);
     // The visor tilts up with the aim pitch.
     expect(rig.pres.visorMesh.rotation.x).toBeGreaterThan(0.05);
   });
@@ -420,14 +464,14 @@ describe("PlayerPresentation", () => {
     for (let i = 0; i < 90; i++) rig.frame();
 
     expect(rig.pres.pose.armRaise).toBeLessThan(0.05);
-    const arm = pivot(rig.scene, "q-pivot-arm-left");
+    const arm = pivot(rig.scene, "q-pivot-shoulder-left");
     // Relaxed: arms hang at the sides.
     expect(Math.abs(arm.rotation.x)).toBeLessThan(0.05);
   });
 
   it("setEnabled(false) pauses the pose until re-enabled", () => {
     const rig = makeRig(rigs, "remote", "p");
-    const arm = pivot(rig.scene, "p-pivot-arm-left");
+    const arm = pivot(rig.scene, "p-pivot-shoulder-left");
 
     // Get the gait moving ...
     for (let i = 0; i < 30; i++) {
