@@ -135,12 +135,14 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 //
 // The *rendered* structure is a visual reinterpretation of the canonical
 // authoritative geometry (`structureCuboids`):
-//  - wall  → visually thin edge panel: an outer frame plus recessed inset
-//    panels (no giant cube); edited walls render one inset panel per
-//    retained canonical 3×3 tile, so openings match exactly.
-//  - floor → a thin framed platform: full-height edge trims around a
-//    slightly lower deck, so the platform edge reads clearly; edited
-//    floors render only the retained canonical quadrants.
+//  - wall  → a thin construction panel: an outer frame (end posts, top and
+//    bottom rails, a central mullion), recessed inset panels, and one
+//    diagonal brace per opening (no giant cube); edited walls render one
+//    inset panel per retained canonical 3×3 tile, so openings match
+//    exactly.
+//  - floor → a thin framed platform: full-height edge trims, a thin top
+//    deck, and a readable underside (a recessed base plate on cross
+//    beams); edited floors render only the retained canonical quadrants.
 //  - ramp  → a single continuous inclined plate that hides the canonical
 //    16 collision steps while spanning exactly the canonical 1×1 tile
 //    footprint (run, rise, width and turn of every variant).
@@ -150,10 +152,12 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 // Collision, hitscan and movement keep using `structureCuboids` untouched;
 // these visuals never add or remove volume the authoritative state lacks.
 
-/** An axis-aligned visual box in world space. */
+/** An axis-aligned visual box in world space. Optional in-plane rotation
+ * around the given (world) axis, applied about the box centre. */
 interface VisualBox {
   center: [number, number, number];
   size: [number, number, number];
+  rotation?: { axis: "x" | "z"; angle: number };
 }
 
 /** A square-basis pyramid visual in world space (apex above the base centre). */
@@ -182,9 +186,14 @@ const WALL_INSET_THICKNESS = WALL_FRAME_THICKNESS / 2;
 const FLOOR_TOP_HEIGHT = 0.15;
 
 /**
- * Visual boxes for a wall: the outer frame plus recessed inset panels when
- * the wall is whole, or one recessed panel per retained canonical tile when
- * it is edited (centred on the same tile the collision volume uses).
+ * Visual boxes for a wall: a thin construction panel when the wall is
+ * whole — end posts, top/bottom rails and a central mullion at the
+ * canonical frame thickness, recessed inset panels filling each opening,
+ * and one frame-thickness diagonal brace per opening (the braces sit proud
+ * of the recessed panels and stay strictly inside the openings, so the
+ * outer envelope remains exactly the canonical one) — or one recessed
+ * panel per retained canonical tile when it is edited (centred on the same
+ * tile the collision volume uses).
  */
 function wallVisualBoxes(input: VisualInput): VisualBox[] {
   const cs = BUILD_GRID.cellSize;
@@ -210,25 +219,56 @@ function wallVisualBoxes(input: VisualInput): VisualBox[] {
       ? { center: [cx, cy, cz], size: [widthU, height, thicknessV] }
       : { center: [cx, cy, cz], size: [thicknessV, height, widthU] };
 
+  // A diagonal brace: length `len` in the wall plane, cross-section
+  // `height` tall, frame-thickness deep (sits proud of the recessed
+  // panels), rotated in the wall plane about the wall normal.
+  const braceAt = (
+    cx: number,
+    cz: number,
+    cy: number,
+    len: number,
+    height: number,
+    angle: number,
+  ): VisualBox => ({
+    center: [cx, cy, cz],
+    size: alongX ? [len, height, WALL_FRAME_THICKNESS] : [WALL_FRAME_THICKNESS, height, len],
+    rotation: { axis: alongX ? "z" : "x", angle },
+  });
+
   if (tiles.every(Boolean)) {
     const postW = cs * 0.09;
     const railH = lh * 0.1;
-    const gap = cs * 0.05;
-    const panelW = (cs - 2 * postW - gap) / 2;
-    const panelH = lh - 2 * railH;
+    const mullionW = cs * 0.05;
+    const gap = cs * 0.03;
+    const openW = cs / 2 - postW - mullionW / 2;
+    const openH = lh - 2 * railH;
+    const panelW = openW - 2 * gap;
+    // Brace length: the longest diagonal that (with its cross-section) stays
+    // strictly inside one panel opening, so the envelope never exceeds the
+    // canonical wall bounds.
+    const braceCross = cs * 0.045;
+    const theta = Math.atan2(openH, openW);
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
+    const braceLen =
+      Math.min((openW - braceCross * sinT) / cosT, (openH - braceCross * cosT) / sinT) * 0.98;
     const boxes: VisualBox[] = [
-      // Outer frame: a post at each end of the panel edge plus a top and
-      // bottom rail spanning the full edge.
+      // Outer frame: a post at each end of the panel edge, a top and a
+      // bottom rail spanning the full edge, and a central mullion between
+      // the rails.
       boxAt(x + (alongX ? cs / 2 - postW / 2 : 0), z + (alongX ? 0 : cs / 2 - postW / 2), y + lh / 2, postW, lh, WALL_FRAME_THICKNESS),
       boxAt(x - (alongX ? cs / 2 - postW / 2 : 0), z - (alongX ? 0 : cs / 2 - postW / 2), y + lh / 2, postW, lh, WALL_FRAME_THICKNESS),
       boxAt(x, z, y + railH / 2, cs, railH, WALL_FRAME_THICKNESS),
       boxAt(x, z, y + lh - railH / 2, cs, railH, WALL_FRAME_THICKNESS),
+      boxAt(x, z, y + lh / 2, mullionW, openH, WALL_FRAME_THICKNESS),
     ];
-    // Two recessed inset panels fill the framed opening.
+    // Each opening gets a recessed inset panel plus one frame-thickness
+    // diagonal brace (mirrored per side).
     for (const side of [-1, 1]) {
-      const offset = side * (panelW / 2 + gap / 2);
+      const offset = side * (mullionW / 2 + gap + panelW / 2);
       boxes.push(
-        boxAt(x + (alongX ? offset : 0), z + (alongX ? 0 : offset), y + lh / 2, panelW, panelH, WALL_INSET_THICKNESS),
+        boxAt(x + (alongX ? offset : 0), z + (alongX ? 0 : offset), y + lh / 2, panelW, openH, WALL_INSET_THICKNESS),
+        braceAt(x + (alongX ? offset : 0), z + (alongX ? 0 : offset), y + lh / 2, braceLen, braceCross, side * theta),
       );
     }
     return boxes;
@@ -255,9 +295,11 @@ function wallVisualBoxes(input: VisualInput): VisualBox[] {
 }
 
 /**
- * Visual boxes for a floor: full-height edge trims around a slightly lower
- * deck (thin framed platform with readable edges), or — when edited — one
- * thin slab per retained canonical quadrant.
+ * Visual boxes for a floor: a thin framed platform with a readable
+ * underside — full-height edge trims, a thin top deck set slightly below
+ * the trim tops, and a recessed underside (a base plate carried by cross
+ * beams, so the hollow framing shows when viewed from below), or — when
+ * edited — one thin slab per retained canonical quadrant.
  */
 function floorVisualBoxes(input: VisualInput): VisualBox[] {
   const cs = BUILD_GRID.cellSize;
@@ -272,13 +314,25 @@ function floorVisualBoxes(input: VisualInput): VisualBox[] {
 
   if (tiles.every(Boolean)) {
     const trim = cs * 0.05;
-    const deckH = H - 0.04;
+    const deckH = 0.04;
+    const baseH = 0.04;
+    const innerW = cs - 2 * trim;
+    const baseW = innerW - 2 * cs * 0.03;
+    const beamH = H - deckH - baseH;
+    const beamT = cs * 0.04;
+    const beamOffset = cs * 0.15;
     const boxes: VisualBox[] = [
+      // Full-height edge trims: the platform edge reads clearly.
       { center: [x, y + H / 2, z - (cs / 2 - trim / 2)], size: [cs, H, trim] },
       { center: [x, y + H / 2, z + (cs / 2 - trim / 2)], size: [cs, H, trim] },
       { center: [x - (cs / 2 - trim / 2), y + H / 2, z], size: [trim, H, cs] },
       { center: [x + (cs / 2 - trim / 2), y + H / 2, z], size: [trim, H, cs] },
-      { center: [x, y + deckH / 2, z], size: [cs - 2 * trim, deckH, cs - 2 * trim] },
+      // Thin top deck set slightly below the trim tops.
+      { center: [x, y + H - deckH / 2, z], size: [innerW, deckH, innerW] },
+      // Readable underside: a recessed base plate on cross beams.
+      { center: [x, y + baseH / 2, z], size: [baseW, baseH, baseW] },
+      { center: [x, y + baseH + beamH / 2, z - beamOffset], size: [baseW, beamH, beamT] },
+      { center: [x, y + baseH + beamH / 2, z + beamOffset], size: [baseW, beamH, beamT] },
     ];
     return boxes;
   }
@@ -330,8 +384,12 @@ function coneVisualPyramids(input: VisualInput): VisualPyramid[] {
   return pyramids;
 }
 
-/** Plate thickness of the ramp visual (a touch more than the 0.3 m collision slabs, so its underside swallows the steps). */
-const RAMP_PLATE_THICKNESS = 0.34;
+/** Plate thickness of the ramp visual top surface (thin walking surface). */
+const RAMP_PLATE_THICKNESS = 0.12;
+/** Cross-section width of the support struts under the ramp plate. */
+const RAMP_SUPPORT_THICKNESS = 0.1;
+/** Fractional positions along the run (0–1) where support struts are placed. */
+const RAMP_SUPPORT_FRACS = [0.25, 0.5, 0.75] as const;
 /** Longitudinal tessellation of the ramp plate (straight plate — 12 is plenty smooth). */
 const RAMP_PLATE_SEGMENTS = 12;
 
@@ -445,7 +503,6 @@ function buildRampPlateMesh(
   const latDir = alongX ? new Vector3(0, 0, 1) : new Vector3(1, 0, 0);
   const eRun = runDir.scale(cs).add(new Vector3(0, lh, 0)).normalize();
   const nTop = runDir.scale(-lh).add(new Vector3(0, cs, 0)).normalize();
-  const nBottom = nTop.negate();
   const nLo = latDir.negate();
   const nHi = latDir;
   const nCapStart = eRun.negate();
@@ -456,7 +513,7 @@ function buildRampPlateMesh(
     const p = stations[s]!;
     const q = stations[s + 1]!;
     geo.addQuad([p[0]!, p[1]!, q[1]!, q[0]!], nTop); // top
-    geo.addQuad([p[3]!, q[3]!, q[2]!, p[2]!], nBottom); // bottom
+    // No bottom face — open underside.
     geo.addQuad([p[3]!, q[3]!, q[0]!, p[0]!], nLo); // low-lateral side
     geo.addQuad([p[1]!, p[2]!, q[2]!, q[1]!], nHi); // high-lateral side
   }
@@ -464,6 +521,54 @@ function buildRampPlateMesh(
   const last = stations[S]!;
   geo.addQuad([first[0]!, first[1]!, first[2]!, first[3]!], nCapStart); // low end
   geo.addQuad([last[0]!, last[3]!, last[2]!, last[1]!], nCapEnd); // high end
+
+  // Support struts: thin vertical boxes from the ground up to the plate
+  // bottom at each support position. The open underside between struts is
+  // visible, giving the ramp a light structural look.
+  const sw = RAMP_SUPPORT_THICKNESS / 2;
+  for (const frac of RAMP_SUPPORT_FRACS) {
+    const u = frac;
+    const run = -cs / 2 + u * cs;
+    const topY = lh * (reversed ? 1 - u : u);
+    const bottomY = Math.max(0, topY - RAMP_PLATE_THICKNESS);
+    if (bottomY < 0.02) continue; // skip if the plate is at ground level
+    let lateralCenter: number;
+    if (side !== 0) {
+      lateralCenter = side * leftSign * cs / 4;
+    } else if (turn !== 0) {
+      lateralCenter = turn * u * cs / 4;
+    } else {
+      lateralCenter = 0;
+    }
+    const cx = alongX ? run : lateralCenter;
+    const cz = alongX ? lateralCenter : run;
+    const sy = bottomY;
+    // Six faces of the support box.
+    geo.addQuad(
+      [[cx - sw, bottomY, cz - sw], [cx + sw, bottomY, cz - sw], [cx + sw, bottomY, cz + sw], [cx - sw, bottomY, cz + sw]],
+      new Vector3(0, 1, 0),
+    ); // top (meets the plate underside)
+    geo.addQuad(
+      [[cx - sw, 0, cz + sw], [cx + sw, 0, cz + sw], [cx + sw, 0, cz - sw], [cx - sw, 0, cz - sw]],
+      new Vector3(0, -1, 0),
+    ); // bottom (ground)
+    geo.addQuad(
+      [[cx + sw, 0, cz - sw], [cx + sw, sy, cz - sw], [cx + sw, sy, cz + sw], [cx + sw, 0, cz + sw]],
+      new Vector3(1, 0, 0),
+    ); // +x side
+    geo.addQuad(
+      [[cx - sw, 0, cz + sw], [cx - sw, sy, cz + sw], [cx - sw, sy, cz - sw], [cx - sw, 0, cz - sw]],
+      new Vector3(-1, 0, 0),
+    ); // -x side
+    geo.addQuad(
+      [[cx - sw, 0, cz + sw], [cx + sw, 0, cz + sw], [cx + sw, sy, cz + sw], [cx - sw, sy, cz + sw]],
+      new Vector3(0, 0, 1),
+    ); // +z side
+    geo.addQuad(
+      [[cx + sw, 0, cz - sw], [cx - sw, 0, cz - sw], [cx - sw, sy, cz - sw], [cx + sw, sy, cz - sw]],
+      new Vector3(0, 0, -1),
+    ); // -z side
+  }
 
   return geo.build(scene, "");
 }
@@ -515,10 +620,14 @@ function fillStructureVisual(
   const rel = (cx: number, cy: number, cz: number) =>
     new Vector3(cx - base.x, cy - baseY, cz - base.z);
 
-  const finish = (mesh: Mesh, index: number, cx: number, cy: number, cz: number): void => {
+  const finish = (mesh: Mesh, index: number, cx: number, cy: number, cz: number, rotation?: VisualBox["rotation"]): void => {
     mesh.name = `visual-${id}-${index}`;
     mesh.parent = root;
     mesh.position = rel(cx, cy, cz);
+    if (rotation) {
+      if (rotation.axis === "z") mesh.rotation.z = rotation.angle;
+      else mesh.rotation.x = rotation.angle;
+    }
     mesh.isPickable = false;
     mesh.checkCollisions = false;
     if (root.material) mesh.material = root.material;
@@ -563,7 +672,7 @@ function fillStructureVisual(
       height: part.size[1],
       depth: part.size[2],
     }, scene);
-    finish(mesh, index, part.center[0], part.center[1], part.center[2]);
+    finish(mesh, index, part.center[0], part.center[1], part.center[2], part.rotation);
   }
 }
 

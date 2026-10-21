@@ -33,8 +33,10 @@ describe("production runtime arena visuals", () => {
     const directional = scene.getLightByName("arena-directional");
     expect(hemi).toBeInstanceOf(HemisphericLight);
     expect(directional).toBeInstanceOf(DirectionalLight);
-    expect(hemi!.intensity).toBeCloseTo(0.6);
-    expect(directional!.intensity).toBeCloseTo(0.8);
+    // These are the current production values from setupArenaLighting: bright
+    // ambient fill plus a stronger directional key for readable gameplay.
+    expect(hemi!.intensity).toBeCloseTo(0.9);
+    expect(directional!.intensity).toBeCloseTo(1.1);
     expect(scene.clearColor.asArray()).toEqual([...ARENA_PALETTE.skyColor.asArray(), 1]);
     for (const [name, color] of [
       ["ground-material", ARENA_PALETTE.groundColor],
