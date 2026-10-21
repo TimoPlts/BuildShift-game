@@ -88,7 +88,7 @@ describe("Arena lighting", () => {
 
     // No shadows or extra light sources — the cheap two-light setup is stable.
     expect(scene.lights).toHaveLength(2);
-    expect(scene.shadows ?? []).toHaveLength(0);
+    expect(scene.lights.some((light) => light.getShadowGenerator() !== null)).toBe(false);
 
     scene.dispose();
     engine.dispose();
