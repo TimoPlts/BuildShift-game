@@ -10,7 +10,10 @@
  *  - **hitFlash** — brief emissive flash when durability decreases
  *  - **destruction** — scale-out + fade when a structure is authoritatively removed
  *
- * Also tracks an **edit transition** for smooth half-wall shape changes.
+ * Also tracks an **edit transition** for smooth half-wall shape changes and
+ * a brief **edit-settle** reveal when an authoritative edit/reset rebuilds
+ * the structure's geometry (the rebuilt panels fade in quickly so the shape
+ * change reads as an intentional update instead of an instant pop).
  *
  * This module is pure: no Babylon imports, no scene, no game state.
  * The {@link BuildStructureRenderer} owns the meshes and calls
@@ -52,6 +55,14 @@ export const HIT_FLASH_DURATION = 180;
 export const DESTRUCTION_DURATION = 250;
 /** Edit transition duration. */
 export const EDIT_TRANSITION_DURATION = 200;
+/**
+ * Edit-settle reveal duration: the quick, non-obscuring fade-in of rebuilt
+ * panels after an authoritative edit change or reset. Short enough that the
+ * new shape is fully settled well inside a normal edit cadence.
+ */
+export const EDIT_SETTLE_DURATION = 140;
+/** Material alpha at the start of the edit-settle reveal. */
+export const EDIT_SETTLE_ALPHA_START = 0.65;
 /** Durability fraction below which a structure is considered "nearly broken". */
 export const NEARLY_BROKEN_THRESHOLD = 0.25;
 /** Warning pulse frequency for nearly-broken structures (cycles per second). */
@@ -74,6 +85,8 @@ export interface StructureEffects {
   hitFlash: AnimationState | null;
   destruction: AnimationState | null;
   editTransition: EditTransition | null;
+  /** Quick fade-in of panels rebuilt by an authoritative edit/reset. */
+  editSettle: AnimationState | null;
 }
 
 /** A smooth interpolation between two edit poses (full ↔ half-top ↔ half-bottom). */
@@ -98,6 +111,7 @@ export function createConstructionEffects(now: number): StructureEffects {
     hitFlash: null,
     destruction: null,
     editTransition: null,
+    editSettle: null,
   };
 }
 
@@ -109,6 +123,7 @@ export function createDestructionEffects(now: number): StructureEffects {
     hitFlash: null,
     destruction: createAnimation(now, DESTRUCTION_DURATION),
     editTransition: null,
+    editSettle: null,
   };
 }
 
@@ -135,6 +150,16 @@ export function startEditTransition(
 /** Trigger a hit flash on existing effects. */
 export function triggerHitFlash(effects: StructureEffects, now: number): void {
   effects.hitFlash = createAnimation(now, HIT_FLASH_DURATION);
+}
+
+/**
+ * Start the edit-settle reveal on a structure whose geometry was just
+ * rebuilt (authoritative edit change or reset back to the default shape).
+ * Bounded: the reveal completes on its own and is composed after the
+ * construction build-up and before destruction, so later state wins alpha.
+ */
+export function startEditSettle(effects: StructureEffects, now: number): void {
+  effects.editSettle = createAnimation(now, EDIT_SETTLE_DURATION);
 }
 
 // ─── Application ─────────────────────────────────────────────────────────────
@@ -254,6 +279,15 @@ export function composeVisualInto(
     uniformScale = easeOutBack(t);
     alpha = CONSTRUCTION_ALPHA_START + (1 - CONSTRUCTION_ALPHA_START) * easeOutQuad(t);
     if (!effects.construction.done) allDone = false;
+  }
+
+  // Edit-settle reveal: panels rebuilt by an edit/reset fade in quickly.
+  // Composed after the construction build-up (an edit is the more recent
+  // event) and before destruction (a removal always wins the alpha).
+  if (effects.editSettle && !effects.editSettle.done) {
+    const t = animationProgress(effects.editSettle, now);
+    alpha = EDIT_SETTLE_ALPHA_START + (1 - EDIT_SETTLE_ALPHA_START) * easeOutQuad(t);
+    if (!effects.editSettle.done) allDone = false;
   }
 
   // Placement-confirmation glow (short authoritative acceptance pulse)
