@@ -30,8 +30,20 @@
  *    position in world space (the muzzle flash / tracer origin), including
  *    any dip or aim tilt in progress.
  *
- * The weapon model is attached to the player's presentation root transform
- * node so it moves and rotates with the player body automatically.
+ * The weapon model is mounted by the runtime on the local player: at
+ * construction it is parented to the player's presentation root transform
+ * node (the procedural-body / asset-failure fallback mount), and once the
+ * rigged character body settles the runtime re-parents `root` under the
+ * character's right-hand socket (see `CharacterWeaponAttachment`), so the
+ * held weapon follows the body's translation, yaw, crouch, and hand
+ * movement automatically.
+ *
+ * Character hand attachment (Batch 2B): `attachTo` is a narrow, allocation-
+ * free presentation seam that reparents `root` under a caller-owned socket
+ * node (e.g. a character's right-wrist joint) with a configurable local
+ * offset/rotation. It never clones, never owns the parent, and leaves all
+ * gameplay and visibility behaviour untouched; the character attachment
+ * helper (`CharacterWeaponAttachment`) is the intended caller.
  *
  * Presentation only: never touches gameplay, ammo, damage, or protocol state.
  */
@@ -41,7 +53,7 @@ import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import type { Observer, Scene } from "@babylonjs/core";
+import type { Nullable, Observer, Scene } from "@babylonjs/core";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 
 /** Dark gunmetal — shared by both weapon variants. */
@@ -296,6 +308,42 @@ export class WeaponModelPresentation {
       for (const mesh of this._meshes) {
         mesh.setEnabled(false);
       }
+    }
+  }
+
+  /**
+   * Narrow presentation seam (Batch 2B/2C): reparents this component's
+   * weapon root under `parent` (or detaches it from any parent when
+   * `parent` is null) and writes the caller-chosen local
+   * offset/rotation/scale onto the root. Pure transform change — no
+   * allocation, no clone, no visibility, dip, or muzzle-anchor logic
+   * involved, so the weapon's existing behaviour (switch, reload dip, aim
+   * tilt, `getMuzzlePosition`) is fully preserved. Idempotent; safe no-op
+   * after dispose.
+   *
+   * `localScale` is a uniform scale factor (default 1) so a per-weapon
+   * hold transform (Batch 2C tuning) can size the held model relative to
+   * the socket without touching either weapon's own silhouette geometry.
+   */
+  public attachTo(
+    parent: Nullable<TransformNode>,
+    localOffset: { readonly x: number; readonly y: number; readonly z: number },
+    localRotation: {
+      readonly x: number;
+      readonly y: number;
+      readonly z: number;
+    } = { x: 0, y: 0, z: 0 },
+    localScale = 1,
+  ): void {
+    if (this._disposed) return;
+    this.root.parent = parent;
+    this.root.position.set(localOffset.x, localOffset.y, localOffset.z);
+    this.root.rotation.set(localRotation.x, localRotation.y, localRotation.z);
+    this.root.scaling.set(localScale, localScale, localScale);
+    if (parent) {
+      // Force the ancestor chain so the weapon reads correctly even between
+      // render passes (same technique as getMuzzlePosition).
+      this.root.computeWorldMatrix(true);
     }
   }
 

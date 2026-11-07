@@ -100,7 +100,9 @@ export class CharacterAnimationController {
 
   /**
    * Register (or replace) the clip for a slot. Safe with partial sets:
-   * states without a clip simply play nothing. If the attached locomotion
+   * states without a clip simply play nothing. Re-attaching the same group
+   * for the same slot is a no-op (no restart, no duplicate observers).
+   * If the attached locomotion
    * clip matches the current state and nothing else is playing, it starts
    * immediately (covers clips arriving after `setState`).
    */
@@ -124,11 +126,14 @@ export class CharacterAnimationController {
 
     if (isFire) {
       // Fire only ever starts through triggerFire(); the end observer is the
-      // one-and-only return path to locomotion.
-      const observer = group.onAnimationGroupEndObservable.add((finished) =>
-        this._onFireGroupEnd(finished),
-      );
-      this._fireEndObservers.set(group, observer);
+      // one-and-only return path to locomotion. Attaching the same group
+      // again is a no-op: never a second observer.
+      if (!this._fireEndObservers.has(group)) {
+        const observer = group.onAnimationGroupEndObservable.add((finished) =>
+          this._onFireGroupEnd(finished),
+        );
+        this._fireEndObservers.set(group, observer);
+      }
       return;
     }
     if (

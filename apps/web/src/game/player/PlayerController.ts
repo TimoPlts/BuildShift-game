@@ -14,12 +14,12 @@ import type { SubstepInput } from "./substepInput";
 import type { PredictionState } from "./predictionState";
 import { PhysicsWorld } from "../physics/PhysicsWorld";
 import { computePredictionTranslation } from "./predictionMovement";
-import { PlayerPresentation } from "../scene/PlayerPresentation";
+import { PlayerBodyFacade } from "../scene/character";
 import { presentationFeetInto } from "./presentationFeet";
 
 /**
- * The local (Stage 1) player: a stylized low-poly body (see
- * {@link PlayerPresentation}) whose root transform mirrors the physics
+ * The local (Stage 1) player: a presentation body (see
+ * {@link PlayerBodyFacade}) whose root transform mirrors the physics
  * position and facing yaw.
  *
  * From Stage 1D on this controller is *presentation only*. It no longer owns
@@ -48,16 +48,27 @@ import { presentationFeetInto } from "./presentationFeet";
  * = camera yaw).
  */
 export class PlayerController {
-  /** Owns every visual mesh/material of the local player body. */
-  private readonly _presentation: PlayerPresentation;
+  /**
+   * Owns the local player body: the licensed rigged GLB once the
+   * (non-blocking) character load settles, the procedural presentation
+   * until then and on genuine asset failure. Disposal stays with this
+   * controller.
+   */
+  private readonly _presentation: PlayerBodyFacade;
   /**
    * Presentation root (transform only, no geometry). Its position is the
    * mirrored capsule-centre position. Its Y rotation is the NEGATED facing
    * yaw (Babylon's node Y-rotation turns local -Z toward -X for positive
    * angles, while the shared movement convention turns forward toward +X).
    * The prediction state always stores the shared-convention yaw.
+   *
+   * Live getter: the root node changes identity when the rigged GLB body
+   * replaces the provisional procedural one, so every read goes through
+   * the facade (which carries the transform over on the swap).
    */
-  private readonly mesh: TransformNode;
+  private get mesh(): TransformNode {
+    return this._presentation.root;
+  }
   private readonly physics: PhysicsWorld;
   /** Owns the jump-buffer / coyote-time timing and the launch decision. */
   private readonly jumpController: JumpController;
@@ -81,11 +92,14 @@ export class PlayerController {
     this.physics = physics;
     this.jumpController = new JumpController(JUMP_INPUT_TIMING);
 
-    // Presentation only: the modular low-poly body (green "local" variant).
-    // Its root starts exactly where the physics world says the character is
-    // (capsule centre = PLAYER_SPAWN).
-    this._presentation = PlayerPresentation.create(scene, "local", "local-player");
-    this.mesh = this._presentation.root;
+    // Presentation only: the local player body ("local" variant). It starts
+    // with the procedural presentation so the gameplay-mirror root exists
+    // synchronously, then adopts the licensed rigged GLB once the
+    // non-blocking load settles (or keeps the procedural body on a genuine
+    // asset failure). Its root starts exactly where the physics world says
+    // the character is (capsule centre = PLAYER_SPAWN).
+    this._presentation = new PlayerBodyFacade(scene, "local", "local-player");
+    this._presentation.startCharacterLoad();
     const center = this.physics.getPosition();
     this.mesh.position.set(center.x, center.y, center.z);
   }
@@ -259,12 +273,12 @@ export class PlayerController {
   }
 
   /**
-   * The local player's presentation component (hit-flash / eliminated
-   * tinting, procedural pose). Read-only access for the runtime, which
-   * drives its display state from the canonical authoritative events —
-   * ownership and disposal stay with this controller.
+   * The local player's presentation facade (procedural body until the rigged
+   * GLB settles; hit-flash / eliminated tinting and crouch). Read-only
+   * access for the runtime, which drives its display state from the canonical
+   * authoritative events — ownership and disposal stay with this controller.
    */
-  public get presentation(): PlayerPresentation {
+  public get presentation(): PlayerBodyFacade {
     return this._presentation;
   }
 

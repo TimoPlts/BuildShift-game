@@ -10,9 +10,16 @@
  * and the local weapon state machine in the `weapon` module tests.
  *
  * What this contract locks down:
- *  - the first-person weapon model is the modular `WeaponModelPresentation`,
- *    owned by the runtime and parented to the local player's presentation
- *    root (no separate player rig or second scene graph);
+ *  - the local weapon model is the modular `WeaponModelPresentation`,
+ *    owned by the runtime; at construction it is parented to the local
+ *    player's presentation root (the procedural-body / asset-failure
+ *    fallback mount);
+ *  - once the local character's rigged GLB body settles, the runtime
+ *    attaches the weapon root to the character's right-hand socket via the
+ *    real rig resolver `CharacterWeaponAttachment` (one-shot, guarded
+ *    against a disposed runtime and a procedural-fallback body) so the
+ *    held weapon rides the hand joint — following translation, yaw,
+ *    crouch, and any hand animation;
  *  - local weapon input uses the existing `WeaponController` and the canonical
  *    `NetworkClient` commands/input frame — no retired `weapon:*` messages
  *    can leave the runtime;
@@ -21,7 +28,9 @@
  *    state, not a client-predicted mirror);
  *  - round reset / rematch and (re)connect restore the default weapon on the
  *    model, so no stale weapon survives a fresh match;
- *  - teardown disposes the model and releases the weapon-state subscription.
+ *  - teardown disposes the character attachment, the model, and releases
+ *    the weapon-state subscription (in that order, so the socket detaches
+ *    before either end is gone).
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -29,7 +38,7 @@ import { describe, expect, it } from "vitest";
 const runtime = readFileSync(new URL("./GameRuntime.ts", import.meta.url), "utf8");
 
 describe("GameRuntime weapon model wiring", () => {
-  it("owns the modular WeaponModelPresentation parented to the local player", () => {
+  it("owns the modular WeaponModelPresentation with the presentation-root fallback mount", () => {
     expect(runtime).toContain(
       'import{WeaponModelPresentation}from"./scene/WeaponModelPresentation"',
     );
@@ -37,11 +46,58 @@ describe("GameRuntime weapon model wiring", () => {
     expect(runtime).toContain(
       'this.weaponModel=WeaponModelPresentation.create(this.scene,"weapon-model");',
     );
-    // Parented into the existing local-player presentation root — the model
-    // rides the player, it is not a separate player rig.
+    // Synchronous fallback mount (procedural body / asset failure): the model
+    // rides the local player's presentation root until the rigged body
+    // settles.
     expect(runtime).toContain(
       "this.weaponModel.root.parent=this.playerController.presentationRoot;",
     );
+  });
+
+  it("attaches the live weapon to the character hand socket once the rigged body settles", () => {
+    // The real rig resolver is imported from the character pipeline…
+    expect(runtime).toContain(
+      'import{CharacterWeaponAttachment}from"./scene/character"',
+    );
+    // …and the attachment is owned by the runtime.
+    expect(runtime).toContain(
+      "private localWeaponAttachment:CharacterWeaponAttachment|null=null;",
+    );
+    // One-shot, character-settled trigger off the existing facade accessor.
+    expect(runtime).toContain(
+      "void this.playerController.presentation.whenCharacterSettled().then(()=>this.attachLocalWeaponModel());",
+    );
+    const reseatCount=(runtime.match(/localWeaponAttachment\?\.attach\(this\.weaponModel,\{localOffset:t1\.position/g)||[]).length;
+    expect(reseatCount).toBe(2); // both weapon-switch reseats consume the C table
+const idx = runtime.indexOf("private attachLocalWeaponModel(){");
+    expect(idx).toBeGreaterThan(-1);
+    const block = runtime.slice(idx, idx + 700);
+    // Guarded: a disposed runtime never attaches, the attach happens once…
+    expect(block).toContain(
+      "if(this.disposed||this.localWeaponAttachment)return;",
+    );
+    // …and a procedural-fallback body keeps the presentation-root mount.
+    expect(block).toContain("if(!body.isCharacterLoaded)return;");
+    // The real rig resolver creates the socket for the local character
+    // instance and the weapon root moves under the hand joint.
+    expect(block).toContain(
+      'this.localWeaponAttachment=CharacterWeaponAttachment.create(this.scene,"local-player");',
+    );
+    expect(block).toContain("getWeaponAttachmentTransform(this.weaponModel.equippedWeapon)");
+    expect(block).toContain("this.localWeaponAttachment.attach(this.weaponModel,{localOffset:t0.position,localRotation:t0.rotation,localScale:t0.scale});");
+  });
+
+  it("disposes the character weapon attachment before the model on teardown", () => {
+    // The socket detaches before either the weapon or the character is gone.
+    expect(runtime).toContain(
+      "this.localWeaponAttachment?.dispose();this.weaponModel.dispose();",
+    );
+    const attachIdx = runtime.indexOf(
+      "this.localWeaponAttachment?.dispose();",
+    );
+    const modelIdx = runtime.indexOf("this.weaponModel.dispose();");
+    expect(attachIdx).toBeGreaterThan(-1);
+    expect(modelIdx).toBeGreaterThan(attachIdx);
   });
 
   it("routes both weapon-slot intents through the canonical switch command", () => {
@@ -92,7 +148,8 @@ describe("GameRuntime weapon model wiring", () => {
     expect(resets.length).toBeGreaterThanOrEqual(2);
   });
 
-  it("disposes the model and releases the weapon-state subscription on teardown", () => {
+  it("disposes the attachment, the model, and releases the weapon-state subscription on teardown", () => {
+    expect(runtime).toContain("this.localWeaponAttachment?.dispose();");
     expect(runtime).toContain("this.weaponModel.dispose();");
     expect(runtime).toContain("this.unsubscribeWeaponStateEvent?.();");
   });

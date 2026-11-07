@@ -1,15 +1,15 @@
 # Character asset attribution
 
-- **File:** `RiggedFigure.glb`
-- **Asset:** "Rigged Figure" — rigged (skinned) humanoid test model
-- **Source:** Khronos Group, glTF-Sample-Assets repository,
-  `Models/RiggedFigure/glTF-Binary/RiggedFigure.glb`
-  (https://github.com/KhronosGroup/glTF-Sample-Assets)
-- **Author:** Cesium (2017), as part of the Khronos glTF sample/conformance assets
-- **License:** Creative Commons Attribution 4.0 International (CC-BY 4.0)
-  — https://creativecommons.org/licenses/by/4.0/legalcode
-  (SPDX: `CC-BY-4.0`; license excludes logos and associated trademarks)
+- **Final BuildShift filename:** `BuildShiftBaseCharacter.glb`
+- **Original source filename:** `Superhero_Male_FullBody.gltf`
+  (packaged with its original `.bin` and texture files into the BuildShift GLB)
+- **Asset:** Universal Base Characters — Superhero Male Full Body
+- **Source:** https://quaternius.com/packs/universalbasecharacters.html
+- **Author:** Quaternius
+- **Pack:** Universal Base Characters
+- **License:** Creative Commons Zero v1.0 Universal (CC0 1.0)
+  — https://creativecommons.org/publicdomain/zero/1.0/
 
-Attribution requirement (CC-BY 4.0): "RiggedFigure.glb" — "Rigged Figure"
-by Cesium / Khronos Group, licensed CC-BY 4.0, used in the BuildShift web
-client as the rigged character presentation asset.
+The source asset is the live rigged character presentation used by the
+BuildShift web client. Quaternius publishes the pack for personal,
+educational, and commercial use under CC0 1.0.

@@ -13,8 +13,8 @@
  * expected to treat that rejection as "fall back to the procedural
  * PlayerPresentation" (see {@link createCharacterPresentation}).
  *
- * The default asset is `public/assets/character/RiggedFigure.glb` — a
- * licensed (CC-BY 4.0) rigged/skinned test humanoid; see
+ * The default asset is `public/assets/character/BuildShiftBaseCharacter.glb` —
+ * Quaternius's CC0 Universal Base Characters Superhero Male; see
  * `public/assets/character/ATTRIBUTION.md`.
  */
 import { AssetContainer } from "@babylonjs/core/assetContainer";
@@ -25,7 +25,7 @@ import type { Scene } from "@babylonjs/core/scene";
 import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 
 /** URL of the default character asset, relative to the web app's public root. */
-export const CHARACTER_ASSET_URL = "/assets/character/RiggedFigure.glb";
+export const CHARACTER_ASSET_URL = "/assets/character/BuildShiftBaseCharacter.glb";
 
 /** Thrown whenever the GLB asset cannot be loaded or is unusable. */
 export class CharacterAssetLoadError extends Error {

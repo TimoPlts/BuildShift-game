@@ -8,11 +8,12 @@
  *    predicted/interpolated position to `root.position` and `-yaw` to
  *    `root.rotation.y` (shared yaw convention: 0 faces -Z, positive toward
  *    +X; Babylon's Y rotation is negated, exactly like PlayerPresentation).
- *  - `visualRoot` is the presentation lift: it raises the body by
- *    `PLAYER_COLLIDER_HALF_TOTAL_HEIGHT * crouchScale` and squashes it by
- *    `crouchScale`, so the rendered FEET land exactly on the root position
- *    (the predicted player position) while the body occupies the collider
- *    envelope, and crouching lowers the body about the planted feet.
+ *  - `visualRoot` is the feet-alignment lift. The Quaternius rig crouches
+ *    through authored skeletal clips, not a second non-uniform squash.
+ *    Unknown rigs retain the legacy feet-anchored squash fallback.
+ *  - Original idle/run/jump/fall/crouch groups are instance-owned and fed
+ *    every scene animation frame by the existing CharacterAnimationDriver,
+ *    from the same predicted/interpolated root position used for rendering.
  *
  * Normalisation (deterministic for a given asset file):
  *  - uniform scale = target height / asset height (default target:
@@ -24,10 +25,15 @@
  *    which the loader preserves); `orientationYawOffset` rotates it about Y
  *    for assets whose forward is elsewhere. Default 0.
  *
- * Material assignment: the instance's cloned materials are tinted with the
- * variant's identity emissive (mint-green local / warm-coral remote) while
- * the asset's original diffuse is preserved. `applyState` reuses the exact
- * eliminated / hit-flash frame-decay contract of `PlayerPresentation`.
+ * Material assignment: the instance's cloned materials are varied per side
+ * via {@link characterMaterialScheme} (Batch 2B, Task D): local instances
+ * lean BuildShift blue/cyan, opponents a contrasting warm amber. The
+ * variation is a small, deterministic tint + identity emissive written onto
+ * the instance's OWN cloned materials — the asset's geometry/skeleton stay
+ * shared where Babylon permits and no materials are ever allocated or
+ * re-cloned by the variation itself. `applyState` reuses the exact
+ * eliminated / hit-flash frame-decay contract of `PlayerPresentation`, and
+ * `resetMaterialVariation()` restores the untouched asset look.
  *
  * Ownership / lifecycle:
  *  - The instance is an `instantiateModelsToScene` clone: independent
@@ -42,9 +48,7 @@ import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { InstantiatedEntries } from "@babylonjs/core/assetContainer";
 import type { Material } from "@babylonjs/core/Materials/material";
-import { PBRMaterial } from "@babylonjs/core/Materials/PBR/pbrMaterial";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
-import type { Scene } from "@babylonjs/core";
+import type { Scene, Observer, AnimationGroup } from "@babylonjs/core";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import {
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
@@ -53,6 +57,19 @@ import {
 } from "@buildshift/game-config";
 import type { CharacterAsset } from "./characterAsset";
 import { CharacterAssetLoadError } from "./characterAsset";
+import type { CharacterMaterialScheme } from "./characterMaterialVariation";
+import {
+  applyMaterialScheme,
+  characterMaterialScheme,
+  readDiffuse,
+  resetMaterialScheme,
+  tintedBaseDiffuse,
+  writeDiffuse,
+  writeEmissive,
+} from "./characterMaterialVariation";
+import { createAuthoredCharacterClips } from "./authoredCharacterClips";
+import { CharacterAnimationDriver } from "../player/characterAnimationAdapter";
+import { DEFAULT_PLAYER_POSE_CONFIG } from "../player/playerPoseModel";
 
 /** Which side of the match this instance belongs to. */
 export type CharacterVariant = "local" | "remote";
@@ -70,13 +87,9 @@ export interface CharacterModelOptions {
    * Defaults to 0 (the glTF forward convention).
    */
   readonly orientationYawOffset?: number;
+  /** Injectable render clock for deterministic presentation tests. */
+  readonly animationClock?: () => number;
 }
-
-/** Per-variant material tint (identity marker, matches the presentation palettes). */
-const VARIANT_EMISSIVE: Record<CharacterVariant, Color3> = {
-  local: new Color3(0.12, 0.45, 0.22),
-  remote: new Color3(0.45, 0.16, 0.06),
-};
 
 /** Shared neutral eliminated look (both variants). */
 const ELIMINATED_DIFFUSE = new Color3(0.16, 0.16, 0.17);
@@ -92,22 +105,29 @@ export class CharacterModel {
    * `setTransform`.
    */
   readonly root: TransformNode;
-  /** Presentation lift / crouch-squash node (same contract as PlayerPresentation). */
+  /** Feet-alignment lift; external mounts remain presentation-only. */
   readonly visualRoot: TransformNode;
 
   /** Uniform normalisation scale (targetHeight / assetHeight). */
   readonly scale: number;
 
   private readonly _scene: Scene;
-  private readonly _variant: CharacterVariant;
   private readonly _entries: InstantiatedEntries;
   private readonly _modelScale: TransformNode;
   private readonly _modelRoot: TransformNode;
   private readonly _meshes: Mesh[] = [];
   private readonly _materials: Material[] = [];
-  /** Original diffuse per material, restored after flash / elimination. */
+  /** Untouched asset diffuse per material (restored by reset / as tint input). */
+  private readonly _assetDiffuse: Color3[] = [];
+  /** Variant (tinted) diffuse per material, restored after flash / elimination. */
   private readonly _baseDiffuse: Color3[] = [];
+  /** This instance's material-variation scheme (see characterMaterialVariation). */
+  private readonly _scheme: CharacterMaterialScheme;
   private crouchScale = 1;
+  private crouchBlend = 0;
+  private readonly _animationGroups: AnimationGroup[];
+  private readonly _animationDriver: CharacterAnimationDriver;
+  private readonly _animationObserver: Observer<Scene>;
   private _disposed = false;
 
   private constructor(
@@ -118,7 +138,7 @@ export class CharacterModel {
     options: CharacterModelOptions,
   ) {
     this._scene = scene;
-    this._variant = variant;
+    this._scheme = characterMaterialScheme(variant);
 
     const targetHeight =
       options.targetHeightMeters ?? PLAYER_COLLIDER_TOTAL_HEIGHT;
@@ -175,17 +195,39 @@ export class CharacterModel {
     this._applyFootLift();
 
     // Material assignment: collect the instance's own (cloned) materials and
-    // remember their original diffuse for state restoration.
+    // remember their untouched asset diffuse. The per-side variation is a
+    // small deterministic tint + identity emissive computed from that base.
     const seen = new Set<Material>();
     for (const mesh of this._meshes) {
       const material = mesh.material;
       if (material && !seen.has(material)) {
         seen.add(material);
         this._materials.push(material);
-        this._baseDiffuse.push(this._readDiffuse(material).clone());
+        const base = readDiffuse(material).clone();
+        this._assetDiffuse.push(base);
+        this._baseDiffuse.push(tintedBaseDiffuse(base, this._scheme));
       }
     }
     this._applyStateColors(false, false);
+    this._animationGroups = createAuthoredCharacterClips(this.root, namePrefix);
+    this._animationDriver = new CharacterAnimationDriver(this.root, {
+      transitionSpeed: 0.15,
+      // Presentation still needs to recognise movement at low render FPS.
+      // Longer gaps (hidden tab) and implausible teleports still reset history.
+      poseConfig: { ...DEFAULT_PLAYER_POSE_CONFIG, maxSampleIntervalSeconds: 1 },
+    });
+    this._animationDriver.attachClips(this._animationGroups);
+    const clock = options.animationClock ?? (() => performance.now());
+    let previous = clock();
+    // Same scene render lifecycle used by the primitive presentation. The
+    // shared model is instantiated by BOTH local and remote body facades.
+    this._animationObserver = scene.onBeforeAnimationsObservable.add(() => {
+      const now = clock();
+      const dt = Math.min(0.1, Math.max(0, (now - previous) / 1000));
+      previous = now;
+      const { x, y, z } = this.root.position;
+      this._animationDriver.sync({ x, y, z, timeMs: now, deltaSeconds: dt, crouchBlend: this.crouchBlend });
+    });
   }
 
   /**
@@ -207,6 +249,11 @@ export class CharacterModel {
     return this._disposed;
   }
 
+  /** Actual playing state, useful for presentation diagnostics. */
+  public get animationState(): string | null {
+    return this._animationDriver.activeClip();
+  }
+
   /**
    * Moves the body to the predicted / interpolated player position and faces
    * it along the shared movement yaw (identical contract to
@@ -222,15 +269,18 @@ export class CharacterModel {
     this._applyFootLift();
   }
 
-  /** Dumb crouch applier (same mapping as `PlayerPresentation.setCrouchBlend`). */
+  /** Crouch input for the skeletal driver (legacy squash for unknown rigs). */
   public setCrouchBlend(blend: number): void {
     if (this._disposed) return;
     const t = blend < 0 ? 0 : blend > 1 ? 1 : blend;
+    this.crouchBlend = t;
     // Same crouch ratio the procedural presentation uses (collider-derived):
     // the squash is anchored at the feet via _applyFootLift.
     const crouchScaleTarget =
       PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT / PLAYER_COLLIDER_HALF_TOTAL_HEIGHT;
-    this.crouchScale = 1 - (1 - crouchScaleTarget) * t;
+    // The rigged clip bends knees and lowers pelvis. Squashing it as well
+    // would apply crouch twice. Keep legacy squash only for an unknown rig.
+    this.crouchScale = this._animationGroups.length ? 1 : 1 - (1 - crouchScaleTarget) * t;
     this._applyFootLift();
   }
 
@@ -238,6 +288,18 @@ export class CharacterModel {
   public setEnabled(enabled: boolean): void {
     if (this._disposed) return;
     this._modelRoot.setEnabled(enabled);
+  }
+
+  /**
+   * Resets the material variation: restores every owned (cloned) material to
+   * the untouched asset look (original diffuse, zero emissive). Pure color
+   * restore on the instance's existing clones — allocates and never leaks
+   * materials. Safe before the next {@link applyState} / variant repaint;
+   * no-op after dispose.
+   */
+  public resetMaterialVariation(): void {
+    if (this._disposed) return;
+    resetMaterialScheme(this._materials, this._assetDiffuse);
   }
 
   /**
@@ -250,8 +312,8 @@ export class CharacterModel {
     if (this._disposed) return hitFlashFrames;
     if (!wasEliminated && hitFlashFrames > 0) {
       for (let i = 0; i < this._materials.length; i++) {
-        this._writeDiffuse(this._materials[i], this._baseDiffuse[i]);
-        this._writeEmissive(this._materials[i], FLASH_EMISSIVE);
+        writeDiffuse(this._materials[i], this._baseDiffuse[i]);
+        writeEmissive(this._materials[i], FLASH_EMISSIVE);
       }
       return hitFlashFrames - 1;
     }
@@ -267,6 +329,9 @@ export class CharacterModel {
   public dispose(): void {
     if (this._disposed) return;
     this._disposed = true;
+    this._scene.onBeforeAnimationsObservable.remove(this._animationObserver);
+    this._animationDriver.dispose();
+    for (const group of this._animationGroups) group.dispose();
     this._entries.dispose();
     // The instantiated-entries teardown drops meshes/skeletons but leaves the
     // per-instance cloned materials behind; release them explicitly.
@@ -286,39 +351,20 @@ export class CharacterModel {
   }
 
   private _applyStateColors(wasEliminated: boolean, flash: boolean): void {
-    for (let i = 0; i < this._materials.length; i++) {
-      if (wasEliminated) {
-        this._writeDiffuse(this._materials[i], ELIMINATED_DIFFUSE);
-        this._writeEmissive(this._materials[i], ELIMINATED_EMISSIVE);
-      } else if (flash) {
-        this._writeDiffuse(this._materials[i], this._baseDiffuse[i]);
-        this._writeEmissive(this._materials[i], FLASH_EMISSIVE);
-      } else {
-        this._writeDiffuse(this._materials[i], this._baseDiffuse[i]);
-        this._writeEmissive(this._materials[i], VARIANT_EMISSIVE[this._variant]);
+    if (wasEliminated) {
+      for (let i = 0; i < this._materials.length; i++) {
+        writeDiffuse(this._materials[i], ELIMINATED_DIFFUSE);
+        writeEmissive(this._materials[i], ELIMINATED_EMISSIVE);
       }
+      return;
     }
-  }
-
-  private _readDiffuse(material: Material): Color3 {
-    if (material instanceof PBRMaterial) return material.albedoColor;
-    if (material instanceof StandardMaterial) return material.diffuseColor;
-    return Color3.Black();
-  }
-
-  private _writeDiffuse(material: Material, value: Color3): void {
-    if (material instanceof PBRMaterial) {
-      material.albedoColor.copyFrom(value);
-    } else if (material instanceof StandardMaterial) {
-      material.diffuseColor.copyFrom(value);
+    if (flash) {
+      for (let i = 0; i < this._materials.length; i++) {
+        writeDiffuse(this._materials[i], this._baseDiffuse[i]);
+        writeEmissive(this._materials[i], FLASH_EMISSIVE);
+      }
+      return;
     }
-  }
-
-  private _writeEmissive(material: Material, value: Color3): void {
-    if (material instanceof PBRMaterial) {
-      material.emissiveColor.copyFrom(value);
-    } else if (material instanceof StandardMaterial) {
-      material.emissiveColor.copyFrom(value);
-    }
+    applyMaterialScheme(this._materials, this._assetDiffuse, this._scheme);
   }
 }

@@ -22,7 +22,32 @@ export {
   type CharacterVariant,
 } from "./CharacterModel";
 export {
+  LOCAL_MATERIAL_SCHEME,
+  REMOTE_MATERIAL_SCHEME,
+  characterMaterialScheme,
+  tintedBaseDiffuse,
+  readDiffuse,
+  writeDiffuse,
+  writeEmissive,
+  applyMaterialScheme,
+  resetMaterialScheme,
+  type CharacterMaterialScheme,
+} from "./characterMaterialVariation";
+export {
   createCharacterPresentation,
   type CharacterPresentation,
   type CreateCharacterPresentationOptions,
 } from "./createCharacterPresentation";
+export {
+  PlayerBodyFacade,
+  type PlayerBodyPresentation,
+} from "./playerBodyFacade";
+export {
+  CharacterWeaponAttachment,
+  findCharacterHandSocket,
+  DEFAULT_FALLBACK_SOCKET_POSITION,
+  DEFAULT_WEAPON_HOLD_OFFSET,
+  type WeaponAttachmentOptions,
+  type WeaponAttachmentSocketSource,
+  type Vector3Like,
+} from "./CharacterWeaponAttachment";

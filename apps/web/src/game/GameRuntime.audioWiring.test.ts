@@ -67,7 +67,10 @@ describe("GameRuntime audio wiring", () => {
     expect(rifleIdx).toBeGreaterThan(-1);
     expect(shotgunIdx).toBeGreaterThan(-1);
     for (const idx of [rifleIdx, shotgunIdx]) {
-      const block = runtime.slice(idx, idx + 300);
+      // 600 covers the B/C transform re-seat (getWeaponAttachmentTransform +
+      // localWeaponAttachment.attach) inserted between the switch call and the
+      // blip; the blip ends ~372 chars after the switch call for both directions.
+      const block = runtime.slice(idx, idx + 600);
       // Gated on the controller reporting a successful switch.
       expect(block).toContain("r.switched&&r.targetWeapon");
       expect(block).toContain("this.audio.playWeaponSwitch()");

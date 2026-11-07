@@ -41,7 +41,8 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, createWriteStream, mkdirSync } from "node:fs";
-import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, structureSlots, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, structureSlots, CONE_LEVELS, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+import { WIN_ROUNDS } from "@buildshift/game-config";
 
 /**
  * Presses one bind with REAL browser input: keyboard codes through the
@@ -407,6 +408,7 @@ async function waitForInProgress(page: Page, timeoutMs = 30_000): Promise<void> 
       const el = document.querySelector(".match-hud__phase");
       return el?.textContent === "IN PROGRESS";
     },
+    undefined,
     { timeout: timeoutMs },
   );
 }
@@ -439,6 +441,38 @@ async function getRoundTimerText(page: Page): Promise<string | null> {
   const el = page.locator(".match-hud__timer-value");
   if (!(await el.isVisible())) return null;
   return el.textContent() ?? null;
+}
+
+/**
+ * The serial smoke suite deliberately keeps two real clients in one room, so
+ * earlier tests consume the same authoritative 90-second round. A scenario
+ * that needs several in-round actions must begin with enough *server-timed*
+ * budget, rather than relying on the runner's wall-clock speed.
+ */
+async function ensureRoundBudget(
+  pageA: Page,
+  pageB: Page,
+  minimumSeconds: number,
+): Promise<void> {
+  const parseTimer = (value: string | null): number | null => {
+    if (value === null) return null;
+    const match = /^(\d+):(\d{2})$/.exec(value.trim());
+    return match ? Number(match[1]) * 60 + Number(match[2]) : null;
+  };
+
+  const remaining = parseTimer(await getRoundTimerText(pageA));
+  if (remaining !== null && remaining >= minimumSeconds) return;
+
+  // Synchronize on the authoritative phase transition, never on a sleep.
+  await pageA.waitForFunction(
+    () => document.querySelector(".match-hud__phase")?.textContent !== "IN PROGRESS",
+    undefined,
+    { timeout: 30_000 },
+  );
+  await waitForBothInProgress(pageA, pageB);
+  const freshRemaining = parseTimer(await getRoundTimerText(pageA));
+  expect(freshRemaining).not.toBeNull();
+  expect(freshRemaining!).toBeGreaterThanOrEqual(minimumSeconds);
 }
 
 /**
@@ -515,6 +549,7 @@ async function requestRematch(page: Page): Promise<boolean> {
         Array.from(document.querySelectorAll("button")).some((b) =>
           /play again|rematch/i.test(b.textContent ?? ""),
         ),
+      undefined,
       { timeout: 20_000 },
     )
     .catch(() => {});
@@ -602,6 +637,41 @@ async function localScore(page: Page): Promise<number> {
   const text = await page.locator(".match-hud__score-value--local").textContent();
   const match = text?.match(/(\d+)/);
   return match ? parseInt(match[1], 10) : 0;
+}
+
+async function lifecycleSnapshot(page: Page) {
+  return page.evaluate(() => {
+    const client = (window as any).__buildshiftNetworking.client.deref();
+    return { roomId: client.room.roomId, sessionId: client.sessionId, ...client.state.match,
+      remaining: document.querySelector(".match-hud__timer-value")?.textContent };
+  });
+}
+
+async function traceLifecycle(page: Page, label: string) {
+  page.on("console", message => { if (message.text().startsWith("[lifecycle]")) console.log(message.text()); });
+  await page.evaluate(({ label, wins }) => {
+    const w = window as any, client = w.__buildshiftNetworking.client.deref();
+    if (w.__lifecycleTrace) return;
+    const trace: unknown[] = w.__lifecycleTrace = [];
+    const record = (event: string, payload?: unknown) => {
+      const entry = { label, event, payload, ms: Math.round(performance.now()), roomId: client.room.roomId,
+        sessionId: client.sessionId, winsRequired: wins, ...client.state.match,
+        remaining: document.querySelector(".match-hud__timer-value")?.textContent };
+      trace.push(entry);
+      console.log(`[lifecycle] ${JSON.stringify(entry)}`);
+    };
+    let prior = "";
+    client.onStateChange(() => {
+      const key = JSON.stringify(client.state.match);
+      if (key !== prior) { prior = key; record("authoritative phase/score"); }
+    });
+    for (const type of ["match:round_over", "match:round_reset", "match:end", "match:rematch_accepted", "match:countdown_tick"]) {
+      client.onEvent(type, (payload: any) => {
+        if (type !== "match:countdown_tick" || payload.countdownTicks % 30 === 0) record(type, payload);
+      });
+    }
+    record("trace start");
+  }, { label, wins: WIN_ROUNDS });
 }
 
 /**
@@ -779,6 +849,7 @@ async function waitForRoundStart(pageA: Page, pageB: Page): Promise<void> {
         const text = el?.textContent ?? "";
         return text === "GET READY" || text === "IN PROGRESS";
       },
+      undefined,
       { timeout: 45_000 },
     );
   try {
@@ -797,6 +868,7 @@ async function waitForBothInProgress(pageA: Page, pageB: Page, timeoutMs = 60_00
   const ready = (page: Page) =>
     page.waitForFunction(
       () => document.querySelector(".match-hud__phase")?.textContent === "IN PROGRESS",
+      undefined,
       { timeout: timeoutMs },
     );
   try {
@@ -981,6 +1053,16 @@ function waitPredicted(page: Page, predicate: string, arg: Record<string, unknow
   }, { predicate, arg }, { timeout, polling: 30 });
 }
 
+/** Per-input prediction for precise movement stopping; no HUD refresh delay. */
+function waitInputPrediction(page: Page, predicate: string, arg: Record<string, unknown>, timeout: number) {
+  return page.waitForFunction(({ predicate, arg }) => {
+    const latest = (window as any).__buildshiftNetworking.inputBatcher.deref().getInputsAfter(-1).at(-1);
+    if (!latest) return false;
+    const p = { x: latest.predictedX, y: latest.predictedY, z: latest.predictedZ };
+    return new Function("p", "arg", `return ${predicate};`)(p, arg) as boolean;
+  }, { predicate, arg }, { timeout, polling: 10 });
+}
+
 /** The last `n` recorded authoritative patches ([seq, x, y, z]). */
 function poseTrace(page: Page, n: number): Promise<number[][]> {
   return page.evaluate((n) => ((window as any).__poseTrace as number[][]).slice(-n), n);
@@ -1112,6 +1194,8 @@ test.describe("Production browser smoke", () => {
     expect(timerText).not.toBeNull();
     // Timer should be close to 1:30 (90 seconds).
     expect(timerText!).toMatch(/^\d+:\d{2}$/);
+    await traceLifecycle(pageA!, "A");
+    await traceLifecycle(pageB!, "B");
   });
 
   test("movement/input: player position changes with WASD", async () => {
@@ -1398,6 +1482,7 @@ test.describe("Production browser smoke", () => {
 
     // Build placement and edit intents are in-round actions.
     await waitForBothInProgress(a, b);
+    await ensureRoundBudget(a, b, 40);
 
     await ensurePointerLock(a);
     await ensureCombatMode(a);
@@ -1601,12 +1686,57 @@ test.describe("Production browser smoke", () => {
 
   test("two live browser clients render and reset authoritative edits for every build family", { timeout: 90_000 }, async () => {
     test.setTimeout(90_000);
-    const context = await browser!.newContext({ viewport: { width: 1280, height: 720 } });
+    const idleClients = [pageA, pageB].flatMap(page => page ? [{ page, viewport: page.viewportSize() }] : []);
+    // Preserve the serial duel and its state, while bounding the pixel cost
+    // of its two idle software-rendered canvases during this separate duel.
+    await Promise.all(idleClients.map(({ page }) => page.setViewportSize({ width: 480, height: 270 })));
+    // The serial suite keeps its original duel alive. These two additional
+    // clients use the physical-acceptance viewport so software rendering four
+    // scenes does not consume the round/test budget before assertions run.
+    const context = await browser!.newContext({ viewport: { width: 480, height: 270 } });
     const first = await context.newPage();
     const second = await context.newPage();
+    const startedAt = Date.now();
+    let lastStageAt = startedAt;
+    const stages: unknown[] = [];
+    const diagnose = async (stage: string, id?: string) => {
+      const clients = await Promise.all([first, second].map(page => page.evaluate((id) => {
+          const client = (window as any).__buildshiftNetworking?.client?.deref();
+          const state = client?.room?.state;
+          const root = id && (window as any).__buildshiftEngine?.scenes?.[0]?.getMeshByName(`structure-${id}`);
+          const children = root && !root.isDisposed() && root.isEnabled()
+            ? root.getChildMeshes(false).filter((mesh: any) => !mesh.isDisposed() && mesh.isEnabled() && mesh.isVisible && mesh.getTotalVertices() > 0)
+            : [];
+          const signature = children.length ? children.map((mesh: any) => {
+            const positions = mesh.getVerticesData("position") ?? [];
+            let sum = 0, weighted = 0;
+            for (let index = 0; index < positions.length; index++) {
+              sum += positions[index];
+              weighted += positions[index] * (index + 1);
+            }
+            return [mesh.getTotalVertices(), positions.length, sum.toFixed(4), weighted.toFixed(4), mesh.position.x.toFixed(4), mesh.position.y.toFixed(4), mesh.position.z.toFixed(4)].join(":");
+          }).sort().join("|") : null;
+          return {
+            roomId: client?.room?.roomId, phase: state?.matchPhase, round: state?.currentRound,
+            remaining: document.querySelector(".match-hud__timer-value")?.textContent,
+            structure: id ? client?.state?.building?.structures?.[id] : undefined,
+            root: Boolean(root && !root.isDisposed() && root.isEnabled()),
+            events: (window as any).__editedGeometryEvents,
+            signature,
+          };
+        }, id)));
+      const now = Date.now();
+      const entry = { stage, elapsedMs: now - startedAt, stageMs: now - lastStageAt, clients };
+      stages.push(entry);
+      lastStageAt = now;
+      console.log(`[multi-family] ${JSON.stringify({ ...entry, clients: clients.map(({ signature, events, ...client }) => ({ ...client, signatureLength: signature?.length, latestEvent: events?.at(-1) })) })}`);
+    };
     try {
+      console.log("[multi-family] navigation start");
       await Promise.all([first.goto(APP_URL), second.goto(APP_URL)]);
+      await diagnose("navigation complete; awaiting IN_PROGRESS");
       await waitForBothInProgress(first, second);
+      await diagnose("IN_PROGRESS");
       // Capture the canonical server replies in each real browser. This makes
       // a rejection diagnostic rather than an eventual state-sync timeout.
       await Promise.all([first, second].map((page) => page.evaluate(() => {
@@ -1641,7 +1771,9 @@ test.describe("Production browser smoke", () => {
       ] as const;
       const cases = raw;
 
+      await ensureRoundBudget(first, second, 60);
       for (const [index, sample] of cases.entries()) {
+        await diagnose(`${sample.buildType}: begin`);
         if (index > 0) {
           const priorTimer = await getRoundTimerText(first);
           await first.waitForFunction((prior) => document.querySelector(".match-hud__timer-value")?.textContent !== prior, priorTimer);
@@ -1652,6 +1784,7 @@ test.describe("Production browser smoke", () => {
           return client?.send("build:placement_request", { sequence, buildType, grid, rotation: 0 });
         }, { sequence: 9000 + index, buildType: sample.buildType, grid: sample.grid });
         expect(sent).toBe(true);
+        await diagnose(`${sample.buildType}: placement sent`);
         try {
           await Promise.all([first, second].map((page) => page.waitForFunction((count) =>
             Object.keys((window as any).__buildshiftNetworking?.client?.deref()?.state?.building?.structures ?? {}).length === count,
@@ -1665,13 +1798,26 @@ test.describe("Production browser smoke", () => {
         }
         const id = await first.evaluate((oldIds) => Object.keys((window as any).__buildshiftNetworking.client.deref().state.building.structures).find((key) => !oldIds.includes(key)), before);
         expect(id).toBeTruthy();
-        const baselineSignatures = await Promise.all([first, second].map((page) => renderedStructureSignature(page, id!)));
+        await diagnose(`${sample.buildType}: placement replicated`, id);
+        // Replicated state arrives on the socket before the render loop has
+        // necessarily built its canonical root. Capture the actual baseline
+        // only once enabled, visible descendant geometry exists on each client.
+        const baselineSignatures = await Promise.all([first, second].map(async page => {
+          let signature: string | null = null;
+          await expect.poll(async () => {
+            signature = await renderedStructureSignature(page, id!);
+            return signature;
+          }, { timeout: 15_000, intervals: [50, 100, 250] }).not.toBeNull();
+          return signature;
+        }));
         for (const signature of baselineSignatures) expect(signature).not.toBeNull();
+        await diagnose(`${sample.buildType}: presentation baseline ready on both`, id);
 
         const editSent = await first.evaluate(({ id, action }) =>
           (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, ...action }),
           { id, action: sample.action });
         expect(editSent).toBe(true);
+        await diagnose(`${sample.buildType}: edit sent`, id);
         for (const [clientIndex, page] of [first, second].entries()) {
           try {
             await page.waitForFunction(({ id, ownerId, baseline }) => {
@@ -1703,7 +1849,10 @@ test.describe("Production browser smoke", () => {
           }
         }
 
+        await diagnose(`${sample.buildType}: edit replicated/rendered on both`, id);
+
         await first.evaluate((id) => (window as any).__buildshiftNetworking.client.deref().send("two-player:edit_grid_action", { structureId: id, action: "reset" }), id);
+        await diagnose(`${sample.buildType}: reset sent`, id);
         for (const [clientIndex, page] of [first, second].entries()) {
           try {
           await page.waitForFunction(({ id, baseline }) => {
@@ -1737,15 +1886,19 @@ test.describe("Production browser smoke", () => {
             throw new Error(`authoritative reset did not replicate/render: ${JSON.stringify(diagnostic)}`, { cause: error });
           }
         }
+        await diagnose(`${sample.buildType}: reset replicated/rendered on both`, id);
       }
       expect(await first.locator(".match-hud__phase").textContent()).toBe("IN PROGRESS");
       expect(await second.locator(".match-hud__phase").textContent()).toBe("IN PROGRESS");
     } finally {
+      await test.info().attach("multi-family stages", { body: JSON.stringify(stages), contentType: "application/json" });
       await context.close();
+      await Promise.all(idleClients.map(({ page, viewport }) => viewport ? page.setViewportSize(viewport) : Promise.resolve()));
     }
   });
 
   test("elimination: firing ends round 1 with a local round win", { timeout: 120_000 }, async () => {
+    console.log("[lifecycle:elimination-start]", JSON.stringify(await Promise.all([pageA!, pageB!].map(lifecycleSnapshot))));
     expect(pageA).not.toBeNull();
     expect(pageB).not.toBeNull();
 
@@ -1755,42 +1908,157 @@ test.describe("Production browser smoke", () => {
     await ensurePointerLock(pageA!);
     await ensureCombatMode(pageA!);
 
+    // Authoritative baseline from both live clients (they agree on the shared
+    // room): identities and the round score before this shot. scoreA/scoreB are
+    // read from the authoritative match state (not the HUD) so the post-kill
+    // acceptance can be checked exactly.
+    const [baseA, baseB] = await Promise.all([lifecycleSnapshot(pageA!), lifecycleSnapshot(pageB!)]);
+    const aId = baseA.sessionId;
+    const bId = baseB.sessionId;
+    expect(aId).not.toBe(bId);
+    const scoreA = baseA.roundScore[aId] ?? 0;
+    const scoreB = baseA.roundScore[bId] ?? 0;
+    expect(baseB.roundScore[bId]).toBe(scoreB);
     const scoreBefore = await localScore(pageA!);
+    expect(scoreBefore).toBe(scoreA);
 
     // Aim (with a scanning fallback) and hold fire until the round ends.
     // An elimination should end the round far sooner than the 90s timer.
     const phaseA = await holdFireUntilRoundOver(pageA!, pageB!, 90_000);
     expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseA);
 
-    const phaseB = await pageB!.evaluate(() => {
-      return document.querySelector(".match-hud__phase")?.textContent ?? "";
-    });
-    expect(["ROUND OVER", "MATCH OVER"]).toContain(phaseB);
+    // The "ROUND OVER" HUD text is a TRANSIENT phase: both clients roll from
+    // ROUND_ENDED into the next round's "GET READY" countdown within ~1 s, so a
+    // one-shot read of page B's HUD can legitimately already show the
+    // countdown. The transient phase text is not a stable acceptance point, so
+    // instead synchronize BOTH clients on the authoritative round-over. The
+    // match:round_over event (captured by the shared lifecycle trace on each
+    // client) is the only record that carries the end reason, and it persists
+    // across the ROUND_ENDED -> COUNTDOWN -> next-round transition. A timer
+    // expiry would not produce an "elimination" reason, so requiring it
+    // uniquely proves the kill this test performed (vs a timeout win, which the
+    // authoritative server also awards the higher-health player and scores).
+    await Promise.all([pageA!, pageB!].map((page) =>
+      page.waitForFunction(({ aId, bId, scoreA, scoreB }) => {
+        const client = (window as any).__buildshiftNetworking.client.deref();
+        const match = client.state.match;
+        const trace = (window as any).__lifecycleTrace as any[] | undefined;
+        if (!Array.isArray(trace)) return false;
+        const rounds = trace.filter((entry) => entry.event === "match:round_over").map((entry) => entry.payload);
+        const last = rounds[rounds.length - 1];
+        // The kill this test just performed is the most recent authoritative
+        // round-over on both clients: page A won, it was an elimination, A's
+        // score incremented exactly once, B's score is unchanged, and the
+        // live match state reflects that score. This is stable whether page B
+        // is still on ROUND ENDED or already in the next round's COUNTDOWN.
+        return client.isConnected
+          && Boolean(last)
+          && last.winnerId === aId
+          && last.loserId === bId
+          && last.reason === "elimination"
+          && last.winnerScore === scoreA + 1
+          && last.loserScore === scoreB
+          && match.roundScore[aId] === scoreA + 1
+          && match.roundScore[bId] === scoreB;
+      }, { aId, bId, scoreA, scoreB }, { timeout: 15_000 })
+    ));
 
     // A round win on page A's side proves the opponent was eliminated:
     // a timer expiry would end the round with no score change.
     const scoreAfter = await localScore(pageA!);
     expect(scoreAfter).toBe(scoreBefore + 1);
+    console.log("[lifecycle:elimination-end]", JSON.stringify(await Promise.all([pageA!, pageB!].map(lifecycleSnapshot))));
   });
 
   test("next rounds: rounds 2 and 3 run to the final MATCH OVER", { timeout: 240_000 }, async () => {
+    console.log("[lifecycle:inherited-state]", JSON.stringify(await Promise.all([pageA, pageB].filter((page): page is Page => page !== null).map(lifecycleSnapshot))));
     // Playwright 1.63: config `timeout` takes precedence over the test-level
     // options object, so set the effective budget explicitly.
     test.setTimeout(240_000);
-    expect(pageA).not.toBeNull();
-    expect(pageB).not.toBeNull();
+    // Earlier serial smoke checks can legitimately award timeout wins. This
+    // acceptance owns a fresh canonical duel so it proves rounds 1 → 2 → 3,
+    // independent of those scores. Keep the old duel full until this one has
+    // joined, guaranteeing joinOrCreate cannot recycle its live room.
+    const oldContext = browserContext;
+    const oldRoom = pageA ? (await lifecycleSnapshot(pageA)).roomId : null;
+    const context = await browser!.newContext({ viewport: { width: 480, height: 270 } });
+    const a = await context.newPage(), b = await context.newPage();
+    browserContext = context;
+    pageA = a;
+    pageB = b;
+    trackFatalErrors(a);
+    trackFatalErrors(b);
+    await a.goto(APP_URL);
+    await a.waitForFunction(() => Boolean((window as any).__buildshiftNetworking?.client?.deref()?.sessionId));
+    await b.goto(APP_URL);
+    await waitForBothInProgress(a, b);
+    const initial = await Promise.all([a, b].map(lifecycleSnapshot));
+    expect(initial[0].roomId).not.toBe(oldRoom);
+    expect(initial[1].roomId).toBe(initial[0].roomId);
+    await oldContext?.close();
+    await traceLifecycle(a, "fresh A");
+    await traceLifecycle(b, "fresh B");
+    const aId = initial[0].sessionId, bId = initial[1].sessionId;
+    console.log("[lifecycle:fresh-start]", JSON.stringify(initial));
+    let previousSequence = -1;
 
-    // WIN_ROUNDS = 3: two more local wins take the match. Input sequences
-    // are monotonic per session, so each round starts with immediate, live
-    // movement and fire — no catch-up window.
-    let phase = "";
-    for (let round = 0; round < 2; round++) {
-      await waitForRoundStart(pageA!, pageB!);
+    for (let round = 1; round <= WIN_ROUNDS; round++) {
+      await Promise.all([a, b].map(page => page.waitForFunction((round) => {
+        const match = (window as any).__buildshiftNetworking.client.deref().state.match;
+        return match.matchPhase === "IN_PROGRESS" && match.currentRound === round;
+      }, round, { timeout: 15_000 })));
+      const starts = await Promise.all([a, b].map(lifecycleSnapshot));
+      for (const state of starts) {
+        expect(state.roundScore).toEqual({ [aId]: round - 1, [bId]: 0 });
+        expect(state.matchWinnerId).toBeNull();
+      }
+      const reset = await a.evaluate(() => {
+        const client = (window as any).__buildshiftNetworking.client.deref();
+        return { players: client.state.players, structures: Object.keys(client.state.building.structures), connected: client.isConnected };
+      });
+      expect(reset.connected).toBe(true);
+      expect(reset.structures).toEqual([]);
+      for (const player of Object.values(reset.players) as any[]) {
+        expect({ health: player.health, shield: player.shield, ammo: player.ammo, isEliminated: player.isEliminated })
+          .toEqual({ health: 100, shield: 50, ammo: 30, isEliminated: false });
+      }
       await ensurePointerLock(pageA!);
       await ensureCombatMode(pageA!);
-      phase = await holdFireUntilRoundOver(pageA!, pageB!, 90_000);
+      const before = await authPose(a);
+      expect(before.seq).toBeGreaterThan(previousSequence);
+      // Production input, bounded by authoritative processing rather than
+      // sleeping through stale sequences. Each round must respond within 5 s.
+      await a.keyboard.down("KeyW");
+      try {
+        await waitPose(a, "p.sequence > arg.seq && Math.hypot(p.x - arg.x, p.z - arg.z) > 0.1", before, 5_000);
+      } finally { await a.keyboard.up("KeyW"); }
+      const shotStart = await authPose(a);
+      // Use the suite's canvas-targeted mouse helper under fake pointer lock,
+      // just like its weapon and physical-geometry acceptance scenarios.
+      await setPrimaryFire(a, true);
+      try {
+        await waitPose(a, "p.lastFireSequence >= arg.seq && p.ammo < 30", { seq: shotStart.seq }, 5_000);
+      } catch (error) {
+        const diagnostic = await a.evaluate(() => {
+          const client = (window as any).__buildshiftNetworking.client.deref();
+          return { player: client.state.players[client.sessionId], target: document.elementFromPoint(240, 135)?.outerHTML.slice(0, 200),
+            lock: document.pointerLockElement?.tagName, diag: document.querySelector(".devdiag-overlay")?.textContent,
+            inputs: (window as any).__buildshiftNetworking.inputBatcher.deref().getInputsAfter(-1).slice(-4) };
+        });
+        throw new Error(`round ${round} immediate fire failed: ${JSON.stringify({ shotStart, diagnostic })}`, { cause: error });
+      } finally { await setPrimaryFire(a, false); }
+      const phase = await holdFireUntilRoundOver(a, b, 90_000);
       expect(["ROUND OVER", "MATCH OVER"]).toContain(phase);
-      if (phase === "MATCH OVER") break;
+      await Promise.all([a, b].map(page => page.waitForFunction(({ aId, bId, round, wins }) => {
+        const client = (window as any).__buildshiftNetworking.client.deref();
+        const match = client.state.match;
+        return client.isConnected && match.roundScore[aId] === round && match.roundScore[bId] === 0
+          && match.lastRoundResult?.winnerId === aId
+          && (round === wins ? match.matchPhase === "MATCH_ENDED" : match.matchPhase === "ROUND_ENDED" || match.matchPhase === "COUNTDOWN");
+      }, { aId, bId, round, wins: WIN_ROUNDS }, { timeout: 5_000 })));
+      const ends = await Promise.all([a, b].map(lifecycleSnapshot));
+      console.log(`[lifecycle:round-${round}-verified]`, JSON.stringify(ends));
+      previousSequence = (await authPose(a)).seq;
     }
 
     const phaseA = await pageA!.evaluate(() => {
@@ -1802,8 +2070,20 @@ test.describe("Production browser smoke", () => {
     expect(phaseA).toBe("MATCH OVER");
     expect(phaseB).toBe("MATCH OVER");
 
-    // Only page A ever fires, so page A's side must own all three rounds.
-    expect(await localScore(pageA!)).toBe(3);
+    expect(await localScore(pageA!)).toBe(WIN_ROUNDS);
+    for (const page of [a, b]) {
+      const trace = await page.evaluate(() => (window as any).__lifecycleTrace as any[]);
+      const results = trace.filter(entry => entry.event === "match:round_over").map(entry => entry.payload);
+      expect(results.map(result => [result.roundNumber, result.winnerId, result.winnerScore, result.loserScore, result.reason]))
+        .toEqual(Array.from({ length: WIN_ROUNDS }, (_, index) => [index + 1, aId, index + 1, 0, "elimination"]));
+      const matchEnds = trace.filter(entry => entry.event === "match:end");
+      expect(matchEnds).toHaveLength(1);
+      expect(matchEnds[0].payload.scores).toEqual({ [aId]: WIN_ROUNDS, [bId]: 0 });
+      for (let round = 1; round < WIN_ROUNDS; round++) {
+        expect(trace.some(entry => entry.event === "authoritative phase/score" && entry.matchPhase === "COUNTDOWN" && entry.currentRound === round)).toBe(true);
+      }
+      await test.info().attach(`lifecycle ${page === a ? "A" : "B"}`, { body: JSON.stringify(trace), contentType: "application/json" });
+    }
   });
 
   test("connected rematch: both players request rematch and a new match begins", { timeout: 60_000 }, async () => {
@@ -2568,8 +2848,8 @@ test.describe("Physical edited-geometry acceptance", () => {
   // drop the player; retained/reset quadrants must hold it.
   async function runFloorPhase(phase: "AB edited floor" | "C reset floor"): Promise<void> {
     const { context, a, b, aId, step } = await openFreshDuel(`floor ${phase.split(" ")[0]}`, { width: 480, height: 270 });
-    // Hold a key until the predicted pose satisfies `predicate` (see
-    // waitPredicted), then release; callers assert on authoritative state.
+    // Stop on per-input prediction, rather than the throttled diagnostics
+    // overlay. Callers still prove support/descent on authoritative patches.
     // `crouched` walks at crouch speed (shorter stopping distance on the
     // elevated floor under a loaded host).
     const hold = async (key: string, predicate: string, arg: Record<string, unknown>, label: string, crouched = false) => {
@@ -2579,7 +2859,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       }
       await a.keyboard.down(key);
       try {
-        await waitPredicted(a, predicate, arg, 30_000);
+        await waitInputPrediction(a, predicate, arg, 30_000);
       } catch (error) {
         throw new Error(`${phase}: ${label}: ${JSON.stringify({ pose: await authPose(a), arg, trace: await poseTrace(a, 40) })}`, { cause: error });
       } finally {
@@ -2662,20 +2942,25 @@ test.describe("Physical edited-geometry acceptance", () => {
 
       /** Real lateral walk to a quadrant column (D: −X, A: +X at yaw 0). */
       const toColumn = async (x: number) => {
-        const p = await authPose(a);
-        if (Math.abs(p.x - x) < 0.3) return;
-        // One-sided threshold in the travel direction: the predicted pose is
-        // sampled per overlay refresh, so a two-sided window can be skipped.
-        if (p.x > x) await hold("KeyD", "p.x <= arg.x + 0.1", { x }, `to column x=${x}`, true);
-        else await hold("KeyA", "p.x >= arg.x - 0.1", { x }, `to column x=${x}`, true);
-        const s = (await authPose(a)).seq;
-        await waitPose(a, "p.sequence >= arg.s + 10", { s }, 20_000);
+        const clearance = cs / 4 - radius - 0.05;
+        // Overlay updates can overshoot the requested center. Check the
+        // settled authoritative footprint, correcting with real input while
+        // still on the near solid half before walking into either quadrant.
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const p = await authPose(a);
+          if (Math.abs(p.x - x) <= clearance) return;
+          if (p.x > x) await hold("KeyD", "p.x <= arg.x + 0.1", { x }, `to column x=${x}`, true);
+          else await hold("KeyA", "p.x >= arg.x - 0.1", { x }, `to column x=${x}`, true);
+          const s = (await authPose(a)).seq;
+          await waitPose(a, "p.sequence >= arg.s + 10", { s }, 20_000);
+        }
+        expect(Math.abs((await authPose(a)).x - x), "settled capsule must fit within the quadrant column").toBeLessThanOrEqual(clearance);
       };
       /** Walk W into the far half; returns the authoritative trace while doing so. */
       const walkFar = async (label: string) => {
         await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
         const start = await authPose(a);
-        await hold("KeyW", "p.z <= arg.z || p.y < arg.top - 0.5", { z: (hole.minZ + hole.maxZ) / 2, top: floorTop }, label, true);
+        await hold("KeyW", "p.z <= arg.z", { z: (hole.minZ + hole.maxZ) / 2 }, label, true);
         // Let the authoritative fall/support settle over processed inputs.
         const s = (await authPose(a)).seq;
         await waitPose(a, "p.sequence >= arg.s + 30", { s }, 20_000);
@@ -2698,19 +2983,26 @@ test.describe("Physical edited-geometry acceptance", () => {
         expect(near.y).toBeCloseTo(floorTop, 6);
         // A. Walk into the removed quadrant 0: the player must fall through.
         const fall = await walkFar("walk into removed quadrant 0");
-        const firstDrop = fall.trace.find((e: number[]) => e[2]! < floorTop - 0.01);
-        const result = { start: fall.start, end: fall.end, firstDrop, minY: Math.min(...fall.trace.map((e: number[]) => e[2]!)) };
+        const footprintClear = (sample: number[]) => {
+          const [, x, , z] = sample;
+          const tolerance = 1e-6;
+          const inside = x! - radius >= hole.minX - tolerance && x! + radius <= hole.maxX + tolerance
+            && z! - radius >= hole.minZ - tolerance && z! + radius <= hole.maxZ + tolerance;
+          const overlapsSolid = openFloorCuboids.some(c => x! + radius > c.center.x - c.halfExtents.x
+            && x! - radius < c.center.x + c.halfExtents.x && z! + radius > c.center.z - c.halfExtents.z
+            && z! - radius < c.center.z + c.halfExtents.z);
+          return inside && !overlapsSolid;
+        };
+        // State patches, not rendered frames: first prove the entire capsule
+        // cleared the retained geometry, then require a later processed input
+        // to lower authoritative Y while the footprint remains in the hole.
+        const entered = fall.trace.find(footprintClear);
+        const descent = entered && fall.trace.find(e => e[0]! > entered[0]!
+          && footprintClear(e) && e[2]! < entered[2]! - 0.01);
+        const result = { start: fall.start, end: fall.end, entered, descent, minY: Math.min(...fall.trace.map((e: number[]) => e[2]!)) };
         step(`fall ${JSON.stringify(result)}`);
-        expect(firstDrop, JSON.stringify({ geometry, result })).toBeTruthy();
-        // The drop began with the capsule entirely over the removed quadrant,
-        // overlapping no remaining canonical floor solid.
-        const [, dx, , dz] = firstDrop!;
-        expect(dx! - radius).toBeGreaterThanOrEqual(hole.minX - 1e-6);
-        expect(dx! + radius).toBeLessThanOrEqual(hole.maxX + 1e-6);
-        expect(dz! - radius).toBeGreaterThanOrEqual(hole.minZ - 1e-6);
-        expect(dz! + radius).toBeLessThanOrEqual(hole.maxZ + 1e-6);
-        const overlapsSolid = openFloorCuboids.some(c => dx! + radius > c.center.x - c.halfExtents.x && dx! - radius < c.center.x + c.halfExtents.x && dz! + radius > c.center.z - c.halfExtents.z && dz! - radius < c.center.z + c.halfExtents.z);
-        expect(overlapsSolid).toBe(false);
+        expect(entered, JSON.stringify({ geometry, result })).toBeTruthy();
+        expect(descent, JSON.stringify({ geometry, result })).toBeTruthy();
         // It fell the full height to the ground below.
         expect(fall.end.y, JSON.stringify(result)).toBe(0);
       } else {
@@ -2740,14 +3032,14 @@ test.describe("Physical edited-geometry acceptance", () => {
   // ─── Shared movement helpers for the cone / ramp / bounds cases ─────────────
 
   /** Hold `key` on page `a` until the PREDICTED pose meets `predicate`. */
-  async function holdKey(a: Page, phase: string, key: string, predicate: string, arg: Record<string, unknown>, label: string, crouched = false): Promise<void> {
+  async function holdKey(a: Page, phase: string, key: string, predicate: string, arg: Record<string, unknown>, label: string, crouched = false, stopOn = waitPredicted): Promise<void> {
     if (crouched) {
       await a.keyboard.down("KeyC");
       await waitPose(a, "p.crouch === true", {}, 10_000);
     }
     await a.keyboard.down(key);
     try {
-      await waitPredicted(a, predicate, arg, 30_000);
+      await stopOn(a, predicate, arg, 30_000);
     } catch (error) {
       throw new Error(`${phase}: ${label}: ${JSON.stringify({ pose: await authPose(a), arg, trace: await poseTrace(a, 40) })}`, { cause: error });
     } finally {
@@ -2795,6 +3087,27 @@ test.describe("Physical edited-geometry acceptance", () => {
       const center = { x: base.center.x, z: base.center.z };
       const bounds = { minX: center.x - cs / 2, maxX: center.x + cs / 2, minZ: center.z - cs / 2, maxZ: center.z + cs / 2 };
       const openLaneX = center.x - cs / 4, keptLaneX = center.x + cs / 4;
+      // Cone-local lane placement. The shared toLaneX releases the walk key on
+      // a one-sided PREDICTED threshold and then settles up to ten in-flight
+      // crouch-walk inputs, so the authoritative x can drift ~1 m past the
+      // lane (observed 6.98 / 7.64 against a 6.40 target). The cone lanes are
+      // narrower than that drift, so each lane is walked with the per-input
+      // prediction stop and re-checked against a canonical band (the same
+      // pattern the ramp cases use), keeping every later assertion tied to a
+      // guaranteed lane position instead of to lane-placement luck.
+      const laneBand = cs / 4 - radius - 0.05; // whole capsule in the intended half, 0.05 m clear of the removed lane
+      const apexBand = cs / (2 * CONE_LEVELS) + radius - 0.1; // footprint still overlaps the apex level, 0.1 m margin
+      const toConeLane = async (x: number, band: number, label: string) => {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const p = await authPose(a);
+          if (Math.abs(p.x - x) <= band) break;
+          const key = p.x > x ? "KeyD" : "KeyA";
+          const predicate = p.x > x ? "p.x <= arg.x + 0.1" : "p.x >= arg.x - 0.1";
+          await holdKey(a, phase, key, predicate, { x }, label, true, waitInputPrediction);
+          await settleInputs(a, 10);
+        }
+        expect(Math.abs((await authPose(a)).x - x), `${label}: lane stays in its canonical band`).toBeLessThanOrEqual(band);
+      };
       const geometry = { grid, center, bounds, top: Math.max(...fullCuboids.map(c => c.center.y + c.halfExtents.y)), levels: fullCuboids.length };
       step(`geometry ${JSON.stringify(geometry)}`);
       expect(geometry.top).toBeCloseTo(lh, 6);
@@ -2821,11 +3134,11 @@ test.describe("Physical edited-geometry acceptance", () => {
         .filter(c => x + radius > c.center.x - c.halfExtents.x && x - radius < c.center.x + c.halfExtents.x)
         .map(c => c.center.y + c.halfExtents.y));
       /** Real W across the whole cone footprint along lane x; returns the trace. */
-      const crossAlong = async (x: number, label: string, cuboids: StructureCuboid[]) => {
-        await toLaneX(a, phase, x);
+      const crossAlong = async (x: number, label: string, cuboids: StructureCuboid[], band: number) => {
+        await toConeLane(x, band, `to cone lane ${x}`);
         const start = await authPose(a);
         await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
-        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: bounds.minZ - radius - 1.2 }, label);
+        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: bounds.minZ - radius - 1.2 }, label, false, waitInputPrediction);
         await settleInputs(a, 30);
         const end = await authPose(a);
         const points = tracePoints(await poseTrace(a, 4000));
@@ -2844,25 +3157,33 @@ test.describe("Physical edited-geometry acceptance", () => {
 
       if (phase === "A full cone") {
         // Over the apex: climb the near side, cross the top, descend the far side.
-        const over = await crossAlong(center.x, "climb over the full cone", fullCuboids);
+        const over = await crossAlong(center.x, "climb over the full cone", fullCuboids, apexBand);
         expect(over.expectedPeak).toBeCloseTo(lh, 6); // over the apex
         expect(Math.abs(over.peak.z - center.z)).toBeLessThan(1.0);
       } else if (phase === "B edited cone") {
         // The opened −X lane crosses at ground level (no invisible full cone)…
-        const open = await crossAlong(openLaneX, "cross the opened lane", halfCuboids);
+        const open = await crossAlong(openLaneX, "cross the opened lane", halfCuboids, laneBand);
         expect(open.expectedPeak).toBe(0); // lane clear of every kept level
         expect(Math.max(...open.points.map(p => p.y)), JSON.stringify(open.result)).toBe(0);
         // …while the kept +X half is still a climbable cone portion.
-        await holdKey(a, phase, "KeyS", "p.z >= arg.z", { z: bounds.maxZ + radius + 1.5 }, "back to the near side");
+        await holdKey(a, phase, "KeyS", "p.z >= arg.z", { z: bounds.maxZ + radius + 1.5 }, "back to the near side", false, waitInputPrediction);
         await settleInputs(a, 10);
-        const kept = await crossAlong(keptLaneX, "climb the kept half", halfCuboids);
-        expect(kept.expectedPeak).toBeGreaterThan(1.0); // a real climb
+        const kept = await crossAlong(keptLaneX, "climb the kept half", halfCuboids, laneBand);
+        // With the lane guaranteed inside its band, the weakest support is the
+        // band edge itself; bound the climb by that canonical peak (band edge
+        // ⇒ 5 levels ⇒ 1.2 m) instead of a free-standing constant.
+        const minKeptPeak = canonicalPeak(halfCuboids, keptLaneX + laneBand);
+        expect(minKeptPeak).toBeGreaterThan(1.0); // the band edge is still a real climb
+        expect(kept.expectedPeak).toBeGreaterThanOrEqual(minKeptPeak); // a real climb
         // Without the edit this lane would have climbed the full cone's levels.
         expect(canonicalPeak(fullCuboids, kept.result.start.x)).toBeGreaterThanOrEqual(kept.expectedPeak);
       } else {
         // Reset: the formerly opened lane is a climbable cone side again.
-        const reset = await crossAlong(openLaneX, "climb the reset cone side", fullCuboids);
-        expect(reset.expectedPeak).toBeGreaterThan(1.0); // the opened lane climbs again
+        const reset = await crossAlong(openLaneX, "climb the reset cone side", fullCuboids, laneBand);
+        // Same derived bound on the far band edge (5 levels ⇒ 1.2 m).
+        const minResetPeak = canonicalPeak(fullCuboids, openLaneX - laneBand);
+        expect(minResetPeak).toBeGreaterThan(1.0); // the band edge is still a real climb
+        expect(reset.expectedPeak).toBeGreaterThanOrEqual(minResetPeak); // the opened lane climbs again
       }
     } finally { await context.close(); }
   }
@@ -2882,8 +3203,8 @@ test.describe("Physical edited-geometry acceptance", () => {
     await runConePhase("C reset cone");
   });
 
-  // Physical ramp acceptance. The canonical ramp is 16 step columns over two
-  // cells climbing one full layer (0 → 3.84 m), so a player walks off its top
+  // Physical ramp acceptance. The canonical ramp is 16 thin slabs over one
+  // cell climbing one full layer (0 → 3.84 m), so a player walks off its top
   // onto a next-layer floor (top 3.99 m). half_left / half_right keep the
   // climber's left / right half of the WIDTH (as seen looking up the ramp).
   async function runRampFloorPhase(): Promise<void> {
@@ -2939,6 +3260,20 @@ test.describe("Physical edited-geometry acceptance", () => {
     try {
       await ensureCombatMode(a);
       await installPoseTrace(a);
+      // Diagnostic only: raw authoritative state and real key release timing.
+      await a.evaluate(() => {
+        const w = window as any;
+        const client = w.__buildshiftNetworking.client.deref();
+        w.__rampTrace = [];
+        w.__rampStops = [];
+        client.room.onStateChange((state: any) => {
+          const p = state.players.get(client.sessionId);
+          if (p) w.__rampTrace.push([p.lastProcessedSequence, p.x, p.y, p.z, p.velocityY, p.grounded]);
+        });
+        document.addEventListener("keyup", (event) => {
+          if (event.code === "KeyW") w.__rampStops.push({ pose: w.__rampTrace.at(-1), sentSequence: w.__buildshiftNetworking.inputBatcher.deref().lastSentSequence });
+        });
+      });
       const spawn = await authPose(a);
       const cs = BUILD_GRID.cellSize, lh = BUILD_GRID.layerHeight;
       const radius = PLAYER_COLLIDER.radius;
@@ -2955,6 +3290,8 @@ test.describe("Physical edited-geometry acceptance", () => {
       const removedLaneX = variant === "half_left" ? rightLaneX : leftLaneX;
       const lowEndZ = Math.max(...full.map(c => c.center.z + c.halfExtents.z));
       const highEndZ = Math.min(...full.map(c => c.center.z - c.halfExtents.z));
+      const canonicalTop = Math.max(...full.map(c => c.center.y + c.halfExtents.y));
+      expect(canonicalTop).toBeCloseTo(lh, 6);
       for (const c of halfCuboids) expect(Math.sign(c.center.x - centerX)).toBe(Math.sign(keptLaneX - centerX));
       step(`geometry ${JSON.stringify({ grid, rotation, variant, keptLaneX, removedLaneX, lowEndZ, highEndZ })}`);
 
@@ -2965,22 +3302,60 @@ test.describe("Physical edited-geometry acceptance", () => {
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "ramp", grid, rotation, editGrid: edited }, `ramp ${variant}`);
       step(`ramp ${id} ${variant} replicated + rendered on both clients`);
 
-      /** Real W up lane x to just below the high end; returns the authoritative climb. */
+      const toRampLane = async (x: number) => {
+        // Keep the entire capsule in the intended width half, including the
+        // removed-lane control. Correct any settled input overshoot before W.
+        const clearance = cs / 4 - radius - 0.05;
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const p = await authPose(a);
+          if (Math.abs(p.x - x) <= clearance) break;
+          const key = p.x > x ? "KeyD" : "KeyA";
+          const predicate = p.x > x ? "p.x <= arg.x + 0.1" : "p.x >= arg.x - 0.1";
+          await holdKey(a, phase, key, predicate, { x }, `to ramp lane ${x}`, true, waitInputPrediction);
+          await settleInputs(a, 10);
+        }
+        expect(Math.abs((await authPose(a)).x - x), "full capsule fits the intended lane").toBeLessThanOrEqual(clearance);
+      };
+      /** Real W through the high end; the standalone ramp has no floor beyond it. */
       const climbLane = async (x: number, label: string) => {
-        await toLaneX(a, phase, x);
-        await a.evaluate(() => { (window as any).__poseTrace.length = 0; });
-        // Stop 0.6 m short of the one-tile ramp's high edge (crouched: short
-        // stopping distance), high enough to show the full climb.
-        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: highEndZ + 0.6 }, label, true);
+        await toRampLane(x);
+        await a.evaluate(() => { (window as any).__poseTrace.length = 0; (window as any).__rampTrace.length = 0; (window as any).__rampStops.length = 0; });
+        await holdKey(a, phase, "KeyW", "p.z <= arg.z", { z: highEndZ }, label, true, waitInputPrediction);
         await settleInputs(a, 15);
         const end = await authPose(a);
         const points = tracePoints(await poseTrace(a, 4000));
         const result = { label, end, maxY: Math.max(...points.map(p => p.y)), samples: points.length };
         step(`${label} ${JSON.stringify(result)}`);
+        const diagnostic = await a.evaluate(() => ({ trace: (window as any).__rampTrace, stops: (window as any).__rampStops }));
+        await test.info().attach(`${label} authoritative ramp path`, {
+          body: JSON.stringify({ label, rotation, variant, cuboids: label.startsWith("reset") ? full : halfCuboids, ...diagnostic }),
+          contentType: "application/json",
+        });
+        step(`W released ${JSON.stringify(diagnostic.stops)}`);
+        expect(points.every(p => Math.abs(p.x - x) + radius <= cs / 4 + 1e-6), JSON.stringify(result)).toBe(true);
+        expect(points.some(p => p.z <= highEndZ + 1e-6), "authoritative path crosses the high-end threshold").toBe(true);
         return { end, points, result };
       };
+      const expectClimb = (climb: Awaited<ReturnType<typeof climbLane>>) => {
+        const report = JSON.stringify(climb.result);
+        expect(climb.result.maxY, report).toBeCloseTo(canonicalTop, 6);
+        const firstTop = climb.points.findIndex(p => Math.abs(p.y - canonicalTop) < 1e-6);
+        expect(firstTop, report).toBeGreaterThanOrEqual(0);
+        const ascent = climb.points.slice(0, firstTop + 1);
+        expect(ascent.every((p, i) => i === 0 || p.y >= ascent[i - 1]!.y - 1e-6), report).toBe(true);
+        const top = climb.points[firstTop]!;
+        const highestSlab = full.find(c => Math.abs(c.center.y + c.halfExtents.y - canonicalTop) < 1e-6)!;
+        expect(top.z, report).toBeLessThanOrEqual(highestSlab.center.z + highestSlab.halfExtents.z + radius + 1e-6);
+        expect(top.z + radius, report).toBeGreaterThanOrEqual(highEndZ - 1e-6);
+        // Any descent must occur only after the capsule clears the last slab.
+        const drops = climb.points.filter((p, i) => i > 0 && p.y < climb.points[i - 1]!.y - 1e-6);
+        expect(drops.every(p => p.z + radius <= highEndZ + 1e-6), report).toBe(true);
+      };
       const backDown = async () => {
-        await holdKey(a, phase, "KeyS", "p.z >= arg.z", { z: lowEndZ + radius + 0.6 }, "walk back down", true);
+        // After crossing the unsupported high edge, return through the open
+        // lane instead of trying to climb the tall back face from ground level.
+        if ((await authPose(a)).y < canonicalTop - 0.6) await toRampLane(removedLaneX);
+        await holdKey(a, phase, "KeyS", "p.z >= arg.z", { z: lowEndZ + radius + 0.6 }, "walk back down", true, waitInputPrediction);
         await settleInputs(a, 15);
         expect((await authPose(a)).y).toBe(0);
       };
@@ -2992,8 +3367,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       await backDown();
       // The kept half climbs the full layer.
       const kept = await climbLane(keptLaneX, `kept ${variant === "half_left" ? "left" : "right"} lane`);
-      expect(kept.result.maxY, JSON.stringify(kept.result)).toBeGreaterThan(lh - 0.6);
-      expect(kept.end.y).toBeGreaterThan(lh - 0.6);
+      expectClimb(kept);
       await backDown();
 
       if (variant === "half_left") {
@@ -3002,7 +3376,7 @@ test.describe("Physical edited-geometry acceptance", () => {
         await expectCanonicalGeometry([a, b], id, aId, { buildType: "ramp", grid, rotation, editGrid: { kind: "ramp", variant: "full" } }, "ramp reset");
         step("ramp reset replicated + rendered on both clients");
         const reset = await climbLane(removedLaneX, "reset ramp, formerly removed lane");
-        expect(reset.result.maxY, JSON.stringify(reset.result)).toBeGreaterThan(lh - 0.6);
+        expectClimb(reset);
       }
     } finally { await context.close(); }
   }

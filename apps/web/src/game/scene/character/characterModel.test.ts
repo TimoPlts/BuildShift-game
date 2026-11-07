@@ -29,7 +29,7 @@ import { createCharacterPresentation } from "./createCharacterPresentation";
 import { PlayerPresentation } from "../PlayerPresentation";
 
 const GLB_PATH = fileURLToPath(
-  new URL("../../../../public/assets/character/RiggedFigure.glb", import.meta.url),
+  new URL("../../../../public/assets/character/BuildShiftBaseCharacter.glb", import.meta.url),
 );
 
 let engine: NullEngine;
@@ -340,11 +340,11 @@ describe("createCharacterPresentation (graceful fallback)", () => {
     makeScene();
     // Node's fetch cannot read file: URLs; serve the real GLB bytes through a
     // stub fetch for the marker URL (the same fetch path the browser uses).
-    const assetUrl = "http://unit.local/assets/character/RiggedFigure.glb";
+    const assetUrl = "http://unit.local/assets/character/BuildShiftBaseCharacter.glb";
     const realFetch = globalThis.fetch;
     const bytes = new Uint8Array(readFileSync(GLB_PATH));
     globalThis.fetch = (async (input: unknown) => {
-      if (String(input).includes("RiggedFigure.glb")) {
+      if (String(input).includes("BuildShiftBaseCharacter.glb")) {
         return new Response(bytes, { status: 200, statusText: "OK" });
       }
       return realFetch(input as RequestInfo | URL);

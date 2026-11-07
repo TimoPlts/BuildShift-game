@@ -1,20 +1,26 @@
 /**
- * Source-wiring contract test for the player visual upgrade.
+ * Source-wiring contract test for the live humanoid production wiring
+ * (Batch 2B, Task A).
  *
  * The full GameRuntime needs a WebGL canvas and async Rapier WASM, so the
  * canonical `App -> GameCanvas -> GameRuntime -> NetworkClient` wiring is
- * asserted at the source level (mirroring
- * `GameRuntime.combatPresentation.wiring.test.ts`). The presentation module
- * itself is unit-tested in `scene/playerPresentation.test.ts`.
+ * asserted at the source level (mirroring the earlier presentation contract
+ * tests). The body pipeline itself is unit-tested in
+ * `scene/character/characterModel.test.ts` and
+ * `scene/character/playerBodyFacade.test.ts`.
  *
  * What this contract locks down:
- *  - the local player body is the modular PlayerPresentation ("local"
- *    variant), owned and disposed by PlayerController;
- *  - the remote player body is created on demand by the runtime from the
- *    replicated/interpolated state only (no gameplay logic in the
- *    presentation path);
+ *  - the local player body is the PlayerBodyFacade ("local" variant),
+ *    owned and disposed by PlayerController, which adopts the licensed
+ *    rigged GLB through the non-blocking character load;
+ *  - the remote player body is the same facade ("remote" variant), created
+ *    on demand by the runtime from the replicated/interpolated state only
+ *    (no gameplay logic in the presentation path);
+ *  - both players start the GLB load through `startCharacterLoad` (one
+ *    normal production GLB presentation per player; the procedural
+ *    presentation remains only as the explicit asset-failure fallback);
  *  - the old capsule-based remote visuals are gone;
- *  - teardown disposes the remote presentation through the shared
+ *  - teardown disposes the remote body through the shared
  *    disposeGameRuntimeResources path.
  */
 import { readFileSync } from "node:fs";
@@ -27,24 +33,31 @@ const playerController = readFileSync(
   "utf8",
 );
 
-describe("GameRuntime player presentation wiring", () => {
-  it("uses the modular PlayerPresentation for both players", () => {
-    expect(runtime).toContain('import{PlayerPresentation}from"./scene/PlayerPresentation"');
-    expect(playerController).toContain("PlayerPresentation");
-    // Local: the "local" variant created by the player controller.
+describe("GameRuntime live humanoid wiring", () => {
+  it("drives both players through the character body facade", () => {
+    expect(runtime).toContain('import{PlayerBodyFacade}from"./scene/character"');
+    // Local: the "local" facade created by the player controller ...
     expect(playerController).toContain(
-      'PlayerPresentation.create(scene, "local", "local-player")',
+      'new PlayerBodyFacade(scene, "local", "local-player")',
     );
-    // Remote: the "remote" variant created lazily by the runtime.
-    expect(runtime).toContain(
-      'PlayerPresentation.create(this.scene,"remote","remote-player")',
+    // ... and its rigged GLB body starts loading non-blockingly.
+    expect(playerController).toContain("startCharacterLoad()");
+    // Remote: the "remote" facade created lazily by the runtime, with the
+    // same GLB load start.
+    const idx = runtime.indexOf("private updateRemotePlayers()");
+    expect(idx).toBeGreaterThan(-1);
+    expect(runtime.slice(idx, idx + 500)).toContain(
+      'new PlayerBodyFacade(this.scene,"remote","remote-player")',
+    );
+    expect(runtime.slice(idx, idx + 500)).toContain(
+      "this.remotePresentation.startCharacterLoad()",
     );
   });
 
   it("drives the remote body only from replicated/interpolated state", () => {
     const idx = runtime.indexOf("private updateRemotePlayers()");
     expect(idx).toBeGreaterThan(-1);
-    const block = runtime.slice(idx, idx + 600);
+    const block = runtime.slice(idx, idx + 900);
     // Position + yaw come from the interpolation buffer ...
     expect(block).toContain("this.remoteInterpolation.getInterpolated(performance.now())");
     // ... and the eliminated / hit-flash state from the replicated match
@@ -67,14 +80,14 @@ describe("GameRuntime player presentation wiring", () => {
       "if(sid&&e.targetId===sid&&e.shooterId!==sid){this.localHitFlashFrames=6;this.combatFeedback.triggerDamageTaken();}",
     );
     // The render frame applies eliminated + hit-flash state to the local
-    // presentation via the same applyState contract the remote body uses.
+    // body via the same applyState contract the remote body uses.
     expect(runtime).toContain(
       "this.localHitFlashFrames=this.playerController.presentation.applyState(this.localEliminated,this.localHitFlashFrames)",
     );
-    // The local presentation is reached through the controller's read-only
-    // accessor (ownership/disposal stay with the controller).
+    // The local body is reached through the controller's read-only accessor
+    // (ownership/disposal stay with the controller).
     expect(playerController).toContain(
-      "public get presentation(): PlayerPresentation",
+      "public get presentation(): PlayerBodyFacade",
     );
   });
 
@@ -99,13 +112,14 @@ describe("GameRuntime player presentation wiring", () => {
     expect(playerController).not.toContain("CreateCapsule");
   });
 
-  it("cleans up the presentation on teardown via the shared disposables path", () => {
-    // The runtime hands its (lazily created) remote presentation to the
-    // shared disposal helper ...
+  it("cleans up the bodies on teardown via the shared disposables path", () => {
+    // The runtime hands its (lazily created) remote body to the shared
+    // disposal helper ...
     expect(runtime).toContain("remotePresentation:this.remotePresentation");
-    // ... which disposes it (the presentation owns all of its meshes/materials).
+    // ... which disposes it (the facade disposes the rendered body and the
+    // loaded asset when present).
     expect(internal).toContain("d.remotePresentation?.dispose()");
-    // The local presentation is disposed with the player controller.
+    // The local body is disposed with the player controller.
     const disposeIdx = playerController.indexOf("public dispose(): void");
     expect(disposeIdx).toBeGreaterThan(-1);
     expect(playerController.slice(disposeIdx, disposeIdx + 300)).toContain(

@@ -1,7 +1,8 @@
 /**
- * GameRuntime internal helpers — HUD updates, and disposal. The remote
- * player's visuals are owned by the modular {@link PlayerPresentation}
- * component (created on demand by the runtime and disposed here).
+ * GameRuntime internal helpers — HUD updates, and disposal. Each player's
+ * body is owned by a {@link PlayerBodyFacade} (licensed rigged GLB with the
+ * procedural presentation as the explicit asset-failure fallback); the
+ * remote facade is created on demand by the runtime and disposed here.
  */
 import type { NetworkClient } from "./network";
 import type { MovementDebugHUD } from "../ui/MovementDebugHUD";
@@ -10,7 +11,7 @@ import type { EnergyRuntimeConsumer } from "./energy";
 import type { BuildingSystem } from "./building";
 import type { BuildEditSystem } from "./buildEdit";
 import type { WeaponController } from "./weapon";
-import type { PlayerPresentation } from "./scene/PlayerPresentation";
+import type { PlayerBodyFacade } from "./scene/character";
 
 export interface GameRuntimeDisposables {
   energyConsumer: EnergyRuntimeConsumer;
@@ -22,8 +23,8 @@ export interface GameRuntimeDisposables {
   playerController: PlayerController;
   inputManager: { dispose(): void };
   cameraController: { dispose(): void };
-  /** The remote player's presentation component, once created. */
-  remotePresentation: PlayerPresentation | null;
+  /** The remote player's body facade, once created. */
+  remotePresentation: PlayerBodyFacade | null;
 }
 
 export function disposeGameRuntimeResources(d: GameRuntimeDisposables): void {
