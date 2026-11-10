@@ -4067,11 +4067,22 @@ test.describe("Physical edited-geometry acceptance", () => {
     try {
       await recordRejections(a);
       await recordEditSends(a);
+      await a.evaluate(() => {
+        const w = window as any;
+        const client = w.__buildshiftNetworking.client.deref();
+        const send = client.send.bind(client);
+        w.__surfaceFRequests = [];
+        client.send = (type: string, payload: any) => {
+          if (type === "build:placement_request") w.__surfaceFRequests.push({ at: performance.now(), ...payload });
+          return send(type, payload);
+        };
+      });
       const aim = new CrosshairAim(a);
       const url = a.url();
       const history = await a.evaluate(() => history.length);
       const ammo = await getMagazineAmmo(a);
       const mine = async () => (await structuresOf(a)).filter((s) => s.ownerId === aId);
+      const trace = async (stage: string) => console.log("[surface F trace]", JSON.stringify({ stage, pieces: await mine(), requests: await a.evaluate(() => (window as any).__surfaceFRequests) }));
       const selected = async () => (await buildModeActive(a)) ? (await a.locator(".build-hud__selected").textContent()) ?? "" : "";
       // Presses alone select (and preview) — they never place, fire, or navigate.
       await aim.at(cellCentre(1, -1));
@@ -4085,8 +4096,11 @@ test.describe("Physical edited-geometry acceptance", () => {
       step("Mouse4 / Mouse5 / F select wall / ramp / cone with a live preview; nothing placed");
       // Each bind then places with the primary.
       await buildAt(a, aim, "Mouse3", edgeAim(1, -1, 0), isPiece("wall", 1, 0, -1, 0), "Mouse 4 wall");
+      await trace("initial wall");
       await buildAt(a, aim, "Mouse4", cellCentre(0, -1), isPiece("ramp", 0, 0, -1), "Mouse 5 ramp");
+      await trace("initial ramp");
       await buildAt(a, aim, "KeyF", cellCentre(-1, 0), isPiece("cone", -1, 0, 0), "F cone"); // a tile the ramp does not hide
+      await trace("initial cone");
       step("Mouse4 wall, Mouse5 ramp, F cone placed");
       // E: the edit layer over the aimed own piece.
       await aim.at({ x: CS, y: LH / 2, z: wallEdgeCenter({ x: 1, y: 0, z: -1 }, 0).z });
@@ -4107,11 +4121,25 @@ test.describe("Physical edited-geometry acceptance", () => {
       await sleep(120);
       await setPrimaryFire(a, true);
       try {
+        // Synchronize the Mouse3 switch to the first LOCAL ramp request (not the
+        // authoritative echo). Dispatch the back-button click in-page (same
+        // mechanism as setPrimaryFire) so the piece switch lands before the
+        // next 334 ms turbo tick.
+        await expect.poll(
+          async () => a.evaluate(() => (window as any).__surfaceFRequests.some((r: any) => r.buildType === "ramp" && r.grid?.x === 1 && r.grid?.z === 1)),
+          { message: "local ramp request observed", timeout: 10_000, intervals: [10] }
+        ).toBe(true);
+        await a.evaluate(() => {
+          const el = (document.pointerLockElement ?? document.querySelector("canvas.game-canvas")) as HTMLElement | null;
+          // buttons 9 = primary (1) + back (8); buttons 1 = primary only after release.
+          el?.dispatchEvent(new MouseEvent("mousedown", { button: 3, buttons: 9, bubbles: true }));
+          el?.dispatchEvent(new MouseEvent("mouseup", { button: 3, buttons: 1, bubbles: true }));
+        });
         await waitStructure(a, isPiece("ramp", 1, 0, 1), "held Mouse 5 ramp");
-        await pressKey(a, "Mouse3");
         await waitStructure(a, (s) => s.buildType === "wall" && tileEdges(1, 1).has(structureSlots("wall", s.grid, s.rotation)[0]), "held → Mouse 4 wall from the ramp");
       } finally { await setPrimaryFire(a, false); }
       step("held primary: Mouse5 ramp → Mouse4 wall without a release");
+      await trace("final chord");
       expect(a.url()).toBe(url);
       expect(await a.evaluate(() => history.length)).toBe(history);
       expect(await getMagazineAmmo(a)).toBe(ammo);
