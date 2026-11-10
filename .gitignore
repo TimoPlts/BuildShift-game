@@ -45,3 +45,10 @@ desktop.ini
 # Misc
 *.local
 .cache/
+
+# Assignment 09 A — Python LLM experiment virtual environment
+.venv-llm/
+
+# Python (Assignment 09 experiment)
+__pycache__/
+*.pyc
