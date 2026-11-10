@@ -1,0 +1,3 @@
+# Isolated dependency manifest for the Assignment 09 Python SDK experiment.
+# Version pinned to the school guide's reference (Python 3.13 / OpenAI 3.26.0).
+openai==3.26.0
