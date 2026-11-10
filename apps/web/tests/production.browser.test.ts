@@ -1985,7 +1985,16 @@ test.describe("Production browser smoke", () => {
     trackFatalErrors(a);
     trackFatalErrors(b);
     await a.goto(APP_URL);
-    await a.waitForFunction(() => Boolean((window as any).__buildshiftNetworking?.client?.deref()?.sessionId));
+    try {
+      await a.waitForFunction(
+        () => Boolean((window as any).__buildshiftNetworking?.client?.deref()?.sessionId),
+        undefined,
+        { timeout: 30_000 },
+      );
+    } catch (error) {
+      await dumpDiag("fresh-duel-startup-timeout", a, b);
+      throw error;
+    }
     await b.goto(APP_URL);
     await waitForBothInProgress(a, b);
     const initial = await Promise.all([a, b].map(lifecycleSnapshot));
