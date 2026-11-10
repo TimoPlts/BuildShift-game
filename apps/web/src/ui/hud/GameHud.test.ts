@@ -246,6 +246,50 @@ describe("WeaponHUD", () => {
     expect(html).toContain("30");
   });
 
+  it("shows the authoritative shotgun capacity (5) even when the runtime magazineSize prop is stale (4)", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "shotgun",
+        magazineAmmo: 5,
+        magazineSize: 4,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    // The capacity must be the authoritative 5-round magazine, not the
+    // stale 4-round runtime prop: `5 / 5`, never `5 / 4`.
+    expect(html).toContain('aria-label="5 of 5 rounds in the magazine"');
+    expect(html).toContain('<span class="weapon-hud__ammo-capacity">5</span>');
+  });
+
+  it("keeps the authoritative shotgun capacity (5) after a shot (4 / 5, not 4 / 4)", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "shotgun",
+        magazineAmmo: 4,
+        magazineSize: 4,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(html).toContain('aria-label="4 of 5 rounds in the magazine"');
+    expect(html).toContain('<span class="weapon-hud__ammo-capacity">5</span>');
+  });
+
+  it("shows the assault rifle at full authoritative capacity (30 / 30)", () => {
+    const html = renderToStaticMarkup(
+      createElement(WeaponHUD, {
+        activeWeapon: "assault_rifle",
+        magazineAmmo: 30,
+        magazineSize: 30,
+        isReloading: false,
+        reloadProgress: 0,
+      }),
+    );
+    expect(html).toContain('aria-label="30 of 30 rounds in the magazine"');
+    expect(html).toContain('<span class="weapon-hud__ammo-capacity">30</span>');
+  });
+
   it("flags an empty magazine", () => {
     const html = renderToStaticMarkup(
       createElement(WeaponHUD, {

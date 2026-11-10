@@ -5,7 +5,10 @@
  * Displays the local player's equipped weapon:
  *  - the active weapon's name (small label)
  *  - the active weapon's magazine rounds over its magazine capacity
- *    (`30 / 30`), driven by the authoritative replicated ammo value
+ *    (`30 / 30`), driven by the authoritative replicated ammo value. The
+ *    displayed capacity is the authoritative shared weapon config's
+ *    `maxAmmo` for the active weapon (the same number the server enforces),
+ *    so a stale runtime `magazineSize` prop can never show a false capacity
  *  - a thin horizontal reload progress bar while the active weapon is
  *    reloading (fills based on `reloadProgress`), plus a "Press R to reload"
  *    prompt while the magazine is empty and no reload is running
@@ -14,9 +17,12 @@
  *    shown
  *
  * Data sources (all existing runtime values, no mirrored state):
- *  - `activeWeapon` / `magazineSize` / `isReloading` / `reloadProgress` —
- *    the weapon controller's local state, reconciled from the authoritative
- *    server `weapon:state_update` event,
+ *  - `activeWeapon` / `isReloading` / `reloadProgress` — the weapon
+ *    controller's local state, reconciled from the authoritative server
+ *    `weapon:state_update` event,
+ *  - displayed magazine capacity — the shared authoritative weapon config
+ *    (`@buildshift/game-config` `WEAPONS`, the same source the server uses),
+ *    with the runtime `magazineSize` prop as a fallback only
  *  - `magazineAmmo` — the authoritative replicated magazine ammo carried on
  *    the player state (the same value the legacy combat HUD displayed).
  *
@@ -37,6 +43,7 @@
  */
 
 import type { WeaponType } from "@buildshift/protocol";
+import { getWeaponById } from "@buildshift/game-config";
 import "./weapon-hud.css";
 
 /**
@@ -50,6 +57,21 @@ const LOADOUT: readonly WeaponType[] = ["assault_rifle", "shotgun"];
 const WEAPON_NAMES: Record<WeaponType, string> = {
   assault_rifle: "Assault Rifle",
   shotgun: "Shotgun",
+};
+
+/**
+ * The authoritative magazine capacity per weapon, read from the shared
+ * weapon config (`WEAPONS`) that the gameplay server enforces. The runtime
+ * `magazineSize` prop is only a fallback: the client's local weapon
+ * controller may still hold an older per-weapon magazine figure that does
+ * not match the authoritative `maxAmmo`, and this HUD must not display a
+ * false capacity (e.g. `5 / 4`).
+ */
+const AUTHORITATIVE_MAGAZINE_CAPACITY: Readonly<
+  Partial<Record<WeaponType, number>>
+> = {
+  assault_rifle: getWeaponById("assault_rifle")?.maxAmmo,
+  shotgun: getWeaponById("shotgun")?.maxAmmo,
 };
 
 /** Short glyphs used in the compact slot indicator chips. */
@@ -79,7 +101,12 @@ export interface WeaponHUDProps {
   activeWeapon: WeaponType;
   /** Rounds currently loaded in the active weapon's magazine (authoritative). */
   magazineAmmo: number;
-  /** The active weapon's magazine capacity (reconciled). */
+  /**
+   * The active weapon's magazine capacity from the local runtime. Used only
+   * as a display fallback when the shared authoritative config has no entry
+   * for the active weapon; the HUD otherwise shows the authoritative
+   * `maxAmmo` so a stale value can never render a false capacity.
+   */
   magazineSize: number;
   /** `true` while the active weapon is in the middle of a reload. */
   isReloading: boolean;
@@ -119,7 +146,9 @@ export function WeaponHUD(props: WeaponHUDProps): JSX.Element {
     props;
 
   const ammo = floorNonNegative(magazineAmmo);
-  const capacity = floorNonNegative(magazineSize);
+  const capacity = floorNonNegative(
+    AUTHORITATIVE_MAGAZINE_CAPACITY[activeWeapon] ?? magazineSize,
+  );
   const ammoEmpty = ammo <= 0;
   // "Low" magazine: rounds remain but the magazine is at or below a fifth
   // of capacity, so a reload should be coming soon. The fully-empty case is
