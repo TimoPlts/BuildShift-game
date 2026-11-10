@@ -1262,17 +1262,13 @@ test.describe("Production browser smoke", () => {
     // Trigger reload.
     await pressKey(pageA!, "KeyR");
 
-    // Wait for reload to complete (assault rifle reload is ~1.8s).
-    // The reload track element appears during reload and disappears when done.
-    // If ammo was already full, the reload might not start - in that case
-    // the reload track never appears and we just verify ammo is still 30.
-    await sleep(3_000);
-
-    const ammoAfterReload = await getMagazineAmmo(pageA!);
-    // After reload, ammo should be at or above the pre-reload value.
-    expect(ammoAfterReload).toBeGreaterThanOrEqual(ammoBeforeReload);
+    // Wait for the observed result: under software rendering a fixed wall-clock
+    // delay can expire before the client processes the reload and server patch.
+    // This first reload has enough reserve to restore the full AR magazine.
     if (ammoBeforeReload < 30) {
-      expect(ammoAfterReload).toBeGreaterThan(ammoBeforeReload);
+      await expect.poll(() => getMagazineAmmo(pageA!), { timeout: 10_000 }).toBe(30);
+    } else {
+      expect(await getMagazineAmmo(pageA!)).toBe(30);
     }
   });
 
