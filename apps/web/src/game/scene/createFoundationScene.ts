@@ -16,6 +16,8 @@ import {
 } from "./arena";
 import { setupArenaSky } from "./arenaSky";
 import { setupArenaDecorations } from "./arenaDecorations";
+import { setupArenaEnvironment } from "./arena/environment";
+import { setupArenaSpawnZones } from "./arena/spawnZones";
 
 /**
  * Creates the foundation scene: lighting plus the arena geometry.
@@ -39,6 +41,12 @@ export function createFoundationScene(engine: Engine): Scene {
   setupArenaSky(scene);
   setupArenaLighting(scene);
   setupArenaDecorations(scene);
+
+  // Arena environment V2 (Batch 2D A): containment architecture, boundary
+  // framing, distant backdrop, and spawn-zone treatment. Purely
+  // presentational — see arena/environment.ts and arena/spawnZones.ts.
+  setupArenaEnvironment(scene);
+  setupArenaSpawnZones(scene);
 
   for (const collider of ARENA_COLLIDERS) {
     buildArenaObject(scene, collider, getArenaMaterialKind(collider.id));
