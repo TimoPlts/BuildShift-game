@@ -26,6 +26,8 @@
  *    flash on each hit and a deterministic warning pulse when nearly broken.
  *  - Play a destruction impact flash and fade-out when a structure is
  *    authoritatively removed.
+ *  - Play a quick, non-obscuring settle reveal when an authoritative edit
+ *    (or reset back to the default shape) rebuilds the structure's geometry.
  *  - Smoothly transition half-wall edit shapes.
  *  - Highlight the structure currently aimed for a build edit, and show a
  *    semi-transparent half-wall result preview before the edit is confirmed.
@@ -72,6 +74,7 @@ import {
   createConstructionEffects,
   createDestructionEffects,
   triggerHitFlash,
+  startEditSettle,
   composeVisualInto,
   createComposedVisual,
   NEARLY_BROKEN_THRESHOLD,
@@ -1333,10 +1336,17 @@ export class BuildStructureRenderer {
     }
 
     const nextGeometryKey = geometryKey(structure);
-    if (nextGeometryKey !== runtime.geometryKey || gridChanged) {
+    const editChanged = nextGeometryKey !== runtime.geometryKey;
+    if (editChanged || gridChanged) {
       fillStructureVisual(this.scene, runtime.mesh, structure.structureId, structure);
       runtime.geometryKey = nextGeometryKey;
       runtime.dirty = true;
+    }
+    if (editChanged) {
+      // A quick settle reveal makes the rebuilt (edited/reset) geometry read
+      // as an intentional update. Grid moves alone rebuild visuals but do
+      // not flash — the mesh simply repositions.
+      startEditSettle(runtime.effects, Date.now());
     }
   }
 
@@ -1566,6 +1576,7 @@ export class BuildStructureRenderer {
     if (e.confirmation && !e.confirmation.done) return false;
     if (e.hitFlash && !e.hitFlash.done) return false;
     if (e.editTransition && !e.editTransition.done) return false;
+    if (e.editSettle && !e.editSettle.done) return false;
     if (runtime.durability) {
       const maxDur = Math.max(1, runtime.durability.maxDurability);
       const fraction = runtime.durability.currentDurability / maxDur;

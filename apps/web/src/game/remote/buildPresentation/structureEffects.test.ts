@@ -9,11 +9,14 @@ import {
   createConstructionEffects,
   createDestructionEffects,
   startEditTransition,
+  startEditSettle,
   triggerHitFlash,
   CONSTRUCTION_DURATION,
   CONSTRUCTION_ALPHA_START,
   DESTRUCTION_DURATION,
   DESTRUCTION_IMPACT_RATIO,
+  EDIT_SETTLE_DURATION,
+  EDIT_SETTLE_ALPHA_START,
   EDIT_TRANSITION_DURATION,
   HIT_FLASH_DURATION,
   PLACEMENT_CONFIRM_DURATION,
@@ -227,6 +230,7 @@ describe("startEditTransition", () => {
       hitFlash: null,
       destruction: null,
       editTransition: null,
+      editSettle: null,
     };
     startEditTransition(effects, 1, 0, 0.5, 0.25, NOW);
 
@@ -253,6 +257,7 @@ describe("startEditTransition", () => {
       hitFlash: null,
       destruction: null,
       editTransition: null,
+      editSettle: null,
     };
     startEditTransition(effects, 0.5, 0.25, 1, 0, NOW);
 
@@ -260,6 +265,71 @@ describe("startEditTransition", () => {
     expect(end.visual.scaleY).toBeCloseTo(1, 3);
     expect(end.visual.yOffset).toBeCloseTo(0, 3);
     expect(end.allDone).toBe(true);
+  });
+});
+
+describe("startEditSettle", () => {
+  it("fades rebuilt panels in from the settle start to full alpha, bounded by duration", () => {
+    const effects: StructureEffects = {
+      construction: null,
+      confirmation: null,
+      hitFlash: null,
+      destruction: null,
+      editTransition: null,
+      editSettle: null,
+    };
+    startEditSettle(effects, NOW);
+
+    const start = composeVisual(effects, 1, 0, NOW);
+    expect(start.visual.alpha).toBeCloseTo(EDIT_SETTLE_ALPHA_START, 5);
+    expect(start.allDone).toBe(false);
+
+    const mid = composeVisual(effects, 1, 0, NOW + EDIT_SETTLE_DURATION * 0.5);
+    expect(mid.visual.alpha).toBeGreaterThan(EDIT_SETTLE_ALPHA_START);
+    expect(mid.visual.alpha).toBeLessThan(1);
+
+    const end = composeVisual(effects, 1, 0, NOW + EDIT_SETTLE_DURATION);
+    expect(end.visual.alpha).toBe(1);
+    expect(end.allDone).toBe(true);
+
+    // Bounded: after completion the settle is a no-op (stable identity).
+    const later = composeVisual(effects, 1, 0, NOW + EDIT_SETTLE_DURATION * 10);
+    expect(later.visual.alpha).toBe(1);
+    expect(later.allDone).toBe(true);
+  });
+
+  it("composes on top of an active construction build-up (edit wins the alpha)", () => {
+    const effects = createConstructionEffects(NOW);
+    startEditSettle(effects, NOW + CONSTRUCTION_DURATION);
+
+    // Mid-construction, before the settle starts: the build-up alpha applies.
+    const early = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION / 2);
+    expect(early.visual.alpha).toBeGreaterThan(CONSTRUCTION_ALPHA_START);
+
+    // During the settle: the settle curve applies (starts above the
+    // construction start, regardless of the build-up progress).
+    const settleStart = composeVisual(effects, 1, 0, NOW + CONSTRUCTION_DURATION);
+    expect(settleStart.visual.alpha).toBeCloseTo(EDIT_SETTLE_ALPHA_START, 5);
+  });
+
+  it("is overwritten by a later destruction fade", () => {
+    const effects: StructureEffects = {
+      construction: null,
+      confirmation: null,
+      hitFlash: null,
+      destruction: null,
+      editTransition: null,
+      editSettle: null,
+    };
+    startEditSettle(effects, NOW);
+    effects.destruction = { startTime: NOW + EDIT_SETTLE_DURATION / 2, duration: DESTRUCTION_DURATION, done: false };
+
+    const t = NOW + EDIT_SETTLE_DURATION;
+    const { visual } = composeVisual(effects, 1, 0, t);
+    // The destruction fade (ease-in-quad at its midpoint of the settle
+    // window) is lower than the settle's own alpha at the same moment.
+    const settleAlpha = EDIT_SETTLE_ALPHA_START + (1 - EDIT_SETTLE_ALPHA_START) * (1 - 0);
+    expect(visual.alpha).toBeLessThan(settleAlpha);
   });
 });
 
@@ -271,6 +341,7 @@ describe("composeVisual with no effects", () => {
       hitFlash: null,
       destruction: null,
       editTransition: null,
+      editSettle: null,
     };
     const { visual, allDone, shouldRemove } = composeVisual(effects, 1, 0, NOW);
     expect(visual.uniformScale).toBe(1);

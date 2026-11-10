@@ -1001,6 +1001,86 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
+  describe("edit-settle reveal", () => {
+    it("plays a quick non-obscuring settle when an edit rebuilds the wall geometry", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300); // construction + confirmation settle
+
+      renderer.syncStructures({
+        structures: {
+          wall: { ...wall, editGrid: { kind: "wall", tiles: [true, false, true, false, true, false, true, false, true] } },
+        },
+      });
+
+      // Mid-settle: the rebuilt panels are briefly semi-transparent.
+      advance(70);
+      const root = scene.getMeshByName("structure-wall") as Mesh;
+      const mat = root.material as StandardMaterial;
+      expect(mat.alpha).toBeGreaterThan(0.65);
+      expect(mat.alpha).toBeLessThan(1);
+      expect(root.getChildMeshes(false)).toHaveLength(5);
+
+      // Settled: fully opaque with the edited shape in place.
+      advance(300);
+      expect(mat.alpha).toBe(1);
+      expect(root.getChildMeshes(false)).toHaveLength(5);
+    });
+
+    it("settles on a clean reset back to the default shape and keeps the root", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({
+        structures: {
+          wall: { ...wall, editGrid: { kind: "wall", tiles: [true, false, false, true, false, false, true, false, false] } },
+        },
+      });
+      advance(400);
+
+      const rootBefore = scene.getMeshByName("structure-wall") as Mesh;
+      renderer.syncStructures({ structures: { wall } });
+
+      advance(70);
+      const mat = rootBefore.material as StandardMaterial;
+      expect(mat.alpha).toBeLessThan(1);
+      // The reset rebuilds the full framed panel immediately.
+      expect(rootBefore.getChildMeshes(false)).toHaveLength(9);
+
+      advance(300);
+      expect(scene.getMeshByName("structure-wall")).toBe(rootBefore);
+      expect(mat.alpha).toBe(1);
+    });
+
+    it("does not flash on a grid move (repositioning is not an edit)", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({ structures: { wall } });
+      advance(300);
+
+      renderer.syncStructures({ structures: { wall: structure("wall", "wall", "", { x: 3, y: 0, z: 2 }) } });
+      advance(70);
+      const root = scene.getMeshByName("structure-wall") as Mesh;
+      expect((root.material as StandardMaterial).alpha).toBe(1);
+      expect(root.position.x).toBeCloseTo(3 * BUILD_GRID.cellSize, 5);
+    });
+
+    it("lets the construction reveal lead a first appearance with an existing edit", () => {
+      const wall = structure("wall", "wall");
+      renderer.syncStructures({
+        structures: {
+          wall: { ...wall, editGrid: { kind: "wall", tiles: [true, false, true, false, true, false, true, false, true] } },
+        },
+      });
+      // Early in the construction build-up the alpha follows the construction
+      // curve (starting at 0.35), not the edit-settle start (0.65).
+      advance(35);
+      const mat = (scene.getMeshByName("structure-wall") as Mesh).material as StandardMaterial;
+      expect(mat.alpha).toBeLessThan(0.6);
+
+      advance(400);
+      expect(mat.alpha).toBe(1);
+      expect((scene.getMeshByName("structure-wall") as Mesh).getChildMeshes(false)).toHaveLength(5);
+    });
+  });
+
   describe("durability and hit feedback", () => {
     it("tints structure material toward damaged color as durability decreases", () => {
       renderer.syncStructures({ structures: { wall: structure("wall", "wall") } });
