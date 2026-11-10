@@ -14,9 +14,9 @@ requested in the URL.
 |---|------|---------|
 | 01 | `01-idle-local.png` | local humanoid, idle at round start |
 | 02 | `02-run-local.png` | local humanoid, running (mid-hold `W`) |
-| 03 | `03-opponent.png` | opponent character (second live client, idle at mirrored spawn) |
-| 04 | `04-weapon-ar.png` | assault rifle equipped (model + HUD) |
-| 05 | `05-weapon-shotgun.png` | shotgun equipped (model + HUD) |
+| 03 | `03-opponent.png` | opponent character — dev-only close-up (camera override, subject from room state) |
+| 04 | `04-weapon-ar.png` | assault rifle equipped — dev-only close-up of local player (camera override) |
+| 05 | `05-weapon-shotgun.png` | shotgun equipped — dev-only close-up of local player (camera override) |
 | 06 | `06-build.png` | wall + floor + ramp + cone placed (build layer, live pieces) |
 | 07 | `07-build-edited.png` | a placed piece edited through the live edit flow (select → confirm) |
 | 08 | `08-arena-overview.png` | overhead arena view (one-shot dev-hook camera override) |
@@ -63,10 +63,12 @@ environment variables if a port collides in a parallel environment.
   added by design.
 - Headless Chromium renders via software fallback, so colors/shadows may differ
   slightly from a desktop GPU browser.
-- Scenario 08 uses a dev-only, one-frame-class camera override installed
-  through the existing `?devdiag=1` engine hook and removed immediately after
-  the shot; the third-person camera controller re-claims the camera on the next
-  frame, so no camera state persists.
+- Scenarios 03, 04, 05, and 08 use a dev-only, one-frame-class camera override
+  installed through the existing `?devdiag=1` engine hook and removed immediately
+  after each shot; the third-person camera controller re-claims the camera on
+  the next frame, so no camera state persists. For 03/04/05 the camera is
+  placed 2.5 m toward +Z from the subject's authoritative position, 1.7 m up,
+  looking at chest height (y+1.0).
 - Scenario 07 depends on aiming at a just-placed structure at the default
   camera pose; if the edit target cannot be acquired, the scenario is reported
   as failed in the JSON report rather than skipped silently.

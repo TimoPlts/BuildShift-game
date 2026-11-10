@@ -269,94 +269,83 @@ const playerCount = async (page: Page): Promise<number> => {
   });
 };
 
+
+
 /**
- * Projects the OPPONENT's authoritative position (room state, the entry
- * whose sessionId is not our own) to screen pixels via the devdiag engine
- * hook's live camera. Null when either hook is unavailable.
+ * Dev-only close-up capture: temporarily overrides the active camera via
+ * onBeforeRenderObservable (same pattern as 08-arena-overview) to frame the
+ * subject from +Z. Camera is placed 2.5 m toward +Z from the subject and
+ * 1.7 m up, looking at chest height (y+1.0). The observer is removed in a
+ * finally block so the third-person controller re-claims the camera.
+ *
+ * @param subjectId "local" | "opponent" — which player's authoritative
+ *                 x/y/z from room state to use as the framing subject.
  */
-const opponentScreenPos = async (page: Page): Promise<[number, number] | null> => {
-  const raw = await page.evaluate(() => {
+const captureCloseUp = async (
+  page: Page,
+  name: string,
+  subjectId: "local" | "opponent",
+): Promise<{ file: string; subjectPos: [number, number, number] | null; hook: boolean }> => {
+  // Read the subject's authoritative position from room state
+  const subjectPos = await page.evaluate((sid: "local" | "opponent") => {
     const w = window as any;
-    const engine = w.__buildshiftEngine;
     const client = w.__buildshiftNetworking?.client?.deref?.();
     const st = client?.room?.state;
     const players = st?.players;
-    if (!engine) return { err: "no engine hook" };
-    if (!players) return { err: `no players in state (net=${!!w.__buildshiftNetworking}, client=${!!client}, room=${!!client?.room}, state=${!!st})` };
-    const cam = engine.scenes[0]?.activeCamera;
-    if (!cam || !cam.position) return { err: `no camera (cam=${!!cam}, ctor=${cam?.constructor?.name})` };
-    // MapSchema is iterable-yields-values, so read key/value pairs via the
-    // schema's own map method when present, else object entries.
+    if (!players) return null;
     const entries: Array<[string, any]> =
       typeof players.get === "function" && typeof (players as any).keys === "function"
         ? Array.from((players as any).keys()).map((k: string) => [k, players.get(k)] as [string, any])
         : Object.entries(players);
     const localId = client?.sessionId ?? null;
-    const opp = (entries.find(([id]) => id !== localId) ?? entries[0])?.[1];
-    if (!opp) return { err: `no opponent entry (entries=${entries.length}, localId=${localId})` };
-    // Player entries carry flat authoritative x/y/z (feet convention).
-    const p = (typeof opp.x === "number" ? opp : opp.position) as any;
-    if (!p || typeof p.x !== "number") return { err: `no position on opp (keys=${Object.keys(opp).join(",")})` };
-    const V3 = cam.position.constructor;
-    const canvas = document.querySelector("canvas.game-canvas") as HTMLCanvasElement | null;
-    const wPx = canvas?.clientWidth ?? 1280;
-    const hPx = canvas?.clientHeight ?? 720;
-    const oppId = entries.find(([id]) => id !== localId)?.[0] ?? entries[0]?.[0];
-    if (typeof cam.project === "function") {
-      const n = cam.project(new V3(p.x, p.y, p.z), wPx, hPx);
-      return { x: n.x, y: n.y, id: oppId };
+    let target: any;
+    if (sid === "local") {
+      target = entries.find(([id]) => id === localId)?.[1];
+    } else {
+      target = (entries.find(([id]) => id !== localId) ?? entries[0])?.[1];
     }
-    // Manual NDC projection from the live view/projection matrices
-    // (plain row-major math on the `.m` Float32Array; no extra API needed).
-    const view = (typeof cam.getViewMatrix === "function" ? cam.getViewMatrix() : undefined) as any;
-    const proj = cam.getProjectionMatrix();
-    if (!view?.m || !proj?.m) return { err: `no view/proj matrices (view=${!!view}, proj=${!!proj})` };
-    const v = view.m, pr = proj.m;
-    const vx0 = v[0]*p.x + v[1]*p.y + v[2]*p.z + v[3];
-    const vx1 = v[4]*p.x + v[5]*p.y + v[6]*p.z + v[7];
-    const vx2 = v[8]*p.x + v[9]*p.y + v[10]*p.z + v[11];
-    const vx3 = v[12]*p.x + v[13]*p.y + v[14]*p.z + v[15];
-    const cx0 = pr[0]*vx0 + pr[1]*vx1 + pr[2]*vx2 + pr[3]*vx3;
-    const cx1 = pr[4]*vx0 + pr[5]*vx1 + pr[6]*vx2 + pr[7]*vx3;
-    const cx3 = pr[12]*vx0 + pr[13]*vx1 + pr[14]*vx2 + pr[15]*vx3;
-    if (Math.abs(cx3) < 1e-9) return { err: `opponent behind camera (w=${cx3})` };
-    const nx = cx0 / cx3;
-    const ny = cx1 / cx3;
-    if (Math.abs(nx) > 1.5 || Math.abs(ny) > 1.5) return { err: `opponent off-screen (ndc=${nx.toFixed(2)},${ny.toFixed(2)})` };
-    return { x: (nx + 1) * 0.5 * wPx, y: (1 - ny) * 0.5 * hPx, id: oppId };
-  });
-  if (raw && "err" in raw) {
-    log(`opponent projection probe: ${(raw as { err: string }).err}`);
-    return null;
-  }
-  return raw ? [raw.x, raw.y] : null;
-};
+    if (!target) return null;
+    const p = (typeof target.x === "number" ? target : target.position) as any;
+    if (!p || typeof p.x !== "number") return null;
+    return [p.x, p.y, p.z] as [number, number, number];
+  }, subjectId);
 
-/**
- * Closed-loop look: nudge the view with real pointer-lock mousemove deltas
- * until the opponent is near screen center (signs: look-right shifts the
- * world left on screen, so the correction is proportional to the error).
- */
-const centerOnOpponent = async (page: Page, iters = 6): Promise<void> => {
-  const fine = async (): Promise<boolean> => {
-    for (let i = 0; i < iters; i++) {
-      const pos = await opponentScreenPos(page);
-      if (!pos) return false;
-      const [sx, sy] = pos;
-      if (Math.abs(sx - 640) < 120 && Math.abs(sy - 360) < 120) return true;
-      await lookBy(page, (sx - 640) * 0.7, (sy - 360) * 0.7);
-      await sleep(150);
-    }
-    const pos = await opponentScreenPos(page);
-    return pos !== null && Math.abs(pos[0] - 640) < 160 && Math.abs(pos[1] - 360) < 160;
-  };
-  if (await fine()) return;
-  // Coarse sweep when the opponent is off-frame: 45° steps
-  // (≈357 px at mouseSensitivity 0.0022 rad/px) until it enters the frame.
-  for (let i = 0; i < 7; i++) {
-    await lookBy(page, 357, 0);
+  if (!subjectPos) {
+    log(`captureCloseUp(${name}): subject position unavailable, falling back to normal capture`);
+    const file = await capture(page, name);
+    return { file, subjectPos: null, hook: false };
+  }
+
+  // Install the camera override (same pattern as 08)
+  const hook = await page.evaluate((pos: [number, number, number]) => {
+    const w = window as any;
+    const scene = w.__buildshiftEngine?.scenes?.[0];
+    const cam = scene?.activeCamera;
+    if (!scene || !cam) return false;
+    const Vector3ctor = cam.position.constructor;
+    const [sx, sy, sz] = pos;
+    (w as any).__visualCloseUpObserver = scene.onBeforeRenderObservable.add(() => {
+      // Camera: 2.5 m toward +Z from subject, 1.7 m up
+      cam.position.copyFrom(new Vector3ctor(sx, sy + 1.7, sz + 2.5));
+      // Look at chest: subject y + 1.0
+      cam.setTarget(new Vector3ctor(sx, sy + 1.0, sz));
+    });
+    return true;
+  }, subjectPos);
+
+  try {
+    await sleep(400);
+    const file = await capture(page, name);
+    return { file, subjectPos, hook };
+  } finally {
+    // Remove the observer immediately so the camera controller re-claims
+    await page.evaluate(() => {
+      const w = window as any;
+      const scene = w.__buildshiftEngine?.scenes?.[0];
+      scene?.onBeforeRenderObservable?.remove((w as any).__visualCloseUpObserver);
+      delete (w as any).__visualCloseUpObserver;
+    });
     await sleep(150);
-    if (await fine()) return;
   }
 };
 
@@ -478,43 +467,44 @@ async function main(): Promise<number> {
       log(`02-run-local → ${path.basename(file)}`);
     }
 
-    // 03 — opponent character: strafe clear of the center box, then center
-    //      the camera on the live opponent by projecting its authoritative
-    //      room-state position to the screen (closed-loop look corrections).
+    // 03 — opponent character: dev-only close-up via onBeforeRenderObservable
+    //      camera override (same pattern as 08). Subject = opponent's
+    //      authoritative x/y/z from room state. Camera: 2.5 m +Z, 1.7 m up,
+    //      looking at chest (y+1.0).
     {
-      await holdKey(a, "KeyD", 1_100); // yaw 0: right = -X, clears the center box
+      await holdKey(a, "KeyD", 1_100); // strafe clear of the center box
       await sleep(250);
-      await centerOnOpponent(a);
-      await sleep(300);
-      const file = await capture(a, "03-opponent");
-      const pos = await opponentScreenPos(a);
-      const screenNote = pos ? `[${Math.round(pos[0])},${Math.round(pos[1])}]` : "n/a";
-      const centered = pos !== null && Math.abs(pos[0] - 640) < 160 && Math.abs(pos[1] - 360) < 160;
-      record("03-opponent", file, [`strafed KeyD 1100ms, then closed-loop look to center the opponent; opponent screen=${screenNote} (viewport 1280x720, center 640x360)`], centered);
+      const { file, subjectPos, hook } = await captureCloseUp(a, "03-opponent", "opponent");
+      const posNote = subjectPos ? `(${subjectPos[0].toFixed(2)}, ${subjectPos[1].toFixed(2)}, ${subjectPos[2].toFixed(2)})` : "n/a";
+      record("03-opponent", file, [`dev-only close-up; opponent subject=${posNote}; camera override active=${hook} (removed after shot)`], hook);
       await attachScene("03-opponent", a);
-      log(`03-opponent → ${path.basename(file)} (opponent screen=${screenNote})`);
+      log(`03-opponent → ${path.basename(file)} (subject=${posNote}, hook=${hook})`);
     }
 
-    // 04 — assault rifle equipped (default loadout; Digit1 re-arms it)
+    // 04 — assault rifle equipped: dev-only close-up of local player holding
+    //      the rifle. Subject = local player's authoritative x/y/z.
     {
       await pressCode(a, "Digit1");
       await sleep(450);
       const name = await weaponName(a);
-      const file = await capture(a, "04-weapon-ar");
-      record("04-weapon-ar", file, [`HUD weapon="${name}"`], /Assault/i.test(name));
+      const { file, subjectPos, hook } = await captureCloseUp(a, "04-weapon-ar", "local");
+      const posNote = subjectPos ? `(${subjectPos[0].toFixed(2)}, ${subjectPos[1].toFixed(2)}, ${subjectPos[2].toFixed(2)})` : "n/a";
+      record("04-weapon-ar", file, [`dev-only close-up; local subject=${posNote}; HUD weapon="${name}"; camera override active=${hook} (removed after shot)`], /Assault/i.test(name) && hook);
       await attachScene("04-weapon-ar", a);
-      log(`04-weapon-ar → ${path.basename(file)} (HUD: ${name})`);
+      log(`04-weapon-ar → ${path.basename(file)} (HUD: ${name}, subject=${posNote})`);
     }
 
-    // 05 — shotgun equipped
+    // 05 — shotgun equipped: dev-only close-up of local player holding the
+    //      shotgun. Subject = local player's authoritative x/y/z.
     {
       await pressCode(a, "Digit2");
       await sleep(550);
       const name = await weaponName(a);
-      const file = await capture(a, "05-weapon-shotgun");
-      record("05-weapon-shotgun", file, [`HUD weapon="${name}"`], /Shotgun/i.test(name));
+      const { file, subjectPos, hook } = await captureCloseUp(a, "05-weapon-shotgun", "local");
+      const posNote = subjectPos ? `(${subjectPos[0].toFixed(2)}, ${subjectPos[1].toFixed(2)}, ${subjectPos[2].toFixed(2)})` : "n/a";
+      record("05-weapon-shotgun", file, [`dev-only close-up; local subject=${posNote}; HUD weapon="${name}"; camera override active=${hook} (removed after shot)`], /Shotgun/i.test(name) && hook);
       await attachScene("05-weapon-shotgun", a);
-      log(`05-weapon-shotgun → ${path.basename(file)} (HUD: ${name})`);
+      log(`05-weapon-shotgun → ${path.basename(file)} (HUD: ${name}, subject=${posNote})`);
     }
 
     // 06 — build: wall / floor / ramp / cone, each via its real bind.
