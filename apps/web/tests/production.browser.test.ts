@@ -2413,11 +2413,15 @@ test.describe("Physical edited-geometry acceptance", () => {
       // overshoot); nothing here is asserted as crossing or blocking.
       await a.keyboard.down("KeyC");
       await waitAuth(a, "p.crouch === true", {}, 10_000);
-      await a.keyboard.down("KeyS");
-      // Release on the predicted pose (it already includes every queued
-      // input), so the authoritative start does not overshoot the band.
-      await waitPredicted(a, "p.z >= arg.stageZ", { stageZ }, 40_000);
-      await a.keyboard.up("KeyS");
+      // With edge-mounted walls the spawn can already be in the start band.
+      // Do not press backward against an already-satisfied wait predicate:
+      // frame batching would move the player farther away before key release.
+      if ((await auth(a)).z < stageZ) {
+        await a.keyboard.down("KeyS");
+        // The predicted pose includes queued inputs, limiting stopping overshoot.
+        await waitPredicted(a, "p.z >= arg.stageZ", { stageZ }, 40_000);
+        await a.keyboard.up("KeyS");
+      }
       await waitAuth(a, "p.z >= arg.stageZ", { stageZ }, 40_000);
       await a.keyboard.up("KeyC");
       await waitAuth(a, "!p.crouch", {}, 10_000);
