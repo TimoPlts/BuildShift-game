@@ -40,6 +40,56 @@ export interface AiChatClientOptions {
 }
 
 /**
+ * The backend returns useful bounded JSON errors (`{error: {code, message}}`);
+ * never expose secrets or raw internal errors. Only this much detail text is
+ * ever surfaced to the player (plain text; the panel never renders HTML).
+ */
+const MAX_ERROR_DETAIL_LENGTH = 200;
+
+/**
+ * Read a safe, bounded error detail from a failed response body.
+ *
+ * The backend contract is `{error: {code: string, message: string}}` (see the
+ * game-server `aiChatRoute`); its `error.message` is surfaced, trimmed and
+ * capped. As a lenient fallback, a flat string `error` / `message` field is
+ * also accepted. Anything else (non-JSON, wrong shape, empty) yields `null`
+ * so the caller keeps the generic fallback message. No raw internal errors
+ * or secrets are ever surfaced.
+ */
+async function readErrorDetail(response: Response): Promise<string | null> {
+  let data: unknown;
+  try {
+    data = await response.json();
+  } catch {
+    return null;
+  }
+  if (data === null || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+  const record = data as Record<string, unknown>;
+  const maybeError = record.error;
+  let detail: unknown = null;
+  if (typeof maybeError === "string") {
+    detail = maybeError;
+  } else if (
+    maybeError !== null &&
+    typeof maybeError === "object" &&
+    !Array.isArray(maybeError) &&
+    typeof (maybeError as Record<string, unknown>).message === "string"
+  ) {
+    detail = (maybeError as Record<string, unknown>).message;
+  } else if (typeof record.message === "string") {
+    detail = record.message;
+  }
+  if (typeof detail !== "string") return null;
+  const trimmed = detail.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.length > MAX_ERROR_DETAIL_LENGTH
+    ? trimmed.slice(0, MAX_ERROR_DETAIL_LENGTH)
+    : trimmed;
+}
+
+/**
  * Create an AI Guide sender bound to a transport and endpoint.
  *
  * Errors are always mapped to a useful, player-facing message — the caller
@@ -75,7 +125,14 @@ export function createAiChatClient(options: AiChatClientOptions = {}): AiChatSen
     }
 
     if (!response.ok) {
-      throw new Error(`AI Guide request failed (HTTP ${response.status}). Please try again.`);
+      // Surface a safe bounded JSON error message when the backend provides
+      // one; otherwise keep the useful generic fallback.
+      const detail = await readErrorDetail(response);
+      throw new Error(
+        detail !== null
+          ? `AI Guide: ${detail}`
+          : `AI Guide request failed (HTTP ${response.status}). Please try again.`,
+      );
     }
 
     let payload: unknown;

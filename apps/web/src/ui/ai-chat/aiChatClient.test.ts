@@ -77,10 +77,66 @@ describe("createAiChatClient — response handling", () => {
     });
   });
 
-  it("maps a non-2xx status to a useful error", async () => {
-    const fetchImpl = mockJsonFetch({ error: "boom" }, { ok: false, status: 500 });
+  it("surfaces the backend's bounded JSON error ({error: {code, message}})", async () => {
+    const fetchImpl = mockJsonFetch(
+      {
+        error: {
+          code: "message_too_long",
+          message: "Request body is too large (maximum 16384).",
+        },
+      },
+      { ok: false, status: 413 },
+    );
     await expect(client(fetchImpl)({ message: "Move?" })).rejects.toThrow(
-      "AI Guide request failed (HTTP 500). Please try again.",
+      "AI Guide: Request body is too large (maximum 16384).",
+    );
+    // The error code must not leak into the player-facing message.
+    await expect(client(mockJsonFetch({ error: { code: "ai_error", message: "The AI service is busy. Try again shortly." } }, { ok: false, status: 502 }))({ message: "Move?" })).rejects.toThrow(
+      "AI Guide: The AI service is busy. Try again shortly.",
+    );
+  });
+
+  it("caps a backend error message at the bounded length", async () => {
+    const longMessage = "x".repeat(500);
+    const fetchImpl = mockJsonFetch(
+      { error: { code: "internal_error", message: longMessage } },
+      { ok: false, status: 500 },
+    );
+    await expect(client(fetchImpl)({ message: "Move?" })).rejects.toThrow(
+      "AI Guide: " + "x".repeat(200),
+    );
+  });
+
+  it("keeps the generic fallback when the error body has the wrong shape", async () => {
+    const cases: unknown[] = [
+      { error: {} }, // empty object (no message)
+      { error: { code: "ai_error" } }, // missing message
+      { error: { code: "ai_error", message: 42 } }, // non-string message
+      "not an object",
+      null,
+    ];
+    for (const body of cases) {
+      const fetchImpl = mockJsonFetch(body, { ok: false, status: 500 });
+      await expect(client(fetchImpl)({ message: "Move?" })).rejects.toThrow(
+        "AI Guide request failed (HTTP 500). Please try again.",
+      );
+    }
+  });
+
+  it("keeps the generic fallback for a non-JSON error body", async () => {
+    const fetchImpl = vi.fn(
+      async (_url: unknown, _options?: unknown): Promise<Response> => {
+        return {
+          ok: false,
+          status: 503,
+          json: async () => {
+            throw new Error("not json");
+          },
+        } as unknown as Response;
+      },
+    );
+    await expect(client(fetchImpl)({ message: "Move?" })).rejects.toThrow(
+      "AI Guide request failed (HTTP 503). Please try again.",
     );
   });
 
