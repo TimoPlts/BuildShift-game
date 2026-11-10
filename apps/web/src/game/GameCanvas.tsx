@@ -24,6 +24,13 @@ export interface GameRuntimeActions {
    * "Play Again" / "Rematch" button.
    */
   requestRematch: () => boolean;
+  /**
+   * Gameplay-input suppression seam. While the in-game UI owns the keyboard
+   * (e.g. the AI Guide chat input is focused) the runtime suppresses all
+   * gameplay input; normal capture is restored when `false` is passed
+   * (input blur, panel close, or unmount).
+   */
+  setGameplayInputSuppressed: (suppressed: boolean) => void;
 }
 
 /**
@@ -104,6 +111,9 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
             leaveRoom: () => r.leaveRoom(),
             rejoinRoom: () => r.rejoinRoom(),
             requestRematch: () => r.requestRematch(),
+            setGameplayInputSuppressed: (s: boolean) => {
+              r.setGameplayInputSuppressed(s);
+            },
           });
 
           // Subscribe to the authoritative match-state updates (score / phase /
