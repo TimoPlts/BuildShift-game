@@ -146,6 +146,18 @@
     padding: 0.45rem 0.6rem;
   }
 
+  .match-hud {
+    padding: 0.5rem 0.9rem;
+  }
+
+  .match-hud__score-value {
+    font-size: 1.25rem;
+  }
+
+  .match-hud__timer-track {
+    width: 8rem;
+  }
+
   .build-hud__types {
     gap: 0.25rem;
   }
@@ -187,5 +199,38 @@
     right: 0.5rem;
     transform: none;
     padding: 0.45rem 0.8rem;
+  }
+
+  .match-hud__score-value {
+    font-size: 1.15rem;
+  }
+
+  .match-hud__timer-track {
+    width: 7rem;
+  }
+
+  /* Bottom-center stack: the build panel would collide with the 9.5rem
+     corner panels on narrow screens, so it moves up into its own lane and
+     the edit panel stacks above it. The developer-flavored grid
+     coordinates are dropped entirely at this size. */
+  .build-hud {
+    bottom: 5.4rem;
+    padding: 0.45rem 0.7rem;
+    gap: 0.3rem;
+  }
+
+  .build-hud__grid {
+    display: none;
+  }
+
+  .build-hud__type {
+    min-width: 2.6rem;
+    padding: 0.25rem 0.35rem;
+  }
+
+  .build-edit-hud {
+    bottom: 9.8rem;
+    max-width: calc(100vw - 1rem);
+    padding: 0.4rem 0.7rem;
   }
 }

@@ -43,6 +43,10 @@ html, body {
   margin: 0;
   color: #aeb9ca;
 }
+/* ── Crosshair ──
+ * A compact competitive crosshair: a small center dot plus four short ticks
+ * separated by a gap, so the exact aim point stays readable over any scene
+ * without a solid line through the center. */
 .crosshair {
   position: absolute;
   top: 50%;
@@ -51,27 +55,47 @@ html, body {
   height: 18px;
   transform: translate(-50%, -50%);
   pointer-events: none;
+  /* Center dot. */
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgb(255 255 255 / 95%) 0 1.25px,
+    transparent 1.9px
+  );
 }
 .crosshair::before,
 .crosshair::after {
   content: "";
   position: absolute;
-  background: rgb(255 255 255 / 85%);
-  box-shadow: 0 0 0 1px rgb(0 0 0 / 45%);
+  /* Soft dark halo keeps the ticks legible over bright geometry. */
+  filter: drop-shadow(0 0 1px rgb(0 0 0 / 70%));
 }
+/* Horizontal ticks: left + right, with a clear gap around the center dot. */
 .crosshair::before {
   top: 50%;
   left: 0;
   width: 100%;
   height: 2px;
   transform: translateY(-50%);
+  background: linear-gradient(
+    to right,
+    rgb(255 255 255 / 90%) 0 5px,
+    transparent 5px 13px,
+    rgb(255 255 255 / 90%) 13px 18px
+  );
 }
+/* Vertical ticks: top + bottom. */
 .crosshair::after {
   left: 50%;
   top: 0;
   width: 2px;
   height: 100%;
   transform: translateX(-50%);
+  background: linear-gradient(
+    to bottom,
+    rgb(255 255 255 / 90%) 0 5px,
+    transparent 5px 13px,
+    rgb(255 255 255 / 90%) 13px 18px
+  );
 }
 .pointer-lock-overlay {
   position: absolute;
@@ -323,27 +347,32 @@ html, body {
     transform: scale(1);
   }
 }
+/* Phase row: a quiet secondary strip under the score. The round number stays
+   the primary cue; the raw phase word (e.g. "IN PROGRESS") is deliberately
+   demoted — it reads as debug vocabulary during normal gameplay, while the
+   authoritative score, timer and lifecycle banners carry the real state. */
 .match-hud__phase-row {
   display: flex;
-  align-items: center;
-  gap: 0.6rem;
+  align-items: baseline;
+  gap: 0.5rem;
 }
 .match-hud__round {
   font-size: 0.75rem;
-  color: #aeb9ca;
+  font-weight: 600;
   letter-spacing: 0.03em;
+  color: #aeb9ca;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase {
-  font-size: 0.7rem;
-  font-weight: 600;
+  font-size: 0.62rem;
+  font-weight: 500;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #8b93a7;
+  letter-spacing: 0.08em;
+  color: rgb(139 147 167 / 80%);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase--active {
-  color: #f5b642;
+  color: rgb(245 182 66 / 75%);
 }
 .build-hud {
   position: absolute;
@@ -500,9 +529,11 @@ html, body {
 .build-hud__validity--invalid {
   color: #f0616d;
 }
+/* Grid coordinates: real data, but developer-flavored — demoted to a quiet
+   read-out so the validity state stays the primary cue. */
 .build-hud__grid {
-  font-size: 0.7rem;
-  color: #8b93a7;
+  font-size: 0.64rem;
+  color: rgb(139 147 167 / 70%);
   font-variant-numeric: tabular-nums;
 }
 
@@ -526,80 +557,86 @@ html, body {
   z-index: 1000;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
-.build-edit-hud--feedback-only {
-  border-color: rgb(255 255 255 / 12%);
-}
-.build-edit-hud__top-row {
+/* Header row: title + target read-out + pending summary + state chips.
+   Wraps on narrow viewports so the panel never overflows the screen. */
+.build-edit-hud__header {
   display: flex;
-  align-items: center;
-  gap: 0.8rem;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.3rem 0.7rem;
 }
-.build-edit-hud__mode-label {
+/* "EDIT MODE" title — the panel's mode word, kept quiet. */
+.build-edit-hud__title {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #8b93a7;
-}
-.build-edit-hud__mode-label--active {
+  letter-spacing: 0.1em;
   color: #60a5fa;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .build-edit-hud__target {
-  font-size: 0.85rem;
+  font-size: 0.8rem;
   font-weight: 600;
   color: #e6e8ee;
   letter-spacing: 0.02em;
-}
-.build-edit-hud__edits {
-  display: flex;
-  gap: 0.35rem;
-}
-.build-edit-hud__edit {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.12rem;
-  padding: 0.3rem 0.55rem;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 0.35rem;
-  background: rgb(255 255 255 / 4%);
-  min-width: 3.6rem;
-  /* Settle selection changes smoothly instead of snapping. */
-  transition:
-    border-color 150ms ease-out,
-    background 150ms ease-out;
-}
-.build-edit-hud__edit--empty {
-  border-style: dashed;
-}
-.build-edit-hud__edit--selected {
-  border-color: rgb(96 165 250 / 65%);
-  background: rgb(96 165 250 / 14%);
-}
-.build-edit-hud__edit-key {
-  font-size: 0.72rem;
-  font-weight: 700;
   font-variant-numeric: tabular-nums;
-  color: #8b93a7;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
-.build-edit-hud__edit--selected .build-edit-hud__edit-key {
-  color: #60a5fa;
+/* Aim prompt (no target): a friendly secondary line, not an error. */
+.build-edit-hud__aim {
+  font-size: 0.72rem;
+  color: #aeb9ca;
 }
-.build-edit-hud__edit-label {
-  font-size: 0.6rem;
-  text-transform: uppercase;
+/* "No target" chip: dashed to read as an empty state. */
+.build-edit-hud__none {
+  font-size: 0.64rem;
+  font-weight: 600;
   letter-spacing: 0.04em;
   color: #8b93a7;
+  padding: 0.1rem 0.45rem;
+  border: 1px dashed rgb(255 255 255 / 22%);
+  border-radius: 0.3rem;
+  background: rgb(255 255 255 / 4%);
 }
-.build-edit-hud__edit--selected .build-edit-hud__edit-label {
-  color: #93c5fd;
+/* Pending tile / ramp-variant summary. */
+.build-edit-hud__tiles {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #aeb9ca;
+  font-variant-numeric: tabular-nums;
+}
+/* Blocked-confirm reason (takes precedence over the pending chip). */
+.build-edit-hud__invalid {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #f0616d;
+}
+.build-edit-hud__pending {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: #fbbf24;
+}
+/* Result-only mode: the panel shrinks to a feedback pill after the edit
+   session ends, so it stops reading as an active panel. */
+.build-edit-hud--result-only {
+  padding: 0.3rem 0.7rem;
+  border-color: rgb(255 255 255 / 12%);
+  background: rgb(8 12 20 / 68%);
 }
 .build-edit-hud__feedback {
-  font-size: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.03em;
-  padding: 0.15rem 0.6rem;
+  padding: 0.18rem 0.65rem;
   border-radius: 0.35rem;
+}
+.build-edit-hud__glyph {
+  line-height: 1;
+  font-size: 0.8rem;
 }
 .build-edit-hud__feedback--accepted {
   color: #34d399;
@@ -614,14 +651,21 @@ html, body {
   background: rgb(96 165 250 / 12%);
 }
 .build-edit-hud__hint {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.15rem 0.5rem;
   font-size: 0.62rem;
-  color: #8b93a7;
+  font-weight: 500;
   letter-spacing: 0.04em;
+  color: #8b93a7;
+}
+/* Ready state: the binds are actionable right now — read as a quiet green.
+   The bind words themselves are emphasized within the hint. */
+.build-edit-hud__hint--ok {
+  color: rgb(52 211 153 / 90%);
 }
 .build-edit-hud__hint--warn {
   color: #fbbf24;
-}
-.build-edit-hud__hint span {
-  color: #8b93a7;
   font-weight: 700;
 }
