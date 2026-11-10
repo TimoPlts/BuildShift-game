@@ -63,7 +63,8 @@ information below. If the supplied rules do not answer a question,
 say so instead of guessing.
 
 Objective (Energy Box Fights):
-- Fight the other player and win rounds to win the match.
+- Fight the other player and win rounds to win the match. You win the
+  match by winning 3 rounds first.
 - You win a round when the opponent's health reaches zero, or when the
   90-second round timer expires you are still standing (a time-expired
   round is won by the player with the higher health; equal health is a
@@ -163,13 +164,15 @@ def complete(client, messages) -> str:
             max_tokens=MAX_TOKENS,
         )
     except Exception as exc:
-        # Do not include request payloads or headers (the key travels in
-        # the Authorization header, not in this message).
-        detail = str(exc).replace("\n", " ")
+        # Never echo raw exception text: an SDK exception can carry
+        # arbitrary upstream body text that may include credentials.
+        # Keep only the exception type and a network/auth hint; the
+        # original exception stays attached as __cause__ for offline
+        # debugging (it is never printed by this script).
         raise ChatError(
             f"The model request failed ({type(exc).__name__}). Check your "
             f"network connection and that your personal key has access to "
-            f"{MODEL}. Detail: {detail[:300]}"
+            f"{MODEL}."
         ) from exc
 
     if not response.choices:

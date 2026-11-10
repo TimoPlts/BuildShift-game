@@ -10,6 +10,9 @@ returns canned responses. Verifies:
    the required model/reasoning/token parameters.
 3. Interactive mode retains the system prompt and earlier turns, bounds
    the history, and never stores a failed or incomplete turn.
+4. Error output never echoes raw exception text (a fake exception with a
+   made-up secret sentinel must not appear in any displayed error), and
+   the system prompt's round-win rule matches WIN_ROUNDS in game config.
 
 Run:  python experiments/llm/selftest_offline.py
 Works with or without the real ``openai`` package installed: if missing,
@@ -193,6 +196,70 @@ class InteractiveTests(unittest.TestCase):
         out = run_scripted_interactive(fake, ["/quit"], client=fake)
         self.assertEqual(fake.requests, [])
         self.assertIn("BuildShift game chat", out)
+
+
+class ErrorOutputSecurityTests(unittest.TestCase):
+    """Regression: SDK exceptions may carry arbitrary upstream body text.
+
+    The displayed ChatError must contain only the exception type and a
+    network/auth hint — never raw exception detail — while the original
+    exception remains chained internally.
+    """
+
+    SENTINEL = "SENTINEL_SECRET_LEAK_PROBE_XYZZY_9988"
+
+    @classmethod
+    def setUpClass(cls):
+        cls.boom = RuntimeError(
+            f"500 from upstream, body: \"authorization\": "
+            f"\"Bearer {cls.SENTINEL}\""
+        )
+
+    def test_chaterror_hides_detail_but_keeps_type_and_cause(self):
+        fake = FakeClient([self.boom])
+        with self.assertRaises(chat.ChatError) as ctx:
+            chat.complete(fake, [{"role": "user", "content": "hi"}])
+        message = str(ctx.exception)
+        self.assertIn("RuntimeError", message)
+        self.assertNotIn(self.SENTINEL, message)
+        self.assertNotIn("Bearer", message)
+        # Exception chaining preserved internally, not displayed.
+        self.assertIs(ctx.exception.__cause__, self.boom)
+
+    def test_run_once_does_not_print_sentinel(self):
+        fake = FakeClient([self.boom])
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            with self.assertRaises(SystemExit):
+                chat.run_once("q", client=fake)
+        combined = out.getvalue() + err.getvalue()
+        self.assertIn("error:", combined)
+        self.assertNotIn(self.SENTINEL, combined)
+
+    def test_interactive_does_not_print_sentinel(self):
+        fake = FakeClient([self.boom, {"content": "fine"}])
+        out = run_scripted_interactive(
+            fake, ["q1", "q2", "/quit"], client=fake
+        )
+        self.assertIn("error:", out)
+        self.assertNotIn(self.SENTINEL, out)
+
+
+class SystemPromptConfigTests(unittest.TestCase):
+    def test_round_win_rule_matches_win_rounds_config(self):
+        """The 'first to N rounds wins' rule must match WIN_ROUNDS."""
+        import re
+
+        match_ts = os.path.join(
+            os.path.dirname(os.path.abspath(chat.__file__)),
+            "..", "..", "packages", "game-config", "src", "match.ts",
+        )
+        with open(match_ts, encoding="utf-8") as fh:
+            source = fh.read()
+        found = re.search(r"export const WIN_ROUNDS = (\d+);", source)
+        self.assertIsNotNone(found, "WIN_ROUNDS not found in game config")
+        rounds = found.group(1)
+        self.assertIn(f"winning {rounds} rounds first", chat.SYSTEM_PROMPT)
 
 
 if __name__ == "__main__":
