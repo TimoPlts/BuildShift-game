@@ -9,12 +9,16 @@
  *  - `ws://host:port`  → `http://host:port`
  *  - `wss://host:port` → `https://host:port`
  *
- * The resolved value comes from `resolveGameServerUrl` (`VITE_GAME_SERVER_URL`
- * or the local-dev fallback `ws://localhost:2567`), so there is a single
+ * The resolved value comes from gameplay's `resolveGameServerUrl` (runtime
+ * override, `VITE_GAME_SERVER_URL`, or the current browser host), so there is a single
  * source of configuration for both the authoritative game traffic and the
  * AI Guide endpoint.
  */
-import { resolveGameServerUrl, type ServerUrlEnv } from "../../network/colyseus/serverUrl";
+import {
+  resolveGameServerUrl,
+  type BrowserLocationLike,
+  type ServerUrlEnv,
+} from "../../game/network/serverUrl";
 
 /**
  * Derive the HTTP(S) origin that serves `/api/ai-chat` from the game-server
@@ -26,8 +30,9 @@ import { resolveGameServerUrl, type ServerUrlEnv } from "../../network/colyseus/
  */
 export function resolveAiChatOrigin(
   environment?: ServerUrlEnv,
+  browserLocation?: BrowserLocationLike,
 ): string {
-  const gameServerUrl = resolveGameServerUrl(environment);
+  const gameServerUrl = resolveGameServerUrl(environment, browserLocation);
   const parsed = new URL(gameServerUrl);
   switch (parsed.protocol) {
     case "ws:":
@@ -45,6 +50,6 @@ export function resolveAiChatOrigin(
 }
 
 /** The full `/api/ai-chat` endpoint for the given environment. */
-export function aiChatEndpoint(environment?: ServerUrlEnv): string {
-  return `${resolveAiChatOrigin(environment)}/api/ai-chat`;
+export function aiChatEndpoint(environment?: ServerUrlEnv, browserLocation?: BrowserLocationLike): string {
+  return `${resolveAiChatOrigin(environment, browserLocation)}/api/ai-chat`;
 }

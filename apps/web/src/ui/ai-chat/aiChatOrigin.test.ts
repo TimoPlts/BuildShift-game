@@ -2,6 +2,18 @@ import { describe, expect, it } from "vitest";
 import { aiChatEndpoint, resolveAiChatOrigin } from "./aiChatOrigin";
 
 describe("resolveAiChatOrigin — derived from the game-server URL config", () => {
+  it("uses the runtime game-server override ahead of the build-time URL", () => {
+    expect(aiChatEndpoint(
+      { VITE_GAME_SERVER_URL: "ws://unused.example.test:2567" },
+      { protocol: "http:", hostname: "frontend.example.test", search: "?gameServer=ws://127.0.0.1:25809" },
+    )).toBe("http://127.0.0.1:25809/api/ai-chat");
+  });
+
+  it("uses the current remote browser hostname and HTTPS scheme", () => {
+    expect(aiChatEndpoint({}, { protocol: "https:", hostname: "game.example.test" }))
+      .toBe("https://game.example.test:2567/api/ai-chat");
+  });
+
   it("falls back to the local dev origin when VITE_GAME_SERVER_URL is unset", () => {
     expect(resolveAiChatOrigin({})).toBe("http://localhost:2567");
   });
