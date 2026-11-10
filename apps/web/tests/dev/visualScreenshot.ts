@@ -274,9 +274,13 @@ const playerCount = async (page: Page): Promise<number> => {
 /**
  * Dev-only close-up capture: temporarily overrides the active camera via
  * onBeforeRenderObservable (same pattern as 08-arena-overview) to frame the
- * subject from +Z. Camera is placed 2.5 m toward +Z from the subject and
- * 1.7 m up, looking at chest height (y+1.0). The observer is removed in a
- * finally block so the third-person controller re-claims the camera.
+ * subject. Camera poses, relative to the subject's authoritative position:
+ *   - "opponent" (03): frontal — 2.5 m toward +Z, 1.7 m up
+ *   - "local" (04/05): three-quarter — 2.0 m toward −X, 1.7 m up, 2.0 m toward +Z
+ *     (straight-on foreshortening made the attached weapon read as a small
+ *     dark block, so the weapon shots use the angled pose)
+ * Both poses look at chest height (subject y+1.0). The observer is removed in
+ * a finally block so the third-person controller re-claims the camera.
  *
  * @param subjectId "local" | "opponent" — which player's authoritative
  *                 x/y/z from room state to use as the framing subject.
@@ -316,8 +320,11 @@ const captureCloseUp = async (
     return { file, subjectPos: null, hook: false };
   }
 
-  // Install the camera override (same pattern as 08)
-  const hook = await page.evaluate((pos: [number, number, number]) => {
+  // Install the camera override (same pattern as 08). Local weapon shots
+  // (04/05) use the three-quarter pose; 03 keeps the frontal pose.
+  const camOffset: [number, number, number] =
+    subjectId === "local" ? [-2.0, 1.7, 2.0] : [0, 1.7, 2.5];
+  const hook = await page.evaluate(({ pos, off }: { pos: [number, number, number]; off: [number, number, number] }) => {
     const w = window as any;
     const scene = w.__buildshiftEngine?.scenes?.[0];
     const cam = scene?.activeCamera;
@@ -325,13 +332,13 @@ const captureCloseUp = async (
     const Vector3ctor = cam.position.constructor;
     const [sx, sy, sz] = pos;
     (w as any).__visualCloseUpObserver = scene.onBeforeRenderObservable.add(() => {
-      // Camera: 2.5 m toward +Z from subject, 1.7 m up
-      cam.position.copyFrom(new Vector3ctor(sx, sy + 1.7, sz + 2.5));
+      // Camera: subject position + per-scenario offset
+      cam.position.copyFrom(new Vector3ctor(sx + off[0], sy + off[1], sz + off[2]));
       // Look at chest: subject y + 1.0
       cam.setTarget(new Vector3ctor(sx, sy + 1.0, sz));
     });
     return true;
-  }, subjectPos);
+  }, { pos: subjectPos, off: camOffset });
 
   try {
     await sleep(400);
@@ -482,7 +489,9 @@ async function main(): Promise<number> {
     }
 
     // 04 — assault rifle equipped: dev-only close-up of local player holding
-    //      the rifle. Subject = local player's authoritative x/y/z.
+    //      the rifle. Subject = local player's authoritative x/y/z. Camera:
+    //      three-quarter (−2.0 x, +1.7 y, +2.0 z) so the weapon is not seen
+    //      straight-on.
     {
       await pressCode(a, "Digit1");
       await sleep(450);
@@ -495,7 +504,9 @@ async function main(): Promise<number> {
     }
 
     // 05 — shotgun equipped: dev-only close-up of local player holding the
-    //      shotgun. Subject = local player's authoritative x/y/z.
+    //      shotgun. Subject = local player's authoritative x/y/z. Camera:
+    //      three-quarter (−2.0 x, +1.7 y, +2.0 z) so the weapon is not seen
+    //      straight-on.
     {
       await pressCode(a, "Digit2");
       await sleep(550);
