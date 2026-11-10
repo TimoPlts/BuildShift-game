@@ -22,6 +22,8 @@ import type { AddressInfo } from "node:net";
 
 import { ROOMS, type RoomType } from "@buildshift/protocol";
 
+import { createAiChatRouter } from "./aiChat/aiChatRoute.js";
+import { createChatService, type ChatService } from "./aiChat/chatService.js";
 import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
 
 export type GameServer = Server;
@@ -33,16 +35,43 @@ export type GameServer = Server;
 export const TWO_PLAYER_ROOM: RoomType = ROOMS.TWO_PLAYER_MOVEMENT;
 
 /**
+ * Dependency hooks for {@link createServer} (all optional).
+ */
+export interface CreateServerDeps {
+  /**
+   * Chat service backing `POST /api/ai-chat`. Defaults to the real service
+   * (bounded in-memory store + school LLM); tests may inject a stub.
+   */
+  readonly aiChatService?: ChatService;
+}
+
+/**
  * Create a Colyseus server configured with the WebSocket transport and the
  * canonical gameplay room. The server is NOT listening yet — call `startServer`
  * to bind a port.
+ *
+ * The Colyseus endpoints are attached to an Express app that also serves the
+ * AI chat route (`POST /api/ai-chat`) on the SAME origin/port, so the web
+ * client keeps resolving one game-server URL for both.
  */
-export function createServer(options: ServerOptions = {}): GameServer {
+export function createServer(
+  options: ServerOptions = {},
+  deps: CreateServerDeps = {},
+): GameServer {
   const transport = new WebSocketTransport();
+  const aiChatService = deps.aiChatService ?? createChatService();
+  const aiChatRouter = createAiChatRouter(aiChatService);
   const server = new Server({
     gracefullyShutdown: false,
     greet: true,
     transport,
+    // Mount the AI chat route on the SAME Express/HTTP origin as the
+    // Colyseus endpoints (the transport creates the Express app when an
+    // `express` callback is provided).
+    express: (app) => {
+      app.disable("x-powered-by");
+      app.use(aiChatRouter);
+    },
     ...options,
   });
   server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
