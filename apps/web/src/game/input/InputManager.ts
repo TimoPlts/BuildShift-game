@@ -86,6 +86,15 @@ export class InputManager {
   private readonly movementOut: LocalMovementInput = { x: 0, z: 0 };
   private jumpPressed = false;
   private pointerLocked = false;
+  /**
+   * Gameplay-input suppression seam: while `true`, no gameplay input is
+   * recorded at all — no held keys, no latched action edges, no mouse-bind
+   * presses — so typing into game UI (e.g. the AI Guide chat input) can
+   * never trigger movement, jump, fire, weapon switch, reload, crouch or
+   * any other bound action. Game UI sets this on input focus and clears it
+   * on blur / close / unmount.
+   */
+  private gameplayInputSuppressed = false;
   private inputCleared = false;
   private readonly inputClearedListeners = new Set<() => void>();
   private disposed = false;
@@ -127,6 +136,25 @@ export class InputManager {
 
   public isPointerLocked(): boolean {
     return this.pointerLocked;
+  }
+
+  /**
+   * Suppress (or restore) all gameplay input.
+   *
+   * Enabling the suppression immediately clears any captured input, so a key
+   * that was physically held at the moment the UI took focus cannot keep
+   * driving movement; disabling it restores normal capture from the next
+   * event on (nothing is ever replayed, since key state is re-observed live).
+   */
+  public setGameplayInputSuppressed(suppressed: boolean): void {
+    if (this.disposed) return;
+    if (suppressed === this.gameplayInputSuppressed) return;
+    this.gameplayInputSuppressed = suppressed;
+    if (suppressed) this.clearInput();
+  }
+
+  public isGameplayInputSuppressed(): boolean {
+    return this.gameplayInputSuppressed;
   }
 
   public isFireHeld(): boolean {
@@ -305,6 +333,7 @@ export class InputManager {
   }
 
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (this.gameplayInputSuppressed) return;
     const actions = this.actions.actionsFor(event.code);
     if (actions.length === 0) return;
     this.heldCodes.add(event.code);
@@ -341,6 +370,7 @@ export class InputManager {
   };
 
   private readonly handleMouseDown = (event: MouseEvent): void => {
+    if (this.gameplayInputSuppressed) return;
     if (!this.pointerLocked || !this.actions.matches("primaryAction", mouseBindingCode(event.button))) return;
     this.fireHeld = true;
     this.firePressed = true;
@@ -353,6 +383,7 @@ export class InputManager {
 
   /** Other mouse binds (side buttons, …) drive actions exactly like keys. */
   private readonly handleMouseBindPress = (code: string): void => {
+    if (this.gameplayInputSuppressed) return;
     if (this.actions.matches("primaryAction", code)) return;
     this.handleKeyDown({ code, repeat: false } as KeyboardEvent);
   };

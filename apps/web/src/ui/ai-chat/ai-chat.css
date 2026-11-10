@@ -1,0 +1,198 @@
+/* AI Guide — in-game How-to-Play chat panel.
+ *
+ * Floats top-right over the viewport (below the score bar area). The panel is
+ * pure presentation; gameplay-input suppression is wired through
+ * `onInputFocusChange`, not here. */
+
+.ai-chat {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  font-family: var(--font-ui, system-ui, sans-serif);
+}
+
+.ai-chat__toggle {
+  background: rgba(12, 16, 24, 0.85);
+  color: #e8edf5;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  padding: 6px 14px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.ai-chat__toggle:hover {
+  background: rgba(24, 32, 48, 0.95);
+}
+
+.ai-chat--closed .ai-chat__panel {
+  display: none;
+}
+
+.ai-chat__panel {
+  width: 340px;
+  max-height: min(70vh, 480px);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: rgba(12, 16, 24, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 12px;
+  padding: 12px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+}
+
+.ai-chat__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ai-chat__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: #e8edf5;
+}
+
+.ai-chat__actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ai-chat__new,
+.ai-chat__close {
+  background: rgba(255, 255, 255, 0.08);
+  color: #cfd8e6;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.ai-chat__new:hover,
+.ai-chat__close:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+.ai-chat__welcome {
+  margin: 0;
+  color: #9fb0c8;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+/* Bounded visible history: fixed-height scroll area, newest line on top of
+ * the fold; the component itself only renders the last N messages. */
+.ai-chat__list {
+  overflow-y: auto;
+  min-height: 80px;
+  max-height: min(50vh, 320px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-chat__messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ai-chat__message {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 95%;
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+  /* Plain text only — replies wrap, never break layout. */
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.ai-chat__message--player {
+  align-self: flex-end;
+  background: rgba(64, 120, 255, 0.22);
+  color: #e8edf5;
+}
+
+.ai-chat__message--assistant {
+  align-self: flex-start;
+  background: rgba(255, 255, 255, 0.07);
+  color: #dfe6f0;
+}
+
+.ai-chat__message-role {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9fb0c8;
+}
+
+.ai-chat__status {
+  margin: 0;
+  color: #9fb0c8;
+  font-size: 12px;
+  font-style: italic;
+}
+
+.ai-chat__error {
+  margin: 0;
+  color: #ff9d9d;
+  font-size: 12px;
+}
+
+.ai-chat__form {
+  display: flex;
+  gap: 6px;
+}
+
+.ai-chat__input {
+  flex: 1;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 13px;
+  color: #e8edf5;
+}
+
+.ai-chat__input::placeholder {
+  color: #7d8ea8;
+}
+
+.ai-chat__input:focus {
+  outline: 2px solid rgba(64, 120, 255, 0.7);
+  outline-offset: 1px;
+}
+
+.ai-chat__send {
+  background: rgba(64, 120, 255, 0.85);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 7px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.ai-chat__send:disabled {
+  opacity: 0.45;
+  cursor: default;
+}

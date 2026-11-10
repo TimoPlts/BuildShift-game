@@ -7,6 +7,7 @@ import {
   MatchEndScreen,
 } from "./ui";
 import { useMatchPresentation } from "./ui/useMatchPresentation";
+import { AiChatPanel } from "./ui/ai-chat";
 
 /**
  * App — the top-level BuildShift 1v1 Energy Box Fight shell.
@@ -30,6 +31,7 @@ import { useMatchPresentation } from "./ui/useMatchPresentation";
  */
 export function App() {
   const [lifecycle, setLifecycle] = useState<MatchLifecycleView | null>(null);
+  const [aiChatOpen, setAiChatOpen] = useState(false);
   const actionsRef = useRef<GameRuntimeActions | null>(null);
 
   const presentation = useMatchPresentation(lifecycle);
@@ -48,6 +50,15 @@ export function App() {
 
   const handleLeave = useCallback(() => {
     actionsRef.current?.leaveRoom();
+  }, []);
+
+  /**
+   * Gameplay-input suppression seam: while the AI Guide chat input is
+   * focused, gameplay controls must not fire; blur / close / unmount
+   * restore normal input.
+   */
+  const handleAiChatInputFocus = useCallback((focused: boolean) => {
+    actionsRef.current?.setGameplayInputSuppressed(focused);
   }, []);
 
   return (
@@ -100,6 +111,15 @@ export function App() {
           onLeave={handleLeave}
         />
       )}
+
+      {/* ── In-game AI Guide / How-to-Play chat (mocked backend in tests) ──
+       * Mounted at page level so the conversation (and its conversation id)
+       * stays alive for the whole session, open or closed. */}
+      <AiChatPanel
+        open={aiChatOpen}
+        onOpenChange={setAiChatOpen}
+        onInputFocusChange={handleAiChatInputFocus}
+      />
     </main>
   );
 }
