@@ -4072,8 +4072,15 @@ test.describe("Physical edited-geometry acceptance", () => {
         const client = w.__buildshiftNetworking.client.deref();
         const send = client.send.bind(client);
         w.__surfaceFRequests = [];
+        w.__surfaceFFired = false;
         client.send = (type: string, payload: any) => {
-          if (type === "build:placement_request") w.__surfaceFRequests.push({ at: performance.now(), ...payload });
+          if (type === "build:placement_request") {
+            w.__surfaceFRequests.push({ at: performance.now(), ...payload });
+            if (!w.__surfaceFFired && payload.buildType === "ramp" && payload.grid?.x === 1 && payload.grid?.z === 1) {
+              w.__surfaceFFired = true;
+              (w as any).__surfaceFNotify?.();
+            }
+          }
           return send(type, payload);
         };
       });
@@ -4119,22 +4126,16 @@ test.describe("Physical edited-geometry acceptance", () => {
       await aim.at(cellCentre(1, 1));
       await pressKey(a, "Mouse4");
       await sleep(120);
+      // Arm a Node binding: the first LOCAL ramp request for grid (1,0,1)
+      // triggers a real CDP Mouse3 (side-button) switch via pressKey.
+      let mouse3Sent = false;
+      await a.exposeBinding("__surfaceFNotify", async () => {
+        if (mouse3Sent) return;
+        mouse3Sent = true;
+        await pressKey(a, "Mouse3");
+      });
       await setPrimaryFire(a, true);
       try {
-        // Synchronize the Mouse3 switch to the first LOCAL ramp request (not the
-        // authoritative echo). Dispatch the back-button click in-page (same
-        // mechanism as setPrimaryFire) so the piece switch lands before the
-        // next 334 ms turbo tick.
-        await expect.poll(
-          async () => a.evaluate(() => (window as any).__surfaceFRequests.some((r: any) => r.buildType === "ramp" && r.grid?.x === 1 && r.grid?.z === 1)),
-          { message: "local ramp request observed", timeout: 10_000, intervals: [10] }
-        ).toBe(true);
-        await a.evaluate(() => {
-          const el = (document.pointerLockElement ?? document.querySelector("canvas.game-canvas")) as HTMLElement | null;
-          // buttons 9 = primary (1) + back (8); buttons 1 = primary only after release.
-          el?.dispatchEvent(new MouseEvent("mousedown", { button: 3, buttons: 9, bubbles: true }));
-          el?.dispatchEvent(new MouseEvent("mouseup", { button: 3, buttons: 1, bubbles: true }));
-        });
         await waitStructure(a, isPiece("ramp", 1, 0, 1), "held Mouse 5 ramp");
         await waitStructure(a, (s) => s.buildType === "wall" && tileEdges(1, 1).has(structureSlots("wall", s.grid, s.rotation)[0]), "held → Mouse 4 wall from the ramp");
       } finally { await setPrimaryFire(a, false); }
