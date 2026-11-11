@@ -1,8 +1,8 @@
 # Assignment 09 — AI Guide (operator / student instructions)
 
 Status: **automated final validation pending, and live acceptance pending.**
-Mock and offline checks have passed, but the final gameplay browser
-validation is still being reviewed and the unfiltered full browser sweep has
+Mock and offline checks have passed and the browser repair passed review,
+but the unfiltered full browser sweep has
 **not** been completed; a private live run with the school key has **not**
 been done either (see [Acceptance status](#acceptance-status) and
 [Honest browser status](#honest-browser-status) below). This is an operator
@@ -316,8 +316,7 @@ Things to try (manual acceptance questions + behaviours):
   `page.exposeBinding` notify fired on the first local ramp request — replacing
   the earlier rejected in-page synthetic-event fix (`47951fe`, now preserved as
   history, **not** the current state). A **focused six-case** run passed against
-  it (`surface-f-real-input.log`: 6 passed). Fresh QA of this candidate is
-  **ongoing**.
+  it (`surface-f-real-input.log`: 6 passed). Fresh QA **approved** this candidate; it is integrated locally.
 - Therefore the full live gameplay browser acceptance (the unfiltered sweep)
   is **not** complete and remains a reported risk: only the focused six cases
   have passing evidence, and live school-key acceptance is still pending.
