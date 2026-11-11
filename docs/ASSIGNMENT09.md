@@ -1,9 +1,12 @@
 # Assignment 09 — AI Guide (operator / student instructions)
 
-Status: **ready for a private live acceptance run.** Mock and offline checks
-have passed; the final gameplay browser repair is still under review, and a
-clean full browser sweep has **not** been completed (see [Acceptance status](#acceptance-status)
-and [Honest browser status](#honest-browser-status) below).
+Status: **automated final validation pending, and live acceptance pending.**
+Mock and offline checks have passed, but the final gameplay browser
+validation is still being reviewed and the unfiltered full browser sweep has
+**not** been completed; a private live run with the school key has **not**
+been done either (see [Acceptance status](#acceptance-status) and
+[Honest browser status](#honest-browser-status) below). This is an operator
+handoff, not a statement that the feature is final.
 
 This document is the operator handoff for trying the Assignment 09 AI Guide.
 It covers the terminal experiment, the in-game guide, exact settings, and the
@@ -42,13 +45,18 @@ differently:
 
 ## 1. Terminal experiment (Python)
 
-Works from the game repository root (this worktree). Needs no game server and
-no browser.
+Run it from the Assignment 09 integration worktree
+(`/root/projects/buildshift/assignment09-integration`), not from another
+worktree. Needs no game server and no browser.
 
 ### One-time environment setup (isolated venv, pinned dependency)
 
 ```bash
-# From the repository root, create the venv once (kept out of Git via .gitignore)
+# Always work from the Assignment 09 integration worktree (NOT another
+# worktree such as Batch 2D), so these commands hit the integrated code:
+cd /root/projects/buildshift/assignment09-integration
+
+# Create the isolated venv once (kept out of Git via .gitignore):
 python3 -m venv .venv-llm
 
 # Activate it and install the pinned SDK (openai==3.26.0, the school guide's reference)
@@ -212,13 +220,20 @@ acceptance that has **not yet** been done by the automated pipeline.
    the previous answer (e.g. "then how does the shotgun compare?") — the model
    should use the retained context.
 
-### 5b. In-game guide acceptance (two terminals, from this worktree)
+### 5b. In-game guide acceptance (two terminals, from the integration worktree)
 
-Run both from the Assignment 09 worktree root.
+Run both from the Assignment 09 **integration** worktree
+(`/root/projects/buildshift/assignment09-integration`), **not** from another
+worktree. If a Batch 2D or other dev server is already running on port
+**2567** (game server) or **5173** (Vite web), stop that process first — a
+stale listener on those ports will shadow this worktree.
 
 **Terminal 1 — game server (this terminal owns the key):**
 
 ```bash
+# Run from the Assignment 09 integration worktree (NOT another worktree):
+cd /root/projects/buildshift/assignment09-integration
+
 # Load the key into THIS terminal only (server reads it from the environment):
 export VIVES_LLM_API_KEY="$(cat "$HOME/.config/ai-operations/vives-llm-key")"
 
@@ -232,6 +247,9 @@ Do **not** echo the key. If you skip the `export`, expect `ai_not_configured`
 **Terminal 2 — web app:**
 
 ```bash
+# Run from the Assignment 09 integration worktree (NOT another worktree):
+cd /root/projects/buildshift/assignment09-integration
+
 pnpm dev
 ```
 
@@ -288,18 +306,21 @@ Things to try (manual acceptance questions + behaviours):
 
 ## 7. Honest browser status (do not read this as a clean run)
 
-- **Do not** claim a clean, unfiltered 60/60 full browser suite pass.
+- **Do not** claim a clean, unfiltered 60/60 full browser suite pass. The full
+  60-case sweep is **still pending**.
 - The last full browser attempt **passed 54 cases and stopped at the
   "surface F" side-button-binds case** (one extra ramp placed); 5 cases did not
-  run. See `integration-browser-attempt4.log`.
-- A **focused six-case** repair run (surface F + the neighbouring
-  orientation/edit/stack cases) then passed, but the **final gameplay browser
-  repair is still being reviewed** — the reviewed candidate substituted an
-  in-page synthetic side-button event for the required real CDP dispatch, so
-  QA flagged it as a repair-required, not-yet-accepted, fix.
-- Therefore the in-game guide's *HTTP/chat* behaviour is covered by the passing
-  mocked real-browser smoke, but the full live gameplay browser acceptance (the
-  unfiltered sweep) is **not** complete and remains a reported risk.
+  run. See `integration-browser-attempt4.log`. (Preserved as history.)
+- The **current** browser candidate is `0552dc8`, which restores the **real CDP
+  side-button dispatch** (`pressKey` → `Input.dispatchMouseEvent`) using a
+  `page.exposeBinding` notify fired on the first local ramp request — replacing
+  the earlier rejected in-page synthetic-event fix (`47951fe`, now preserved as
+  history, **not** the current state). A **focused six-case** run passed against
+  it (`surface-f-real-input.log`: 6 passed). Fresh QA of this candidate is
+  **ongoing**.
+- Therefore the full live gameplay browser acceptance (the unfiltered sweep)
+  is **not** complete and remains a reported risk: only the focused six cases
+  have passing evidence, and live school-key acceptance is still pending.
 
 ---
 
