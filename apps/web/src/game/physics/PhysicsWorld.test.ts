@@ -10,9 +10,9 @@ import { PhysicsWorld } from "./PhysicsWorld";
  * runs in the node vitest environment, so we exercise the actual character
  * body + controller rather than a fake.
  *
- * All restore targets sit on the clear foundation ground, away from the arena
- * obstacles (center-box x∈[-1.25,1.25] z∈[-1.25,1.25]; reference-platform
- * x∈[-8.5,-1.5]; corridor walls z∈[-9,-1]).
+ * All restore targets sit on the clear foundation ground. The shared arena
+ * table is now a clean flat play area (foundation-ground only), so no static
+ * obstacle can interfere with a restore target.
  */
 describe("PhysicsWorld — setPosition (prediction restore)", () => {
   it("reflects a restored capsule-centre position via getPosition", async () => {
