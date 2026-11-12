@@ -1,10 +1,10 @@
 /**
- * Behavioral tests for `setupArenaSky` — the independent sky presentation
+ * Behavioral tests for `setupArenaSky` — the enclosed-room background
  * helper. Uses Babylon's NullEngine (headless, no WebGL) to verify:
- *   - scene clearColor matches ARENA_PALETTE.skyColor
- *   - an EXP2 atmospheric fog is enabled with ARENA_PALETTE.horizonColor
- *   - an inverted skybox mesh exists with a tinted emissive-unlit material
- *   - the skybox is fog-exempt, non-pickable, and non-collidable
+ *   - scene clearColor matches ARENA_PALETTE.skyColor (deep enclosed navy)
+ *   - fog is DISABLED (crisp clean room, no outdoor haze)
+ *   - a dark fallback dome exists with a tinted emissive-unlit material
+ *   - the dome is fog-exempt, non-pickable, and non-collidable
  *   - cleanup via scene.dispose() works without errors
  */
 import { describe, expect, it } from "vitest";
@@ -45,27 +45,25 @@ describe("setupArenaSky", () => {
       true,
     );
     expect(cc.a).toBe(1);
+    // The clean room background is dark — never a bright outdoor sky.
+    expect(cc.r).toBeLessThan(0.3);
+    expect(cc.g).toBeLessThan(0.3);
+    expect(cc.b).toBeLessThan(0.3);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("enables EXP2 fog colored by ARENA_PALETTE.horizonColor", () => {
+  it("disables fog — the enclosed room renders crisp, no haze", () => {
     const { engine, scene } = buildScene();
 
-    expect(scene.fogMode).toBe(Scene.FOGMODE_EXP2);
-    expect(scene.fogDensity).toBeGreaterThan(0);
-    expect(scene.fogDensity).toBeLessThanOrEqual(0.05);
-    const fog = scene.fogColor;
-    expect(colorClose({ r: fog.r, g: fog.g, b: fog.b }, ARENA_PALETTE.horizonColor)).toBe(
-      true,
-    );
+    expect(scene.fogMode).toBe(Scene.FOGMODE_NONE);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("creates a tinted emissive-unlit skybox mesh named 'arena-skybox'", () => {
+  it("creates a tinted emissive-unlit fallback dome named 'arena-skybox'", () => {
     const { engine, scene } = buildScene();
 
     const skybox = scene.getMeshByName("arena-skybox");
@@ -82,17 +80,12 @@ describe("setupArenaSky", () => {
     // Must render interior faces
     expect(mat.sideOrientation).toBe(Mesh.BACKSIDE);
 
-    // Emissive should be subtly darker than the palette sky color
+    // Emissive should be subtly darker than the palette background color
     const emissive = mat.emissiveColor;
     expect(emissive).toBeDefined();
     expect(emissive.r).toBeLessThanOrEqual(ARENA_PALETTE.skyColor.r + EPSILON);
     expect(emissive.g).toBeLessThanOrEqual(ARENA_PALETTE.skyColor.g + EPSILON);
     expect(emissive.b).toBeLessThanOrEqual(ARENA_PALETTE.skyColor.b + EPSILON);
-
-    // But not zero — it should still be visibly tinted
-    expect(emissive.r).toBeGreaterThan(0);
-    expect(emissive.g).toBeGreaterThan(0);
-    expect(emissive.b).toBeGreaterThan(0);
 
     // Verify the tint factor is applied correctly (0.85 × skyColor)
     const expectedR = ARENA_PALETTE.skyColor.r * 0.85;
@@ -106,7 +99,7 @@ describe("setupArenaSky", () => {
     engine.dispose();
   });
 
-  it("skybox material is fog-exempt so the dome keeps its sky tint", () => {
+  it("skybox material is fog-exempt", () => {
     const { engine, scene } = buildScene();
 
     const skybox = scene.getMeshByName("arena-skybox")!;

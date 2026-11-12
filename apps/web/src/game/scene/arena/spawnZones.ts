@@ -1,57 +1,48 @@
 /**
- * Arena spawn-zone visual treatment (Batch 2D A, arena environment V2).
+ * Arena spawn-side presentation for the clean Box Fight room (redesigned).
  *
- * Enhances the V1 spawn pads/bars with per-side zone treatment that reads
- * from across the arena:
- *  - A flat accent ring (`arena-spawnzone-ring-{primary,mirror}`) framing
- *    each spawn pad.
- * - A glowing lane strip (`arena-spawnzone-strip-{primary,mirror}`) running
- *    from just past the start-line bar out to the boundary inlay, marking
- *    each side's entry lane.
+ * The old treatment — glowing floor rings and lane strips running out of
+ * each spawn — was floor clutter and is REMOVED by user requirement: the
+ * playable floor stays completely empty. Each spawn side is now marked by
+ * a single restrained brass inset panel mounted high on the room's end
+ * WALL behind the spawn (perimeter decoration, off the buildable floor):
+ *  - `arena-spawnzone-mark-{primary,mirror}`
  *
- * Purely presentational: non-pickable, non-collidable. Spawn positions are
+ * Purely presentational: non-pickable, non-collidable. Spawn sides are
  * DERIVED from the shared `PLAYER_SPAWN` (primary) and its mirror across
- * the arena ground centre (same convention as the V1 decorations) — never
+ * the arena ground centre (same convention as the room shell) — never
  * duplicated or modified.
  *
- * Performance: 4 static meshes reusing the shared accent-glow material
- * (created on demand, identical to the V1 version). No per-frame work.
+ * Performance: 2 static meshes reusing the shared brass trim material from
+ * `arenaDecorations` (created on demand). No per-frame work.
  */
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Scene } from "@babylonjs/core/scene";
 import { ARENA_COLLIDERS, PLAYER_SPAWN } from "@buildshift/game-config";
-import { ensureAccentGlowMaterial } from "./environment";
+import { ensureTrimMaterial } from "../arenaDecorations";
 
 /** Stable id of the ground collider from which we derive the arena centre. */
 const GROUND_ID = "foundation-ground";
 
-/** Top of the V1 play-field plate (matches `PLATE_HEIGHT` in arenaDecorations). */
-const PLATE_TOP = 0.02;
+/** Half of the shell wall thickness — distance from wall centre to face. */
+const WALL_FACE_INSET = 0.15;
 
-/** Diameter (metres) of the spawn-zone ring — just outside the V1 pad. */
-const RING_DIAMETER = 3.4;
-/** Tube thickness (metres) of the spawn-zone ring. */
-const RING_TUBE = 0.12;
-
-/** Width (metres) of the lane strip. */
-const STRIP_WIDTH = 1.0;
-/** Thickness (metres) of the lane strip. */
-const STRIP_HEIGHT = 0.03;
-/**
- * Lane-strip extents (measured from the arena centre along the spawn axis):
- * the near edge starts just inside the V1 start-line bar (which sits 1.6 m
- * behind the pad, so 1.4 m past the pad keeps a small gap) and the far edge
- * stops short of the boundary inlay so the two treatments do not merge.
- */
-const STRIP_NEAR_PAST_PAD = 1.4;
-const STRIP_FAR_INSET = 0.4;
+/** Width (metres) of the wall-mounted spawn-side inset panel. */
+const MARK_WIDTH = 3.0;
+/** Height (metres) of the panel. */
+const MARK_HEIGHT = 2.2;
+/** Thickness (metres) the panel stands proud of the wall's inner face. */
+const MARK_PROUD = 0.08;
+/** Vertical centre (metres) of the panel on the end wall — well above the
+ *  floor and clear of any buildable volume. */
+const MARK_Y = 7.5;
 
 /**
- * Adds the spawn-zone treatment for both 1v1 spawn sides to the scene.
- * The mirror side is the shared `PLAYER_SPAWN` reflected across the arena
- * ground centre — the same mirror convention the V1 decorations use.
+ * Adds the spawn-side wall marks for both 1v1 sides to the scene. The
+ * mirror side is the shared `PLAYER_SPAWN` reflected across the arena
+ * ground centre — the same mirror convention the room shell uses.
  */
 export function setupArenaSpawnZones(scene: Scene): void {
   const ground = ARENA_COLLIDERS.find((c) => c.id === GROUND_ID);
@@ -63,67 +54,44 @@ export function setupArenaSpawnZones(scene: Scene): void {
   const [gx, , gz] = ground.position;
   const [, , hz] = ground.halfExtents;
 
-  const accentGlow = ensureAccentGlowMaterial(scene);
+  const trimMaterial = ensureTrimMaterial(scene);
 
-  createSpawnZone(
-    scene,
-    accentGlow,
-    "arena-spawnzone-ring-primary",
-    "arena-spawnzone-strip-primary",
-    { x: PLAYER_SPAWN.x, z: PLAYER_SPAWN.z },
-    gz,
-    hz,
-  );
-
-  createSpawnZone(
-    scene,
-    accentGlow,
-    "arena-spawnzone-ring-mirror",
-    "arena-spawnzone-strip-mirror",
-    { x: gx * 2 - PLAYER_SPAWN.x, z: gz * 2 - PLAYER_SPAWN.z },
-    gz,
-    hz,
-  );
+  createSpawnMark(scene, trimMaterial, "arena-spawnzone-mark-primary", gz, hz, {
+    x: PLAYER_SPAWN.x,
+    z: PLAYER_SPAWN.z,
+  });
+  createSpawnMark(scene, trimMaterial, "arena-spawnzone-mark-mirror", gz, hz, {
+    x: gx * 2 - PLAYER_SPAWN.x,
+    z: gz * 2 - PLAYER_SPAWN.z,
+  });
 }
 
 /**
- * Creates the ring and lane strip for one spawn side. The strip runs
- * outward from the pad (past the V1 start-line bar) to just inside the
- * shell wall on that side.
+ * Mounts the single inset panel for one spawn side on the end wall nearest
+ * that spawn (the wall behind the spawning player). Non-pickable,
+ * non-collidable, entirely off the floor.
  */
-function createSpawnZone(
+function createSpawnMark(
   scene: Scene,
-  accentGlow: StandardMaterial,
-  ringName: string,
-  stripName: string,
-  spawn: { x: number; z: number },
+  trimMaterial: StandardMaterial,
+  name: string,
   gz: number,
   hz: number,
+  spawn: { x: number; z: number },
 ): void {
-  // Flat accent ring framing the spawn pad.
-  const ring = MeshBuilder.CreateTorus(
-    ringName,
-    { diameter: RING_DIAMETER, thickness: RING_TUBE, tessellation: 24 },
-    scene,
-  );
-  ring.position = new Vector3(spawn.x, PLATE_TOP + RING_TUBE / 2, spawn.z);
-  ring.material = accentGlow;
-  ring.isPickable = false;
-  ring.checkCollisions = false;
+  // The end wall behind this spawn: the wall on the same side of centre.
+  const behindCentre = spawn.z >= gz ? 1 : -1;
+  const wallCentreZ = gz + behindCentre * hz;
+  // Push the panel onto the wall's inner face, into the room.
+  const panelZ = wallCentreZ - behindCentre * (WALL_FACE_INSET + MARK_PROUD / 2);
 
-  // Lane strip from just past the start-line bar toward the boundary.
-  const awayFromCentre = spawn.z >= gz ? 1 : -1;
-  const near = Math.abs(spawn.z - gz) + STRIP_NEAR_PAST_PAD;
-  const far = hz - STRIP_FAR_INSET;
-  const stripLength = far - near;
-  const stripCentre = gz + awayFromCentre * (near + stripLength / 2);
-  const strip = MeshBuilder.CreateBox(
-    stripName,
-    { width: STRIP_WIDTH, height: STRIP_HEIGHT, depth: stripLength },
+  const panel = MeshBuilder.CreateBox(
+    name,
+    { width: MARK_WIDTH, height: MARK_HEIGHT, depth: MARK_PROUD },
     scene,
   );
-  strip.position = new Vector3(spawn.x, PLATE_TOP + STRIP_HEIGHT / 2, stripCentre);
-  strip.material = accentGlow;
-  strip.isPickable = false;
-  strip.checkCollisions = false;
+  panel.position = new Vector3(spawn.x, MARK_Y, panelZ);
+  panel.material = trimMaterial;
+  panel.isPickable = false;
+  panel.checkCollisions = false;
 }

@@ -20,31 +20,35 @@ import { setupArenaEnvironment } from "./arena/environment";
 import { setupArenaSpawnZones } from "./arena/spawnZones";
 
 /**
- * Creates the foundation scene: lighting plus the arena geometry.
+ * Creates the foundation scene: lighting plus the clean Box Fight room.
  *
- * Every visible object is built from the shared `ARENA_COLLIDERS` table
- * (in `@buildshift/game-config`, also read by the physics layer — and, from
- * Stage 2C1 on, the authoritative server), so the meshes and the colliders
- * can never drift apart: each mesh is a box of `2 * halfExtents` centred at
- * `position`. The scene factory no longer owns any camera — the gameplay
- * camera is created by `ThirdPersonCameraController`, which makes it the
- * scene's active camera.
+ * Every visible GAMEPLAY object is built from the shared `ARENA_COLLIDERS`
+ * table (in `@buildshift/game-config`, also read by the physics layer — and,
+ * from Stage 2C1 on, the authoritative server), so the meshes and the
+ * colliders can never drift apart: each mesh is a box of `2 * halfExtents`
+ * centred at `position`. The scene factory no longer owns any camera — the
+ * gameplay camera is created by `ThirdPersonCameraController`, which makes
+ * it the scene's active camera.
  *
  * The presentation-only concern (which scene material each collider's visual
  * mesh uses) lives in the client-side `arena.ts` material mapping and never
- * reaches the shared config.
+ * reaches the shared config. The clean room shell, perimeter architecture,
+ * and spawn-side wall marks are decorative layers (`arenaDecorations`,
+ * `arena/environment`, `arena/spawnZones`) derived from — never duplicating
+ * — the shared table.
  */
 export function createFoundationScene(engine: Engine): Scene {
   const scene = new Scene(engine);
 
-  // Wire in independent visual modules: sky/background, lighting, decorations.
+  // Wire in independent visual modules: room background, lighting, and the
+  // clean room shell (pale-blue walls, brass caps, enclosed ceiling).
   setupArenaSky(scene);
   setupArenaLighting(scene);
   setupArenaDecorations(scene);
 
-  // Arena environment V2 (Batch 2D A): containment architecture, boundary
-  // framing, distant backdrop, and spawn-zone treatment. Purely
-  // presentational — see arena/environment.ts and arena/spawnZones.ts.
+  // Perimeter architecture (burgundy sections, brass crown + ceiling beams)
+  // and the spawn-side wall marks. Purely presentational — all decoration
+  // sits on the room perimeter/ceiling, never on the playable floor.
   setupArenaEnvironment(scene);
   setupArenaSpawnZones(scene);
 
@@ -87,8 +91,12 @@ function getMaterial(scene: Scene, kind: ArenaMaterialKind): StandardMaterial {
   const material = new StandardMaterial(`${kind}-material`, scene);
   switch (kind) {
     case "ground":
+      // The polished room floor: uninterrupted dark plum/navy with a tight,
+      // controlled specular sheen (high specular power = broad soft gloss,
+      // not a mirror) — no grid, tiles, or markings of any kind.
       material.diffuseColor = ARENA_PALETTE.groundColor;
-      material.specularColor = new Color3(0.03, 0.04, 0.06);
+      material.specularColor = new Color3(0.3, 0.28, 0.33);
+      material.specularPower = 64;
       break;
     case "accent":
       material.diffuseColor = ARENA_PALETTE.accentColor;
@@ -96,7 +104,7 @@ function getMaterial(scene: Scene, kind: ArenaMaterialKind): StandardMaterial {
       material.specularColor = new Color3(0.1, 0.12, 0.15);
       break;
     case "neutral":
-      // Muted blue-grey: reads as intentional arena cover, not debug props.
+      // Muted warm grey: reads as intentional arena cover, not debug props.
       material.diffuseColor = ARENA_PALETTE.coverColor;
       material.specularColor = new Color3(0.03, 0.04, 0.05);
       break;

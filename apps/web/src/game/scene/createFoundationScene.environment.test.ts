@@ -16,47 +16,54 @@ function makeScene() {
 }
 
 describe("createFoundationScene — arena environment V2 wiring", () => {
-  it("integrates the environment and spawn-zone layers", () => {
+  it("integrates the perimeter-architecture and spawn-mark layers", () => {
     const { engine, scene } = makeScene();
 
-    // Containment architecture + boundary framing + backdrop + banners.
+    // Perimeter architecture: bands, pilasters, crown lines, ceiling beams.
     for (const suffix of [
-      "pylon-n", "pylon-s", "pylon-e", "pylon-w",
-      "pylon-cap-n", "pylon-cap-s", "pylon-cap-e", "pylon-cap-w",
-      "inlay-n", "inlay-s", "inlay-e", "inlay-w",
-      "center-ring-n", "center-ring-s", "center-ring-e", "center-ring-w",
-      "banner-n", "banner-s", "banner-e", "banner-w",
+      "band-n", "band-s", "band-e", "band-w",
+      "crown-n", "crown-s", "crown-e", "crown-w",
+      "pilaster-n-0", "pilaster-n-1", "pilaster-s-0", "pilaster-s-1",
+      "pilaster-e-0", "pilaster-e-1", "pilaster-w-0", "pilaster-w-1",
     ]) {
       expect(
         scene.getMeshByName(`arena-env-${suffix}`),
         `missing arena-env-${suffix}`,
       ).not.toBeNull();
     }
-    for (let i = 0; i < 8; i += 1) {
-      expect(scene.getMeshByName(`arena-env-monolith-${i}`)).not.toBeNull();
+    for (let i = 0; i < 4; i += 1) {
+      expect(scene.getMeshByName(`arena-env-beam-${i}`)).not.toBeNull();
     }
-    // Spawn-zone treatment.
+    // Spawn-side wall marks.
     for (const name of [
-      "arena-spawnzone-ring-primary",
-      "arena-spawnzone-ring-mirror",
-      "arena-spawnzone-strip-primary",
-      "arena-spawnzone-strip-mirror",
+      "arena-spawnzone-mark-primary",
+      "arena-spawnzone-mark-mirror",
     ]) {
       expect(scene.getMeshByName(name), `missing ${name}`).not.toBeNull();
+    }
+    // The old outdoor backdrop clutter is gone.
+    for (const name of [
+      "arena-env-pylon-n",
+      "arena-env-monolith-0",
+      "arena-env-inlay-n",
+      "arena-env-center-ring-n",
+      "arena-env-banner-n",
+    ]) {
+      expect(scene.getMeshByName(name), `obsolete ${name}`).toBeNull();
     }
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("all V2 meshes are non-pickable and non-collidable", () => {
+  it("all new-layer meshes are non-pickable and non-collidable", () => {
     const { engine, scene } = makeScene();
 
     const v2 = scene.meshes.filter(
       (m) =>
         m.name.startsWith("arena-env-") || m.name.startsWith("arena-spawnzone-"),
     );
-    expect(v2.length).toBe(32);
+    expect(v2.length).toBe(22);
     for (const mesh of v2) {
       expect(mesh.isPickable, `${mesh.name} isPickable`).toBe(false);
       expect(mesh.checkCollisions, `${mesh.name} checkCollisions`).toBe(false);

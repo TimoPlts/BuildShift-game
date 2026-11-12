@@ -23,7 +23,6 @@ function makeScene() {
 
 const GROUND = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
 const [GX, , GZ] = GROUND.position;
-const [HX, , HZ] = GROUND.halfExtents;
 
 /** The build volume's world span on each axis. */
 const BUILD_SPAN =
@@ -56,63 +55,50 @@ describe("1v1 arena at the validated build scale", () => {
     engine.dispose();
   });
 
-  it("the play-field plate spans the build volume on both axes", () => {
+  it("the enclosed ceiling covers the build volume and clears every layer", () => {
     const { engine, scene } = makeScene();
 
-    const plate = scene.getMeshByName("arena-playfield-plate")!;
-    const bb = plate.getBoundingInfo().boundingBox;
+    const ceiling = scene.getMeshByName("arena-ceiling")!;
+    const bb = ceiling.getBoundingInfo().boundingBox;
     const size = bb.maximum.subtract(bb.minimum);
-    expect(size.x).toBeCloseTo(BUILD_SPAN, 3);
-    expect(size.z).toBeCloseTo(BUILD_SPAN, 3);
-    // Compact: the plate is inset from the 30 m ground boundary.
-    expect(size.x).toBeLessThan(HX * 2);
-    expect(size.z).toBeLessThan(HZ * 2);
+    // Spans the full 30 m room footprint — wider than the build volume.
+    expect(size.x).toBeGreaterThanOrEqual(BUILD_SPAN);
+    expect(size.z).toBeGreaterThanOrEqual(BUILD_SPAN);
+    // Underside sits well above the highest legal build surface, leaving a
+    // third-person camera margin. Building heights are NOT capped.
+    const underside = ceiling.position.y - size.y / 2;
+    expect(underside).toBeGreaterThan(MAX_BUILD_HEIGHT + 3);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("floor grid lines sit exactly on build-cell boundaries inside the shell", () => {
+  it("the floor carries NO grid, plate, lattice or other floor markings", () => {
     const { engine, scene } = makeScene();
 
-    const { cellSize } = BUILD_GRID;
+    // User requirement: no squares/grid lines on the ground.
     const gridMeshes = scene.meshes.filter((m) =>
       m.name.startsWith("arena-grid-line-"),
     );
-    expect(gridMeshes.length).toBeGreaterThan(0);
-
-    for (const mesh of gridMeshes) {
-      // The line is centred on a cell boundary in its varying axis.
-      const onBoundary = (p: number): boolean =>
-        Math.abs(p - Math.round(p / cellSize) * cellSize) < 1e-9;
-      const isXLine = mesh.name.startsWith("arena-grid-line-x-");
-      const boundaryPos = isXLine ? mesh.position.z : mesh.position.x;
-      expect(
-        onBoundary(boundaryPos),
-        `${mesh.name} not on a cell boundary`,
-      ).toBe(true);
-      // Strictly inside the arena shell on every axis.
-      expect(Math.abs(mesh.position.x)).toBeLessThan(HX);
-      expect(Math.abs(mesh.position.z)).toBeLessThan(HZ);
-    }
+    expect(gridMeshes).toHaveLength(0);
+    expect(scene.getMeshByName("arena-playfield-plate")).toBeNull();
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("the mirrored spawn pads are symmetric about the arena centre", () => {
+  it("the mirrored spawn-side wall marks are symmetric about the arena centre", () => {
     const { engine, scene } = makeScene();
 
-    const primary = scene.getMeshByName("arena-spawn-pad")!;
-    const mirror = scene.getMeshByName("arena-spawn-pad-mirror")!;
+    const primary = scene.getMeshByName("arena-spawnzone-mark-primary")!;
+    const mirror = scene.getMeshByName("arena-spawnzone-mark-mirror")!;
 
-    // Midpoint of the two pads is the arena centre on X/Z.
+    // Midpoint of the two marks is the arena centre on X/Z.
     expect((primary.position.x + mirror.position.x) / 2).toBeCloseTo(GX, 5);
     expect((primary.position.z + mirror.position.z) / 2).toBeCloseTo(GZ, 5);
 
-    // The primary pad still marks the shared gameplay spawn exactly.
+    // The primary mark still sits behind the shared gameplay spawn exactly.
     expect(primary.position.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
-    expect(primary.position.z).toBeCloseTo(PLAYER_SPAWN.z, 5);
 
     scene.dispose();
     engine.dispose();

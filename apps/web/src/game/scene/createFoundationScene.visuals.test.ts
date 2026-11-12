@@ -87,7 +87,7 @@ describe("createFoundationScene — visual wiring", () => {
     engine.dispose();
   });
 
-  it("creates all four indestructible shell wall decoration meshes", () => {
+  it("creates the clean room shell and ceiling decoration meshes", () => {
     const { engine, scene } = makeScene();
 
     for (const name of [
@@ -95,9 +95,10 @@ describe("createFoundationScene — visual wiring", () => {
       "arena-shell-s",
       "arena-shell-e",
       "arena-shell-w",
+      "arena-ceiling",
     ]) {
       const wall = scene.getMeshByName(name);
-      expect(wall, `shell wall "${name}" not found`).not.toBeNull();
+      expect(wall, `room mesh "${name}" not found`).not.toBeNull();
       expect(wall!.isPickable).toBe(false);
     }
 
@@ -105,16 +106,14 @@ describe("createFoundationScene — visual wiring", () => {
     engine.dispose();
   });
 
-  it("creates the floor build-grid decoration meshes", () => {
+  it("creates NO floor grid or floor clutter meshes", () => {
     const { engine, scene } = makeScene();
 
-    const gridMeshes = scene.meshes.filter((m) =>
-      m.name.startsWith("arena-grid-line-"),
-    );
-    expect(gridMeshes.length).toBeGreaterThanOrEqual(10);
-    for (const mesh of gridMeshes) {
-      expect(mesh.isPickable, mesh.name).toBe(false);
-    }
+    // User requirement: the floor must carry no squares or lattice.
+    expect(
+      scene.meshes.filter((m) => m.name.startsWith("arena-grid-line-")),
+    ).toHaveLength(0);
+    expect(scene.getMeshByName("arena-playfield-plate")).toBeNull();
 
     scene.dispose();
     engine.dispose();
