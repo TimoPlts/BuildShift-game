@@ -12,8 +12,14 @@
  * reliable aim reference.
  */
 export const THIRD_PERSON_CAMERA = {
-  /** Distance from the orbit pivot to the camera, in metres. */
-  distance: 7.0,
+  /**
+   * Distance from the orbit pivot to the camera, in metres. Tuned closer
+   * (was 7.0) so the local humanoid reads at a comfortable over-the-shoulder
+   * size instead of tiny in frame. Presentation only: the orbit distance
+   * never rotates the view or moves the aim ray, and `minimumCameraDistance`
+   * still bounds how far the guards may dolly in.
+   */
+  distance: 5.2,
   /** Height of the orbit pivot above the player's feet, in metres. */
   targetHeight: 1.6,
   /**
