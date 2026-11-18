@@ -1,10 +1,13 @@
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo } from "react";
 import { GameCanvas, type GameRuntimeActions } from "./game/GameCanvas";
 import type { MatchLifecycleView } from "./game/matchLifecycleView";
 import {
   CountdownOverlay,
+  PreparationBanner,
   RoundEndBanner,
   MatchEndScreen,
+  derivePreparationUi,
+  FIGHT_CUE_LABEL,
 } from "./ui";
 import { useMatchPresentation } from "./ui/useMatchPresentation";
 import { AiChatPanel } from "./ui/ai-chat";
@@ -16,8 +19,14 @@ import { AiChatPanel } from "./ui/ai-chat";
  * presentation layer (`useMatchPresentation`), which derives every moment
  * exclusively from the authoritative, normalized match lifecycle view:
  *
- *  - COUNTDOWN  → game view + CountdownOverlay (the only countdown display)
- *  - PLAYING    → normal gameplay (in-game HUD only)
+ *  - COUNTDOWN + preparation → game view + PreparationBanner (BUILD phase: the
+ *    authoritative preparation countdown is the only clock in the game, and
+ *    the strip stays pointer-transparent so the arena stays visible/buildable)
+ *  - COUNTDOWN, room not full → the same strip reads "WAITING FOR OPPONENT"
+ *  - the instant preparation ends → a brief FIGHT gate-opening cue
+ *  - PLAYING    → normal gameplay (in-game HUD only, **no round timer**: a
+ *    round ends on an authoritative elimination or the leaving/forfeit
+ *    exception, never on time)
  *  - ROUND_OVER → game view + RoundEndBanner (enter/hold/exit lifecycle;
  *                 the banner keeps rendering briefly after the phase moves
  *                 on so its exit transition can complete)
@@ -26,8 +35,8 @@ import { AiChatPanel } from "./ui/ai-chat";
  *                 authoritative match-end moment)
  *
  * The in-game HUD (inside GameCanvas) presents only persistent, non-blocking
- * information (score, round, timer, phase) and never doubles a lifecycle
- * moment presented here.
+ * information (score, round, phase) and never doubles a lifecycle moment
+ * presented here.
  */
 export function App() {
   const [lifecycle, setLifecycle] = useState<MatchLifecycleView | null>(null);
@@ -35,6 +44,10 @@ export function App() {
   const actionsRef = useRef<GameRuntimeActions | null>(null);
 
   const presentation = useMatchPresentation(lifecycle);
+
+  // The build-preparation moment, derived from the same authoritative
+  // lifecycle view (waiting / preparing / ready) — see preparationPresentation.
+  const preparation = useMemo(() => derivePreparationUi(lifecycle), [lifecycle]);
 
   const handleLifecycleChange = useCallback((view: MatchLifecycleView) => {
     setLifecycle(view);
@@ -68,22 +81,24 @@ export function App() {
         onRuntimeReady={handleRuntimeReady}
       />
 
-      {/* ── Pre-round countdown / round-intro (the only countdown UI) ── */}
-      {presentation.countdownSeconds > 0 && (
-        <CountdownOverlay
-          remainingSeconds={presentation.countdownSeconds}
-          roundNumber={presentation.roundNumber}
-          visible={true}
-          phase="counting"
-        />
-      )}
+      {/* ── Build-preparation phase: waiting for a second player, then the
+            compact BUILD strip with the only countdown the player sees.
+            Non-blocking and pointer-transparent on purpose: the arena (and the
+            player's own prebuilt structures) stay visible and buildable. ── */}
+      <PreparationBanner
+        mode={preparation.mode}
+        remainingSeconds={preparation.remainingSeconds}
+        sideHint={preparation.sideHint}
+        roundNumber={preparation.roundNumber}
+      />
 
-      {/* ── Post-countdown "GO!" transition to live play ── */}
+      {/* ── Gate-opening cue when the barriers drop and play begins ── */}
       {presentation.goTransition && (
         <CountdownOverlay
           remainingSeconds={0}
           visible={true}
           phase="go"
+          goLabel={FIGHT_CUE_LABEL}
         />
       )}
 

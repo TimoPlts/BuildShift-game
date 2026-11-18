@@ -4,7 +4,10 @@
  *
  * Components are grouped by concern:
  *  - **ScoreBar** — top-center round-win score display
- *  - **CountdownOverlay** — pre-round countdown with animated number
+ *  - **CountdownOverlay** — post-countdown (gate-opening) cue, plus a legacy
+ *    full-attention countdown phase kept for non-production callers
+ *  - **PreparationBanner** — the compact build-preparation phase strip (the
+ *    only clock a player sees)
  *  - **RoundEndBanner** — brief round result indicator
  *  - **MatchEndScreen** — full match result with action buttons
  *
@@ -15,6 +18,24 @@
 
 export { ScoreBar, type ScoreBarProps } from "./ScoreBar";
 export { CountdownOverlay, type CountdownOverlayProps, type CountdownPhase } from "./CountdownOverlay";
+export {
+  PreparationBanner,
+  type PreparationBannerProps,
+} from "./PreparationBanner";
+export {
+  derivePreparationUi,
+  preparationSideHint,
+  NO_PREPARATION,
+  PREPARATION_PHASE_LABEL,
+  PREPARATION_OPENING_LABEL,
+  READY_PHASE_LABEL,
+  WAITING_PHASE_LABEL,
+  FIGHT_CUE_LABEL,
+  type PreparationUiSource,
+  type PreparationUiState,
+  type PreparationUiMode,
+  type PreparationSide,
+} from "./preparationPresentation";
 export { RoundEndBanner, type RoundEndBannerProps } from "./RoundEndBanner";
 export { MatchEndScreen, type MatchEndScreenProps } from "./MatchEndScreen";
 export {

@@ -1,6 +1,16 @@
 /**
- * CountdownOverlay — a presentation-only pre-round round-intro and countdown
- * display.
+ * CountdownOverlay — a presentation-only countdown / transition overlay.
+ *
+ * **Current role (round-preparation batch):** in production this component
+ * presents only the brief gate-opening cue (the `"go"` phase, labelled "FIGHT"
+ * by the App shell) shown when build preparation ends and the arena opens.
+ *
+ * The `"counting"` phase is retained as a **legacy fallback** for callers that
+ * still want a full-attention pre-round intro, but the App shell no longer
+ * renders it: the build-preparation window is presented by the compact,
+ * pointer-transparent `PreparationBanner`, so players can see and build
+ * through it instead of having the arena and crosshair hidden behind an
+ * opaque full-screen countdown.
  *
  * Shows:
  *  - the authoritative round number (e.g. "ROUND 2")
@@ -8,7 +18,7 @@
  *    red = OPPONENT)
  *  - a large centered countdown number (3, 2, 1) that animates (pops in
  *    and fades out) each time the value changes
- *  - a brief "GO!" flash when the countdown completes and play begins
+ *  - a brief cue ("GO!" / "FIGHT") when the countdown completes and play begins
  *
  * When `phase` is `"go"` the overlay presents the transition-to-live-play
  * moment ("GO!") before unmounting. The parent controls the phase: set
@@ -47,9 +57,15 @@ export interface CountdownOverlayProps {
   roundNumber?: number;
   /**
    * The presentation phase: `"counting"` shows the round number + color
-   * legend + countdown; `"go"` shows the brief "GO!" transition flash.
+   * legend + countdown; `"go"` shows the brief gate-opening transition flash.
    */
   phase?: CountdownPhase;
+  /**
+   * The cue word for the `"go"` phase (default `"GO!"`). The App shell passes
+   * the FIGHT cue so the barrier-drop moment reads as the start of an untimed
+   * fight.
+   */
+  goLabel?: string;
 }
 
 /**
@@ -60,11 +76,18 @@ export interface CountdownOverlayProps {
  * with a pop-and-fade animation (re-keyed on `remainingSeconds` so each
  * tick re-triggers the CSS animation).
  *
- * During the `"go"` phase it shows a large "GO!" text that fades in and
- * scales up — the clean transition from the countdown into live play.
+ * During the `"go"` phase it shows a large cue word (`goLabel`, default "GO!")
+ * that fades in and scales up — the clean transition from preparation into
+ * live play.
  */
 export function CountdownOverlay(props: CountdownOverlayProps): JSX.Element | null {
-  const { remainingSeconds, visible, roundNumber, phase = "counting" } = props;
+  const {
+    remainingSeconds,
+    visible,
+    roundNumber,
+    phase = "counting",
+    goLabel = "GO!",
+  } = props;
 
   if (!visible) {
     return null;
@@ -74,7 +97,7 @@ export function CountdownOverlay(props: CountdownOverlayProps): JSX.Element | nu
   if (phase === "go") {
     return (
       <div className="countdown-overlay countdown-overlay--go" role="status" aria-live="assertive">
-        <div className="countdown-overlay__go">GO!</div>
+        <div className="countdown-overlay__go">{goLabel}</div>
       </div>
     );
   }
