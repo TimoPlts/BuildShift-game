@@ -18,6 +18,7 @@ import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
+import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import {
   PLAYER_COLLIDER_TOTAL_HEIGHT,
 } from "@buildshift/game-config";
@@ -248,5 +249,211 @@ describe("PlayerBodyFacade (local/remote production body seam)", () => {
     expect(facade.isCharacterLoaded).toBe(true);
     expect(fetchCalls()).toBe(1);
     facade.dispose();
+  });
+});
+
+/**
+ * IMPLEMENTATION B — `setLocalViewOffset(x, z = 0)`: VISUAL-ONLY root-local
+ * framing offset for the LOCAL avatar (crosshair stays at exact viewport
+ * centre; the local body is drawn aside). It must never touch the
+ * gameplay-mirror root pose, must default to 0 (remote avatars stay
+ * centred), must persist across the async GLB adoption, must not disturb
+ * the body-owned feet/crouch lift, and must carry visual mounts with it.
+ */
+const OFFSET = 0.8;
+
+function makeFacade(prefix: string, variant: "local" | "remote") {
+  const facade = new PlayerBodyFacade(scene, variant, prefix);
+  rig.push(facade);
+  return facade;
+}
+
+const rig: PlayerBodyFacade[] = [];
+afterEach(() => {
+  while (rig.length) rig.pop()!.dispose();
+});
+
+/** World-space visual shift of a facade: visualRoot world pos − root pos. */
+function visualShift(facade: PlayerBodyFacade): Vector3 {
+  facade.root.computeWorldMatrix(true);
+  facade.visualRoot.computeWorldMatrix(true);
+  return facade.visualRoot.getAbsolutePosition().subtract(facade.root.position);
+}
+
+describe("PlayerBodyFacade.setLocalViewOffset (visual-only local framing)", () => {
+  it("defaults to 0 for every facade and is per-facade (remote never inherits it)", () => {
+    makeScene();
+    const local = makeFacade("vo-local", "local");
+    const remote = makeFacade("vo-remote", "remote");
+    // API default: everyone starts centred.
+    expect(local.localViewOffset).toEqual({ x: 0, z: 0 });
+    expect(remote.localViewOffset).toEqual({ x: 0, z: 0 });
+    expect(remote.visualRoot.position.x).toBe(0);
+    expect(remote.visualRoot.position.z).toBe(0);
+    // Offsetting ONE facade never shifts the other.
+    local.setLocalViewOffset(OFFSET);
+    expect(local.visualRoot.position.x).toBe(OFFSET);
+    expect(remote.visualRoot.position.x).toBe(0);
+    expect(remote.visualRoot.position.z).toBe(0);
+    // z defaults to 0 when omitted; repeated equal calls are idempotent.
+    local.setLocalViewOffset(OFFSET);
+    local.setLocalViewOffset(OFFSET, 0);
+    expect(local.visualRoot.position.x).toBe(OFFSET);
+    expect(local.visualRoot.position.z).toBe(0);
+    // Non-finite inputs clamp to 0 (stable setter).
+    local.setLocalViewOffset(Number.NaN, Number.POSITIVE_INFINITY);
+    expect(local.localViewOffset).toEqual({ x: 0, z: 0 });
+    expect(local.visualRoot.position.x).toBe(0);
+  });
+
+  it("leaves the gameplay root pose byte-identical (position, yaw, world matrix)", () => {
+    makeScene();
+    const shifted = makeFacade("vo-shift", "local");
+    const plain = makeFacade("vo-plain", "local");
+    const predicted = { x: 2, y: 1, z: -1 };
+    const yaw = Math.PI / 3;
+    shifted.setTransform(predicted, yaw);
+    plain.setTransform(predicted, yaw);
+    shifted.setLocalViewOffset(OFFSET, -0.25);
+    for (const facade of [shifted, plain]) facade.setTransform(predicted, yaw);
+
+    // Byte-identical (strict, not closeTo): the offset never leaks into
+    // the gameplay mirror, not even as float rounding.
+    for (const [k, v] of Object.entries(predicted)) {
+      expect(Object.is(shifted.root.position[k as "x" | "y" | "z"], v)).toBe(
+        true,
+      );
+    }
+    expect(Object.is(shifted.root.position.x, plain.root.position.x)).toBe(true);
+    expect(Object.is(shifted.root.position.y, plain.root.position.y)).toBe(true);
+    expect(Object.is(shifted.root.position.z, plain.root.position.z)).toBe(true);
+    expect(Object.is(shifted.root.rotation.y, plain.root.rotation.y)).toBe(true);
+    const mA = shifted.root.getWorldMatrix().m;
+    const mB = plain.root.getWorldMatrix().m;
+    for (let i = 0; i < 16; i++) expect(Object.is(mA[i], mB[i])).toBe(true);
+    // ...while the VISUAL child really did shift (root-local x/z of visualRoot).
+    expect(shifted.visualRoot.position.x).toBe(OFFSET);
+    expect(shifted.visualRoot.position.z).toBe(-0.25);
+    expect(plain.visualRoot.position.x).toBe(0);
+  });
+
+  it("root-local +X projects consistently screen-left for a centre-aligned -Z-forward camera (cardinal proof)", () => {
+    makeScene();
+    const facade = makeFacade("vo-cardinal", "local");
+    facade.setLocalViewOffset(OFFSET);
+    // Babylon left-handed check: a camera looking +Z with up +Y shows +X on
+    // screen-right, so screen-right = cross(up, cameraForward). The local
+    // camera looks along the character's forward (shared yaw 0 = -Z).
+    const up = Vector3.Up();
+    // Cardinal + diagonal facings: the shift must stay perpendicular to
+    // facing and land on the SAME (left) screen side at every yaw.
+    for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 2, Math.PI / 4]) {
+      facade.setTransform({ x: 0, y: 0, z: 0 }, yaw);
+      facade.root.computeWorldMatrix(true);
+      // Shared convention: yaw 0 faces -Z, positive toward +X.
+      const facing = Vector3.TransformNormal(
+        new Vector3(0, 0, -1),
+        facade.root.getWorldMatrix(),
+      );
+      const expectedFacing = new Vector3(Math.sin(yaw), 0, -Math.cos(yaw));
+      expect(Vector3.Dot(facing, expectedFacing)).toBeCloseTo(1, 6);
+      const screenRight = Vector3.Cross(up, facing);
+      const shift = visualShift(facade);
+      // Pure side shift: never moves the body along or against facing
+      // (the standing feet lift on visualRoot.position.y is the body's
+      // own alignment and is verified separately).
+      expect(Vector3.Dot(shift, facing)).toBeCloseTo(0, 6);
+      // Positive root-local X lands NEGATIVE on screen-right ⇒ screen-LEFT,
+      // at every yaw (no side flip when the character turns).
+      expect(Vector3.Dot(shift, screenRight)).toBeCloseTo(-OFFSET, 6);
+    }
+  });
+
+  it("does not disturb the body-owned feet alignment / crouch lift (visualRoot.position.y)", () => {
+    makeScene();
+    const shifted = makeFacade("vo-crouch-s", "local");
+    const plain = makeFacade("vo-crouch-p", "local");
+    shifted.setTransform({ x: 0, y: 0, z: 0 }, 0);
+    plain.setTransform({ x: 0, y: 0, z: 0 }, 0);
+    shifted.setLocalViewOffset(OFFSET);
+    for (const blend of [0, 0.5, 1, 0]) {
+      shifted.setCrouchBlend(blend);
+      plain.setCrouchBlend(blend);
+      // Feet-anchored lift is computed identically on both bodies.
+      expect(shifted.visualRoot.position.y).toBe(plain.visualRoot.position.y);
+      // ...and the per-frame crouch write never clobbers the x/z offset.
+      expect(shifted.visualRoot.position.x).toBe(OFFSET);
+      expect(shifted.visualRoot.position.z).toBe(0);
+      expect(shifted.visualRoot.scaling.y).toBe(plain.visualRoot.scaling.y);
+    }
+  });
+
+  it("retains the local offset across the async GLB adoption and carries mounts with it", async () => {
+    makeScene();
+    const facade = makeFacade("vo-swap", "local");
+    const predicted = { x: 0, y: 0, z: 0 };
+    facade.setTransform(predicted, 0);
+    facade.setLocalViewOffset(OFFSET);
+
+    const mount = new TransformNode("vo-swap-weapon-mount", scene);
+    mount.parent = facade.visualRoot;
+    mount.position.set(0, 0.02, -0.22);
+    mount.computeWorldMatrix(true);
+    const mountWorldBefore = mount.getAbsolutePosition().clone();
+    // The mount already sits in the shifted visual frame: at yaw 0 the
+    // world axes coincide with root-local, so its world offset from the
+    // root carries the full 0.8 (+X) visual shift plus its own local pose.
+    {
+      const toMount = mount
+        .getAbsolutePosition()
+        .subtract(new Vector3(predicted.x, predicted.y, predicted.z));
+      expect(toMount.x).toBeCloseTo(OFFSET + mount.position.x, 6);
+      expect(toMount.y).toBeCloseTo(
+        facade.visualRoot.position.y + mount.position.y,
+        6,
+      );
+      expect(toMount.z).toBeCloseTo(mount.position.z, 6);
+    }
+
+    // Turn the character before the swap so the handover re-checks the
+    // full shared-yaw transform contract too.
+    const finalPose = { x: 2, y: 1, z: -1 };
+    facade.setTransform(finalPose, Math.PI / 4);
+    mount.computeWorldMatrix(true);
+    mountWorldBefore.copyFrom(mount.getAbsolutePosition());
+
+    stubGlbFetch();
+    facade.startCharacterLoad({ assetUrl: STUB_URL });
+    await facade.whenCharacterSettled();
+    expect(facade.isCharacterLoaded).toBe(true);
+
+    // The NEW (rigged) visualRoot adopted the stored local offset...
+    expect(facade.visualRoot.position.x).toBe(OFFSET);
+    expect(facade.visualRoot.position.z).toBe(0);
+    // ...the gameplay mirror is still exactly the predicted pose...
+    expect(facade.root.position.x).toBe(finalPose.x);
+    expect(facade.root.position.y).toBe(finalPose.y);
+    expect(facade.root.position.z).toBe(finalPose.z);
+    expect(facade.root.rotation.y).toBe(-Math.PI / 4);
+    // ...the mount re-parented with its world transform (shift included)
+    // preserved — the weapon travels with the visually shifted body.
+    expect(mount.parent).toBe(facade.visualRoot);
+    mount.computeWorldMatrix(true);
+    expect(
+      mount.getAbsolutePosition().subtract(mountWorldBefore).length(),
+    ).toBeLessThan(1e-6);
+
+    // Setting the offset AFTER the swap settled also lands on the live body.
+    facade.setLocalViewOffset(0.5, 0.25);
+    expect(facade.visualRoot.position.x).toBe(0.5);
+    expect(facade.visualRoot.position.z).toBe(0.25);
+  });
+
+  it("is a safe no-op after dispose", () => {
+    makeScene();
+    const facade = makeFacade("vo-dead", "local");
+    facade.setLocalViewOffset(OFFSET);
+    facade.dispose();
+    expect(() => facade.setLocalViewOffset(1, 1)).not.toThrow();
   });
 });

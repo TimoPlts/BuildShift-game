@@ -35,6 +35,19 @@
  * prediction/reconciliation/colliders, and forwards every driving call to
  * the body that is currently rendered.
  *
+ * Local view offset (`setLocalViewOffset`): a VISUAL-ONLY root-local X/Z
+ * shift of the rendered body for local-avatar framing (crosshair stays at
+ * the exact viewport centre; the local character is drawn aside). It is
+ * applied exclusively to `visualRoot.position.x/z` (the body-owned feet /
+ * crouch lift lives on `visualRoot.position.y` and is never touched), so
+ * the gameplay-mirror `root` position/yaw, logical pose, collider, camera
+ * feet position, network, physics, spawn, and server state are byte-for-byte
+ * unaffected. The offset is per-facade state (remote avatars default to 0
+ * and nothing forces it), it survives the procedural → rigged-GLB async
+ * swap (re-applied to the incoming `visualRoot` before external mounts are
+ * re-parented, so mounts keep their world transforms AND the visual shift),
+ * and the setter is idempotent and safe after dispose.
+ *
  * Animation: the adopted CharacterModel owns its original skeletal clips
  * and scene-frame driver. Both local/remote facades forward the canonical
  * position and crouch inputs; this facade never runs a second controller.
@@ -108,6 +121,8 @@ export class PlayerBodyFacade implements PlayerBodyPresentation {
   private _settledResolve: (() => void) | null = null;
   private readonly _settled: Promise<void>;
   private _fallbackReason: string | null = null;
+  private _viewOffsetX = 0;
+  private _viewOffsetZ = 0;
   private _disposed = false;
 
   /**
@@ -170,6 +185,46 @@ export class PlayerBodyFacade implements PlayerBodyPresentation {
   public applyState(wasEliminated: boolean, hitFlashFrames: number): number {
     if (this._disposed) return hitFlashFrames;
     return this._current.applyState(wasEliminated, hitFlashFrames);
+  }
+
+  // --- Local view offset (visual only) ------------------------------------
+
+  /**
+   * Sets the VISUAL-ONLY local-avatar framing offset, in root-local units.
+   *
+   * The rendered body is shifted by (x, 0, z) in root-local space by
+   * writing ONLY `visualRoot.position.x/z`. The body-owned feet/crouch
+   * lift on `visualRoot.position.y`, the gameplay-mirror `root`
+   * (position + yaw), logical pose, collider, camera feet position,
+   * network, physics, spawn, and server state are never touched. External
+   * mounts parented on `visualRoot` (weapon model, effects) follow the
+   * visual shift automatically.
+   *
+   * Sign convention (proved against cardinal vectors in the facade tests):
+   * the gameplay root carries `rotation.y = -yaw` and the body faces
+   * shared-yaw 0 = -Z, so root-local +X projects onto screen-LEFT for the
+   * centre-aligned local camera (which looks along the character's -Z
+   * forward) at ANY yaw — the shift stays screen-consistent while the
+   * character turns. So `setLocalViewOffset(+0.8, 0)` frames the local
+   * character 0.8 units to the screen-left of the fixed centre crosshair.
+   *
+   * Stable contract: defaults to (0, 0) for every facade (remote avatars
+   * stay centred unless someone calls this on THAT facade), repeated calls
+   * with the same values are idempotent, non-finite inputs are clamped to
+   * 0, the offset persists across the async GLB adoption/fallback swap and
+   * every crouch/animation/material update, and calls after `dispose()`
+   * are safe no-ops.
+   */
+  public setLocalViewOffset(x: number, z: number = 0): void {
+    if (this._disposed) return;
+    this._viewOffsetX = Number.isFinite(x) ? x : 0;
+    this._viewOffsetZ = Number.isFinite(z) ? z : 0;
+    this._applyViewOffset();
+  }
+
+  /** The current visual-only root-local view offset (never mutated by callers). */
+  public get localViewOffset(): Readonly<{ x: number; z: number }> {
+    return { x: this._viewOffsetX, z: this._viewOffsetZ };
   }
 
   // --- Character load / swap --------------------------------------------
@@ -299,6 +354,11 @@ export class PlayerBodyFacade implements PlayerBodyPresentation {
     incoming.setCrouchBlend(this._crouchBlend);
     incoming.setEnabled(this._enabled);
 
+    // 2b. Carry over the visual-only view offset BEFORE re-parenting the
+    //     mounts, so the two visualRoots carry identical world transforms
+    //     and the mounts keep their exact local mount positions (step 3).
+    this._applyViewOffsetTo(incoming.visualRoot);
+
     // 3. Move every external mount from the outgoing visualRoot to the
     //    incoming one. Babylon preserves a node's WORLD transform on
     //    re-parent, and the two visualRoots now carry identical transforms
@@ -313,5 +373,19 @@ export class PlayerBodyFacade implements PlayerBodyPresentation {
     //    and its transform nodes) so exactly one body renders per player.
     outgoing.dispose();
     this._current = incoming;
+  }
+
+  /**
+   * Writes the stored view offset onto the CURRENT body's visualRoot.
+   * Only x/z are written: `visualRoot.position.y` is the body's own
+   * feet-alignment / crouch lift and stays under the body's control.
+   */
+  private _applyViewOffset(): void {
+    this._applyViewOffsetTo(this._current.visualRoot);
+  }
+
+  private _applyViewOffsetTo(visualRoot: TransformNode): void {
+    visualRoot.position.x = this._viewOffsetX;
+    visualRoot.position.z = this._viewOffsetZ;
   }
 }
