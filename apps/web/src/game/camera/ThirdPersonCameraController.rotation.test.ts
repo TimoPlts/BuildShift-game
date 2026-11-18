@@ -91,8 +91,10 @@ describe("nothing else writes the camera orientation", () => {
     const runtime = readFileSync(new URL("../GameRuntime.ts", import.meta.url), "utf8");
     const calls = new Set([...runtime.matchAll(/this\.cameraController\.([a-zA-Z]+)\(/g)].map((m) => m[1]));
     // Authoritative state / reconciliation / mode transitions never reach the
-    // camera's orientation: the only orientation input is applyLook.
-    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getYaw", "setBuildMode", "setCrouchDip", "setObstacles", "setPitchOffset", "setTransientVerticalOffset", "update"]);
+    // camera's orientation: the only orientation input is applyLook. The
+    // getPitchOffset READ (projected-reticle math) observes the rendered pose,
+    // it never writes orientation.
+    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getPitchOffset", "getYaw", "setBuildMode", "setCrouchDip", "setObstacles", "setPitchOffset", "setTransientVerticalOffset", "update"]);
     expect(runtime).toContain("const ld=this.inputManager.consumeLookDelta();this.cameraController.applyLook(ld.x,ld.y);");
   });
 });

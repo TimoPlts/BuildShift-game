@@ -68,22 +68,40 @@ export function createTracerGroup(scene: Scene, slotCount = 6): PooledEffectGrou
 /**
  * Activates the next tracer slot from `origin` along `aimDirection`.
  * If `aimDirection` is degenerate (zero length) no tracer is spawned.
+ *
+ * When `convergeTarget` is given (the resolved authoritative shot point, see
+ * `game/aim/authoritativeAim.ts`) the streak is re-aimed from the muzzle to
+ * that point and capped at its distance, so the visual ray agrees with where
+ * the shot actually goes instead of flying a parallel line. A target closer
+ * than 0.1 m spawns no streak (the muzzle flash carries the shot).
  */
 export function activateTracer(
   group: PooledEffectGroup,
   weaponType: WeaponType,
   origin: Vector3,
   aimDirection: Vector3,
-  nowMs: number
+  nowMs: number,
+  convergeTarget?: Vector3
 ): void {
   const spec = TRACER_SPECS[weaponType];
 
   _direction.copyFrom(aimDirection);
+  let length = spec.length;
+  if (convergeTarget) {
+    _direction.set(
+      convergeTarget.x - origin.x,
+      convergeTarget.y - origin.y,
+      convergeTarget.z - origin.z,
+    );
+    const dist = _direction.length();
+    if (dist < 0.1) return;
+    length = Math.min(spec.length, dist);
+  }
   if (_direction.lengthSquared() < 1e-8) return;
   _direction.normalize();
 
   // midpoint = origin + direction * (length / 2)  — no allocation
-  const half = spec.length / 2;
+  const half = length / 2;
   _midpoint.set(
     origin.x + _direction.x * half,
     origin.y + _direction.y * half,
@@ -91,7 +109,7 @@ export function activateTracer(
   );
 
   group.spawn(nowMs, spec.durationMs, (slot) => {
-    slot.mesh.scaling.set(spec.radius, spec.length, spec.radius);
+    slot.mesh.scaling.set(spec.radius, length, spec.radius);
     slot.mesh.position.copyFrom(_midpoint);
     slot.mesh.rotationQuaternion = Quaternion.FromUnitVectorsToRef(LOCAL_Y, _direction, new Quaternion());
     slot.material.diffuseColor.copyFrom(spec.color);

@@ -140,9 +140,10 @@ describe("runtime wiring of the camera follow point", () => {
     expect(runtime).not.toContain("this.cameraController.update(this.playerController.getFeetPositionInto(");
   });
   it("weapon switching never reaches the camera pivot", () => {
-    // The only camera inputs are look, aim/pose reads, build mode, crouch dip,
+    // The only camera inputs are look, aim/pose reads (including the recoil
+    // pitch-offset READ the projected reticle needs), build mode, crouch dip,
     // recoil pitch offset, transient movement offset, obstacles and the follow point.
     const calls = new Set([...runtime.matchAll(/this\.cameraController\.([a-zA-Z]+)\(/g)].map((m) => m[1]));
-    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getYaw", "setBuildMode", "setCrouchDip", "setObstacles", "setPitchOffset", "setTransientVerticalOffset", "update"]);
+    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getPitchOffset", "getYaw", "setBuildMode", "setCrouchDip", "setObstacles", "setPitchOffset", "setTransientVerticalOffset", "update"]);
   });
 });
