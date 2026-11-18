@@ -4,10 +4,17 @@
    The .game-hud root is a full-viewport, non-interactive layer that hosts
    every in-game HUD panel (match header, energy, weapon, vitals, build).
    Each panel keeps its own absolute placement, so the shared container only
-   needs to establish the stacking context and disable pointer interaction.
-   All panels share one visual language: dark blurred panels, thin borders,
-   tabular numerals and the match palette (green = local/healthy, red =
-   remote/critical, cyan = energy/tech, amber = accent).
+   establishes the stacking context and disables pointer interaction.
+
+   Competitive visual language (original, no third-party assets):
+   - Deep-navy angled cards (bevelled clip-path corners, 1px steel border,
+     a 2px electric-blue top edge as the "live" cue).
+   - Bold tabular numerals lead every panel; labels stay quiet uppercase
+     micro-type so the numbers own the hierarchy.
+   - Accent language: electric blue = you/active, white = neutral data,
+     red = opponent/critical, amber = low-resource warning, green = health.
+   HUD design tokens live on :root in styles.css (--hud-*) and are consumed
+   here; they are pure presentation and touch nothing outside the HUD.
    ═══════════════════════════════════════════════════════════ */
 
 .game-hud {
@@ -17,9 +24,16 @@
   z-index: 1000;
 }
 
+/* Panel surfaces below repeat the shared angled-card recipe (navy gradient,
+   1px steel border, bevelled corners, 2px electric-blue top edge) mirrored
+   left-to-right per panel. */
+
 /* ═══════════════════════════════════════════════════════════
    CombatVitalsHud — bottom-right health + shield panel
-   ═══════════════════════════════════════════════════════════ */
+   ═══════════════════════════════════════════════════════════
+   Hierarchy: the big current-value numerals lead; the bars mirror them.
+   Health reads green → amber → red; shield is a distinctly electric-blue,
+   thinner, segmented bar so the two resources never read as duplicates. */
 
 .combat-vitals-hud {
   position: absolute;
@@ -27,22 +41,44 @@
   bottom: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  width: 14rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.5rem;
-  background: rgb(8 12 18 / 72%);
-  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  gap: 0.45rem;
+  width: 16.5rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--hud-line);
+  background: linear-gradient(
+    255deg,
+    var(--hud-surface-top) 0%,
+    var(--hud-surface) 55%,
+    var(--hud-surface-deep) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 0 var(--hud-accent-edge),
+    var(--hud-shadow);
   pointer-events: none;
-  backdrop-filter: blur(0.35rem);
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    12px 0,
+    100% 0,
+    100% calc(100% - 12px),
+    calc(100% - 12px) 100%,
+    0 100%,
+    0 12px
+  );
+  font-family: var(--hud-font);
+  color: var(--hud-ink);
 }
 
 /* Eliminated: the panel tints red and the bars dim. */
 .combat-vitals-hud--eliminated {
-  border-color: rgb(240 97 109 / 55%);
-  background: rgb(24 8 12 / 78%);
+  border-color: rgb(255 90 106 / 55%);
+  box-shadow:
+    inset 0 2px 0 0 rgb(255 90 106 / 85%),
+    var(--hud-shadow);
+  background: linear-gradient(
+    255deg,
+    rgb(34 12 20 / 88%) 0%,
+    rgb(26 10 16 / 88%) 100%
+  );
 }
 
 .combat-vitals-hud--eliminated .combat-vitals-hud__track {
@@ -50,85 +86,94 @@
 }
 
 .combat-vitals-hud__eliminated {
-  font-size: 1rem;
-  font-weight: 800;
-  letter-spacing: 0.18em;
+  font-size: 1.05rem;
+  font-weight: 900;
+  letter-spacing: 0.22em;
   text-align: center;
-  color: #f0616d;
+  color: #ff5a6a;
   text-shadow: 0 2px 8px rgb(0 0 0 / 70%);
 }
 
 /* One labelled bar row: label + track + numeric read-out. */
 .combat-vitals-hud__row {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: 3.6rem 1fr auto;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.55rem;
 }
 
 .combat-vitals-hud__label {
-  font-size: 0.6rem;
-  font-weight: 600;
+  font-size: 0.58rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #8b93a7;
+  letter-spacing: 0.14em;
+  color: var(--hud-ink-dim);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
 .combat-vitals-hud__track {
   width: 100%;
-  height: 12px;
-  background: rgb(0 0 0 / 55%);
-  border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 6px;
+  height: 13px;
+  background: rgb(2 5 10 / 72%);
+  border: 1px solid rgb(148 180 220 / 22%);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 40%);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 55%);
+  /* Angled bar ends: the slant reads as intentional competitive chrome. */
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
 }
 
+/* Shield track: thinner and steel-blue edged to separate it from health. */
 .combat-vitals-hud__track--shield {
-  height: 8px;
-  border-color: rgb(96 165 250 / 40%);
-  border-radius: 4px;
+  height: 9px;
+  border-color: rgb(77 182 255 / 45%);
 }
 
 .combat-vitals-hud__bar-fill {
   height: 100%;
-  border-radius: inherit;
   transition: width 150ms ease-out, background 200ms;
 }
 
 /* Health fill states: green → amber → red. */
 .combat-vitals-hud__bar-fill--healthy {
-  background: #4ade80;
+  background: linear-gradient(180deg, #55e39b 0%, #2fbd78 100%);
 }
 
 .combat-vitals-hud__bar-fill--low {
-  background: #facc15;
+  background: linear-gradient(180deg, #ffd35c 0%, #e8a413 100%);
 }
 
 .combat-vitals-hud__bar-fill--critical {
-  background: #f87171;
+  background: linear-gradient(180deg, #ff7480 0%, #e33b4c 100%);
 }
 
-/* Shield fill: blue. */
+/* Shield fill: electric blue with subtle segment ticks — the segmentation
+   gives a quick glanceable "how much is left" read without reading digits. */
 .combat-vitals-hud__bar-fill--shield {
-  background: #3b82f6;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgb(2 8 16 / 30%) 0 1px,
+      transparent 1px 14px
+    ),
+    linear-gradient(180deg, #6cc5ff 0%, #2f9dff 100%);
 }
 
+/* Big numeral leads the row; the max stays a quiet suffix. */
 .combat-vitals-hud__value {
-  min-width: 3.2rem;
-  font-size: 0.8rem;
-  font-weight: 700;
+  min-width: 3.6rem;
+  font-size: 1.35rem;
+  font-weight: 800;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
   text-align: right;
-  color: #e6e8ee;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
 }
 
 .combat-vitals-hud__value-max {
-  font-size: 0.68rem;
-  font-weight: 500;
-  color: #8b93a7;
+  font-size: 0.64rem;
+  font-weight: 600;
+  color: var(--hud-ink-dim);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 
@@ -142,16 +187,21 @@
   .energy-hud,
   .weapon-hud,
   .combat-vitals-hud {
-    width: 11.5rem;
-    padding: 0.45rem 0.6rem;
+    width: 12.5rem;
+    padding: 0.5rem 0.65rem;
+  }
+
+  .combat-vitals-hud__value {
+    font-size: 1.1rem;
+    min-width: 3rem;
   }
 
   .match-hud {
-    padding: 0.5rem 0.9rem;
+    padding: 0.55rem 1rem;
   }
 
   .match-hud__score-value {
-    font-size: 1.25rem;
+    font-size: 1.4rem;
   }
 
   .match-hud__timer-track {
@@ -163,53 +213,69 @@
   }
 
   .build-hud__type {
-    min-width: 2.8rem;
-    padding: 0.3rem 0.4rem;
+    min-width: 3rem;
+    padding: 0.3rem 0.45rem;
   }
 }
 
 @media (max-width: 640px) {
-  /* The weapon panel grows ~0.6rem taller while its reload bar is visible;
-     keep the energy panel clear of it. */
+  /* The weapon panel keeps a tall big-ammo row; give the energy panel its
+     own lane clear above it. */
   .energy-hud {
     left: 0.6rem;
-    bottom: 4.5rem;
-    width: 9.5rem;
+    bottom: 7.2rem;
+    width: 9.8rem;
   }
 
   .weapon-hud {
     left: 0.6rem;
     bottom: 0.6rem;
-    width: 9.5rem;
+    width: 9.8rem;
+  }
+
+  /* Stack name over ammo instead of ellipsizing the name in the narrow
+     one-line row — the weapon name must never clip. */
+  .weapon-hud__active {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.1rem;
+  }
+
+  .weapon-hud__ammo-magazine {
+    font-size: 1.8rem;
   }
 
   .combat-vitals-hud {
     right: 0.6rem;
     bottom: 0.6rem;
-    width: 9.5rem;
+    width: 9.8rem;
+  }
+
+  .combat-vitals-hud__row {
+    grid-template-columns: 3rem 1fr auto;
   }
 
   .combat-vitals-hud__value {
     min-width: 2.6rem;
-    font-size: 0.72rem;
+    font-size: 0.95rem;
   }
 
   .match-hud {
     left: 0.5rem;
     right: 0.5rem;
     transform: none;
-    padding: 0.45rem 0.8rem;
+    padding: 0.5rem 0.8rem;
   }
 
   .match-hud__score-value {
-    font-size: 1.15rem;
+    font-size: 1.2rem;
   }
 
   .match-hud__timer-track {
     width: 7rem;
   }
 
-  /* Bottom-center stack: the build panel would collide with the 9.5rem
+  /* Bottom-center stack: the build panel would collide with the 9.8rem
      corner panels on narrow screens, so it moves up into its own lane and
      the edit panel stacks above it. The developer-flavored grid
      coordinates are dropped entirely at this size. */

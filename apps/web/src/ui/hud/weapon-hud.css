@@ -1,8 +1,11 @@
 /* ── Weapon HUD (bottom-left overlay for local weapon status) ──
  *
- * Unobtrusive, semi-transparent, small-font. Positioned at the very
- * bottom-left so it stacks cleanly below the Energy HUD (which sits at
- * bottom: 4.5rem) without overlapping it.
+ * Competitive hierarchy: the magazine numeral is the biggest thing on the
+ * HUD after the crosshair; the weapon name rides beside it without ever
+ * clipping; the loadout slots read as a compact keyed strip underneath.
+ * Shares the HUD angled-card navy surface + electric-blue accent language.
+ * Positioned at the very bottom-left so it stacks cleanly below the Energy
+ * HUD without overlapping it.
  */
 
 .weapon-hud {
@@ -11,127 +14,95 @@
   bottom: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
-  width: 15rem;
-  padding: 0.55rem 0.75rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.5rem;
-  background: rgb(8 12 18 / 72%);
-  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  gap: 0.4rem;
+  width: 16.5rem;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--hud-line);
+  background: linear-gradient(
+    165deg,
+    var(--hud-surface-top) 0%,
+    var(--hud-surface) 55%,
+    var(--hud-surface-deep) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 0 var(--hud-accent-edge),
+    var(--hud-shadow);
   pointer-events: none;
-  backdrop-filter: blur(0.35rem);
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    0 0,
+    calc(100% - 12px) 0,
+    100% 12px,
+    100% 100%,
+    12px 100%,
+    0 calc(100% - 12px)
+  );
   z-index: 1000;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--hud-font);
+  color: var(--hud-ink);
 }
 
-/* ── Weapon-slot indicator: a row of compact chips ── */
-.weapon-hud__slots {
-  display: flex;
-  gap: 0.3rem;
-}
-
-.weapon-hud__slot {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  flex: 1 1 0;
-  min-width: 0;
-  padding: 0.2rem 0.45rem;
-  border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 0.35rem;
-  background: rgb(255 255 255 / 5%);
-  transition: background 150ms, border-color 150ms, color 150ms;
-}
-
-.weapon-hud__slot-key {
-  font-size: 0.62rem;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
-  color: #8b93a7;
-  border: 1px solid rgb(255 255 255 / 14%);
-  border-radius: 0.25rem;
-  padding: 0.02rem 0.28rem;
-  background: rgb(255 255 255 / 6%);
-}
-
-.weapon-hud__slot-glyph {
-  font-size: 0.7rem;
-  line-height: 1;
-  color: #8b93a7;
-}
-
-.weapon-hud__slot-name {
-  font-size: 0.6rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: #8b93a7;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-/* Active slot: highlighted */
-.weapon-hud__slot--active {
-  border-color: rgb(103 232 249 / 55%);
-  background: rgb(103 232 249 / 12%);
-}
-
-.weapon-hud__slot--active .weapon-hud__slot-key,
-.weapon-hud__slot--active .weapon-hud__slot-glyph,
-.weapon-hud__slot--active .weapon-hud__slot-name {
-  color: #67e8f9;
-}
-
-/* ── Active weapon row: name (left) + ammo counter (right) ── */
+/* ── Active weapon row: name (left, never clipped) + big ammo (right) ── */
 .weapon-hud__active {
   display: flex;
-  align-items: baseline;
+  align-items: flex-end;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.6rem;
 }
 
 .weapon-hud__name {
+  /* min-width:0 + nowrap lets flex shrink ellipsize only in truly
+     pathological cases; at every supported size "ASSAULT RIFLE" fits. */
+  min-width: 0;
   font-size: 0.72rem;
   font-weight: 700;
+  line-height: 1.1;
   text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #e6e8ee;
+  letter-spacing: 0.1em;
+  color: var(--hud-ink);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Lead-in accent tick marks the name as the active weapon. */
+  padding-left: 0.5rem;
+  border-left: 2px solid var(--hud-accent);
 }
 
-/* ── Ammo counter: magazine / reserve ── */
+/* ── Ammo counter: magazine / capacity ── */
 .weapon-hud__ammo {
   display: inline-flex;
   align-items: baseline;
-  gap: 0.15rem;
+  gap: 0.18rem;
+  flex: none;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  text-shadow: 0 2px 4px rgb(0 0 0 / 70%);
 }
 
-/* Magazine count — primary, bold. Slightly oversized: the magazine count
- * is the single most-glanced-at number in a fight, so it leads the panel. */
+/* Magazine count — the single most-glanced-at number in a fight: huge,
+ * heavy, right-anchored. */
 .weapon-hud__ammo-magazine {
-  font-size: 1.05rem;
-  font-weight: 700;
-  color: #e6e8ee;
+  font-size: 2.15rem;
+  font-weight: 800;
+  line-height: 0.95;
+  color: #ffffff;
   /* Settle colour-state changes (low / empty) smoothly instead of snapping. */
   transition: color 150ms ease-out;
 }
 
-/* Separator between magazine and reserve */
+/* Separator between magazine and capacity */
 .weapon-hud__ammo-separator {
-  font-size: 0.75rem;
-  font-weight: 400;
-  color: #8b93a7;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--hud-ink-dim);
 }
 
 /* Capacity count — secondary, smaller. This is the magazine capacity
  * (not a reserve pool), so the class and read-out say "capacity". */
 .weapon-hud__ammo-capacity {
-  font-size: 0.72rem;
-  font-weight: 500;
-  color: #8b93a7;
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--hud-ink-dim);
 }
 
 /*
@@ -140,7 +111,7 @@
  * decision can be made without reading the number.
  */
 .weapon-hud__ammo--low .weapon-hud__ammo-magazine {
-  color: #fbbf24;
+  color: #ffc857;
 }
 
 /*
@@ -151,15 +122,76 @@
 .weapon-hud__ammo--empty .weapon-hud__ammo-magazine,
 .weapon-hud__ammo--empty .weapon-hud__ammo-capacity,
 .weapon-hud__ammo--empty .weapon-hud__ammo-separator {
-  color: #f0616d;
+  color: #ff5a6a;
+}
+
+/* ── Weapon-slot indicator: a keyed strip of angular chips ── */
+.weapon-hud__slots {
+  display: flex;
+  gap: 0.35rem;
+}
+
+.weapon-hud__slot {
+  display: flex;
+  align-items: center;
+  gap: 0.32rem;
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.24rem 0.45rem;
+  border: 1px solid rgb(148 180 220 / 18%);
+  background: rgb(2 5 10 / 45%);
+  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
+  transition: background 150ms, border-color 150ms, color 150ms;
+}
+
+.weapon-hud__slot-key {
+  font-size: 0.6rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--hud-ink-dim);
+  border: 1px solid rgb(148 180 220 / 25%);
+  padding: 0.02rem 0.28rem;
+  background: rgb(255 255 255 / 6%);
+}
+
+.weapon-hud__slot-glyph {
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--hud-ink-dim);
+}
+
+.weapon-hud__slot-name {
+  min-width: 0;
+  font-size: 0.56rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--hud-ink-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Active slot: electric-blue highlight with a solid accent edge. */
+.weapon-hud__slot--active {
+  border-color: rgb(77 182 255 / 65%);
+  background: rgb(47 157 255 / 18%);
+  box-shadow: inset 0 2px 0 0 rgb(108 197 255 / 90%);
+}
+
+.weapon-hud__slot--active .weapon-hud__slot-key,
+.weapon-hud__slot--active .weapon-hud__slot-glyph,
+.weapon-hud__slot--active .weapon-hud__slot-name {
+  color: #8fd0ff;
 }
 
 /* Contextual "Press R to reload" prompt (empty magazine, no reload running). */
 .weapon-hud__reload-hint {
   font-size: 0.68rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #fbbf24;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #ffc857;
 }
 
 .weapon-hud__reload-hint kbd {
@@ -170,25 +202,24 @@
   font-family: inherit;
   font-size: 0.64rem;
   text-align: center;
-  color: #e6e8ee;
-  border: 1px solid rgb(255 255 255 / 18%);
-  border-radius: 0.25rem;
+  color: #ffffff;
+  border: 1px solid rgb(148 180 220 / 30%);
   background: rgb(255 255 255 / 8%);
 }
 
-/* ── Reload progress bar (thin, below the ammo) ── */
+/* ── Reload progress bar (thin, full-width under the ammo) ── */
 .weapon-hud__reload-track {
   width: 100%;
-  height: 6px;
-  background: rgb(0 0 0 / 55%);
-  border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 3px;
+  height: 7px;
+  background: rgb(2 5 10 / 72%);
+  border: 1px solid rgb(148 180 220 / 22%);
   overflow: hidden;
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 55%);
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
 }
 
 .weapon-hud__reload-fill {
   height: 100%;
-  background: #22d3ee;
-  border-radius: 3px;
+  background: linear-gradient(180deg, #6cc5ff 0%, #2f9dff 100%);
   transition: width 120ms linear;
 }
