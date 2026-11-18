@@ -13,7 +13,11 @@
  */
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
-import { Scene } from "@babylonjs/core";
+// Direct submodule import (NOT the `@babylonjs/core` barrel): the barrel
+// masks EdgeRenderer side-effect registration, which previously hid a
+// production PAGEERROR. With the narrow import, enableEdgesRendering only
+// works because the component itself imports the renderer side-effect.
+import { Scene } from "@babylonjs/core/scene";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { BUILD_BOUNDS, BUILD_GRID, VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { ceilingHeight } from "../scene/arenaDecorations";
@@ -96,10 +100,15 @@ describe("PreparationBarrierPresentation", () => {
     );
   });
 
-  it("panels are presentation-only: non-pickable translucent blue", () => {
+  it("panels are presentation-only: non-pickable translucent blue, edges registered without throwing", () => {
     barriers.open("negative");
-    for (const panel of ownedMeshes(scene)) {
+    const panels = ownedMeshes(scene);
+    expect(panels).toHaveLength(2);
+    for (const panel of panels) {
       expect(panel.isPickable).toBe(false);
+      // The side-effect import must have registered the EdgeRenderer, so
+      // enableEdgesRendering actually created one (no throw in open()).
+      expect((panel as unknown as { _edgesRenderer?: unknown })._edgesRenderer).toBeDefined();
       const mat = panel.material as { alpha: number } | null;
       expect(mat).not.toBeNull();
       expect(mat!.alpha).toBeGreaterThan(0);

@@ -36,6 +36,11 @@
  * team-treatment tint — no floor grid, no props, no external assets.
  */
 import type { Scene } from "@babylonjs/core";
+// Side-effect import REQUIRED before `enableEdgesRendering()` — registers the
+// EdgeRenderer with the smart-store. Narrow submodule only (never the full
+// `@babylonjs/core` barrel); without it, open() throws in production builds
+// where nothing else has pulled the renderer in (browser PAGEERROR).
+import "@babylonjs/core/Rendering/edgesRenderer";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
