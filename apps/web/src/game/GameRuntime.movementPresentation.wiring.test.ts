@@ -50,10 +50,10 @@ describe("GameRuntime movement presentation wiring", () => {
     );
     expect(setIdx).toBeGreaterThan(-1);
     expect(updateIdx).toBeGreaterThan(setIdx);
-    // The movement offset is a translation hook, distinct from the combat
-    // pitch nudge — both may be present, but aiming is never rotated by the
-    // movement feedback.
-    expect(runtime).toContain("this.cameraController.setPitchOffset(this.cameraRecoil.update(dt))");
+    // The movement offset is an along-line translation hook — distinct from
+    // the recoil kickback — and neither ever rotates the view off the shot
+    // ray.
+    expect(runtime).toContain("this.cameraController.setRecoilKickback(this.cameraRecoil.update(dt)*THIRD_PERSON_CAMERA.recoilKickbackMetersPerRadian)");
   });
 
   it("toggles the build-mode FOV each frame from the shared interaction-mode state", () => {

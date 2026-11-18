@@ -19,6 +19,7 @@ import {
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
 import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
+import { AIM_EYE_HEIGHT_STANDING } from "../aim/authoritativeAim";
 import { createFoundationScene } from "./createFoundationScene";
 import { ARENA_PALETTE } from "./arena";
 import {
@@ -124,10 +125,11 @@ describe("setupArenaDecorations — clean room shell", () => {
     expect(underside).toBeGreaterThan(MAX_BUILD_HEIGHT + 1);
     expect(underside).toBeCloseTo(ceilingHeight(), 3);
     // The clearance is derived from the real camera + shared jump physics,
-    // not a flat guess: orbit distance + pivot height + jump apex + safety.
+    // not a flat guess: along-line distance + standing eye height + jump apex
+    // + safety.
     expect(ceilingHeight() - maxBuildHeight()).toBeGreaterThanOrEqual(
       THIRD_PERSON_CAMERA.distance +
-        THIRD_PERSON_CAMERA.targetHeight +
+        AIM_EYE_HEIGHT_STANDING +
         jumpApexHeight() +
         0.5,
     );
@@ -168,14 +170,14 @@ describe("setupArenaDecorations — clean room shell", () => {
   });
 
   it("worst-case third-person camera on the highest legal build stays under the ceiling", () => {
-    // Derivation mirrors ThirdPersonCameraController.update():
-    // cameraY = feet + targetHeight - crouchDip + transient + verticalOffset
-    //           - distance * sin(effectivePitch).
-    // Conservative bound: the orbit can never raise the camera more than the
-    // FULL orbit distance above the pivot (max at the -60° pitch clamp is
-    // distance * sin 60° ≈ 6.06 m; the full 7 m absorbs the transient recoil
-    // pitch nudge too). Worst case: standing (not crouched) on the top legal
-    // build layer, at the shared jump apex, looking straight down.
+    // Derivation mirrors ThirdPersonCameraController.update() (centred-aim
+    // line-sharing camera): cameraY = eyeY − t·sin(pitch), eyeY = feet +
+    // standing eye height, t ≤ distance along the line. Conservative bound:
+    // the camera can never rise more than the FULL tracking distance above
+    // the eye (max at the −60° pitch clamp is distance·sin 60°; the full
+    // distance absorbs the along-line bob/kickback projection too). Worst
+    // case: standing (not crouched) on the top legal build layer, at the
+    // shared jump apex, looking straight down.
     const jumpApex =
       (PLAYER_PHYSICS.jumpSpeed * PLAYER_PHYSICS.jumpSpeed) /
       (2 * Math.abs(PLAYER_PHYSICS.gravity));
@@ -184,7 +186,7 @@ describe("setupArenaDecorations — clean room shell", () => {
 
     const worstCaseCameraY =
       MAX_BUILD_HEIGHT +
-      THIRD_PERSON_CAMERA.targetHeight +
+      AIM_EYE_HEIGHT_STANDING +
       THIRD_PERSON_CAMERA.distance +
       jumpApex;
 

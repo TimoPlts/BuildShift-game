@@ -44,7 +44,7 @@ function createRuntime() {
     leaveRoom: vi.fn(),
     rejoinRoom: vi.fn(),
     requestRematch: vi.fn(),
-    setReticleElement: vi.fn(),
+    setReticleElement: undefined as never,
   };
 }
 
@@ -94,12 +94,12 @@ describe("GameCanvas startup", () => {
     expect(runtimeMocks.create).toHaveBeenCalledTimes(1);
     expect(runtime.start).toHaveBeenCalledTimes(1);
     expect(runtime.dispose).not.toHaveBeenCalled();
-    // Projected-reticle seam: the runtime is handed the crosshair element as
-    // soon as it is ready (null here — pointer unlocked, no element yet).
-    expect(runtime.setReticleElement).toHaveBeenCalledWith(null);
+    // Centred-aim invariant: the crosshair is a static CSS-centre element;
+    // the runtime must never be handed it (no projected-reticle seam).
+    expect((runtime as unknown as Record<string, unknown>).setReticleElement).toBeUndefined();
   });
 
-  it("hands the runtime the crosshair element when the pointer locks", async () => {
+  it("renders the static centred crosshair with no runtime-driven markup when locked", async () => {
     const runtime = createRuntime();
     runtimeMocks.create.mockResolvedValue(runtime);
 
@@ -112,6 +112,10 @@ describe("GameCanvas startup", () => {
 
     const canvas = host.querySelector("canvas");
     expect(canvas).not.toBeNull();
+    // Crosshair only exists in gameplay (pointer locked) — and when present
+    // it carries NO inline style: the runtime never moves it (centred-aim
+    // invariant: the camera shares the shot line, centre == shot ray).
+    expect(host.querySelector(".crosshair")).toBeNull();
     Object.defineProperty(document, "pointerLockElement", {
       configurable: true,
       get: () => canvas,
@@ -120,23 +124,9 @@ describe("GameCanvas startup", () => {
       await act(async () => {
         document.dispatchEvent(new Event("pointerlockchange"));
       });
-
-      const crosshair = host.querySelector<HTMLDivElement>(".crosshair");
+      const crosshair = host.querySelector(".crosshair");
       expect(crosshair).not.toBeNull();
-      // Latest handoff is the mounted crosshair the runtime projects onto.
-      const calls = runtime.setReticleElement.mock.calls as unknown as unknown[][];
-      expect(calls.at(-1)?.[0]).toBe(crosshair);
-
-      // Unlocking removes the element and detaches it from the runtime.
-      Object.defineProperty(document, "pointerLockElement", {
-        configurable: true,
-        get: () => null,
-      });
-      await act(async () => {
-        document.dispatchEvent(new Event("pointerlockchange"));
-      });
-      const calls2 = runtime.setReticleElement.mock.calls as unknown as unknown[][];
-      expect(calls2.at(-1)?.[0]).toBeNull();
+      expect(crosshair?.getAttribute("style")).toBeNull();
     } finally {
       delete (document as { pointerLockElement?: unknown }).pointerLockElement;
     }

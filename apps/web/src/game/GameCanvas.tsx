@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
 import type { MatchHudProps } from "../ui/MatchHud";
@@ -64,16 +64,9 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
   onLifecycleChangeRef.current = onMatchLifecycleChange;
   onRuntimeReadyRef.current = onRuntimeReady;
 
-  // Projected-reticle seam: the runtime positions the crosshair element
-  // directly (CSS transform, no React re-render at frame rate). The callback
-  // ref keeps runtime ↔ element wired across pointer-lock remounts; the
-  // runtime handoff below covers the runtime-arrives-later case.
-  const runtimeRef = useRef<GameRuntime | null>(null);
-  const crosshairElRef = useRef<HTMLDivElement | null>(null);
-  const attachCrosshair = useCallback((el: HTMLDivElement | null) => {
-    crosshairElRef.current = el;
-    runtimeRef.current?.setReticleElement(el);
-  }, []);
+  // The crosshair is a static, CSS-centred element (centred-aim invariant:
+  // the camera shares the authoritative shot line, so screen centre IS the
+  // shot ray). The runtime never positions it.
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -101,8 +94,6 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
             return;
           }
           runtime = r;
-          runtimeRef.current = r;
-          r.setReticleElement(crosshairElRef.current);
           r.start();
 
           // Prime the local HUD (vitals, energy, weapon, build state) from the
@@ -178,7 +169,6 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
       unsubMatch?.();
       unsubLocalHud?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
-      runtimeRef.current = null;
       runtime?.dispose();
     };
   }, []);
@@ -191,7 +181,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         aria-label="BuildShift 3D game viewport"
       />
       {pointerLocked && (
-        <div className="crosshair" ref={attachCrosshair} aria-hidden="true" />
+        <div className="crosshair" aria-hidden="true" />
       )}
       {matchHudProps !== null && <GameHud match={matchHudProps} local={localHud} />}
       {localHud?.eliminated && matchHudProps?.phase === MatchPhase.IN_PROGRESS && (
