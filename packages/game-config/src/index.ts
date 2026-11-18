@@ -84,12 +84,23 @@ export {
   ROUND_RESET_DELAY_SECONDS,
 } from "./match.js";
 
-// ───── Timed-match and anti-stall configuration ─────
+// ───── Match lifecycle window configuration ─────
+// NOTE: ROUND_DURATION_SECONDS and ANTI_STALL_TIMEOUT_SECONDS were REMOVED
+// with the round-preparation batch: active fights have no timed or anti-stall
+// resolution — rounds end on elimination only (plus the explicit disconnect
+// forfeit). See ./boxFightPreparation.ts for the preparation phase config.
 export {
-  ROUND_DURATION_SECONDS,
-  ANTI_STALL_TIMEOUT_SECONDS,
   REMATCH_WINDOW_SECONDS,
 } from "./matchConfig.js";
+
+// ───── Box-fight preparation phase (authoritative, shared) ─────
+export {
+  BOX_FIGHT_PREPARATION,
+  getPreparationZone,
+  clampToPreparationZone,
+  isGridAllowedDuringPreparation,
+} from "./boxFightPreparation.js";
+export type { PreparationSide, PreparationZone } from "./boxFightPreparation.js";
 
 // ───── Building configuration (server-authoritative multiplayer building) ─────
 export {

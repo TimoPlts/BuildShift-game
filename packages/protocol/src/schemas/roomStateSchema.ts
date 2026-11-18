@@ -68,6 +68,16 @@ export const RoomStateSchema = schema(
      * determine whether a round result is present.
      */
     lastRoundResult: t.ref(RoundResultSchema),
+    /**
+     * True ONLY while both players are connected AND the preparation
+     * (`COUNTDOWN`) countdown is actually running (see
+     * `@buildshift/game-config` `BOX_FIGHT_PREPARATION`). During preparation
+     * each player is confined to their {@link PlayerStateSchema.preparationSide}
+     * build-row zone and may move/build/edit there, but cannot fire or deal
+     * damage. False while a solo player waits, during the fight, and after.
+     * Defaults to `false` (Colyseus boolean default).
+     */
+    preparationActive: t.boolean(),
   },
   "RoomStateSchema",
 );

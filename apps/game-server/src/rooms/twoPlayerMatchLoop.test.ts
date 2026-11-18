@@ -10,7 +10,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { MatchPhase } from "@buildshift/protocol";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM } from "./TwoPlayerMovementRoom.js";
 
@@ -65,7 +66,7 @@ describe("Full match lifecycle", () => {
   let port: number;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10_000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10_000, "startServer");
     server = started.server;
     port = started.port;
   }, 20_000);
@@ -199,13 +200,25 @@ describe("Full match lifecycle", () => {
         roomB.connection.close();
       } catch {}
 
-      // Wait for transition to ROUND_ENDED or COUNTDOWN.
+      // Wait for the transition into the next round's preparation COUNTDOWN.
       await waitForState(
         roomA,
         (s) =>
           matchPhase(s) === MatchPhase.ROUND_ENDED ||
           matchPhase(s) === MatchPhase.COUNTDOWN,
         8_000,
+      );
+      await waitForState(
+        roomA,
+        (s) => matchPhase(s) === MatchPhase.COUNTDOWN,
+        8_000,
+      );
+
+      // Preparation pauses while A is alone; a replacement player resumes it.
+      const roomC = await withDeadline(
+        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+        10_000,
+        "join C",
       );
 
       // Wait for COUNTDOWN → IN_PROGRESS (round 2).
@@ -214,6 +227,7 @@ describe("Full match lifecycle", () => {
         (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
         12_000,
       );
+      await withDeadline(teardownRoom(roomC), 5_000, "teardown C");
 
       // Round should be 2.
       const state = roomA.state as Record<string, any>;

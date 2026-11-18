@@ -14,7 +14,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
 
@@ -74,7 +75,7 @@ describe("TwoPlayerMovementRoom combat", () => {
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10000, "startServer");
     server = started.server;
     const port = started.port;
     const url = `ws://127.0.0.1:${port}`;

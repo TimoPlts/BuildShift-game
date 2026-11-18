@@ -24,7 +24,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { MAX_HEALTH, MAX_SHIELD, ASSAULT_RIFLE } from "@buildshift/game-config";
 import { MatchPhase, type PlayerNetworkInput } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -155,7 +156,7 @@ describe("Canonical gameplay path — integration contract", () => {
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10_000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10_000, "startServer");
     server = started.server;
     port = started.port;
     expect(port).toBeGreaterThan(0);
@@ -215,9 +216,9 @@ describe("Canonical gameplay path — integration contract", () => {
     expect(b).toBeDefined();
 
     // Player A (first to join) spawns at x ≈ -5.
-    expect(a.x).toBeCloseTo(-5, 0);
+    expect(a.x).toBeCloseTo(-10.24, 0);
     // Player B (second to join) spawns at x ≈ +5.
-    expect(b.x).toBeCloseTo(5, 0);
+    expect(b.x).toBeCloseTo(10.24, 0);
 
     // They are distinct (not the same position).
     expect(a.x).not.toBeCloseTo(b.x, 0);

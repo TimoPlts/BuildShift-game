@@ -95,6 +95,10 @@ describe("contested placement arbitration (authoritative processing order)", () 
     room.onJoin(a);
     room.onJoin(b);
     internal.br(); // COUNTDOWN → IN_PROGRESS
+    // Stand the players near the contested centre cells so every test
+    // placement is within BUILD_RANGE (prep-row spawns are up to 20 m apart).
+    Object.assign(internal.state.players.get("a")!, { x: -2, y: 0, z: 0 });
+    Object.assign(internal.state.players.get("b")!, { x: 2, y: 0, z: 0 });
   });
 
   afterEach(() => {

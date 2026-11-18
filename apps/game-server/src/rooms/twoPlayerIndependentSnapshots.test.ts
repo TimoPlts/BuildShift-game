@@ -37,7 +37,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { VERTICAL_MOVEMENT, PLAYER_MOVEMENT } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -139,7 +140,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await startServer(0);
+    const started = await startTestServer(0);
     server = started.server;
     port = started.port;
     expect(port).toBeGreaterThan(0);
@@ -197,7 +198,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // Player A (first to join) at x = -5, y = ground, z = 0.
     const playerA = playerFromState(roomA.state, roomA.sessionId);
     expect(playerA).toBeDefined();
-    expect(playerA.x).toBeCloseTo(-5, 1);
+    expect(playerA.x).toBeCloseTo(-10.24, 1);
     expect(playerA.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
     expect(playerA.z).toBeCloseTo(0, 1);
     expect(playerA.grounded).toBe(true);
@@ -205,7 +206,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     // Player B (second to join) at x = +5, y = ground, z = 0.
     const playerB = playerFromState(roomB.state, roomB.sessionId);
     expect(playerB).toBeDefined();
-    expect(playerB.x).toBeCloseTo(5, 1);
+    expect(playerB.x).toBeCloseTo(10.24, 1);
     expect(playerB.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
     expect(playerB.z).toBeCloseTo(0, 1);
     expect(playerB.grounded).toBe(true);
@@ -316,7 +317,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
     expect(aInAState.z).toBeGreaterThan(-DISPLACEMENT_PER_TICK * 3);
 
     // A did NOT move in the X direction (its input had moveX=0).
-    expect(Math.abs(aInAState.x - (-5))).toBeLessThan(0.1);
+    expect(Math.abs(aInAState.x - (-10.24))).toBeLessThan(0.1);
 
     // ── Client B's own snapshot: moved right in -X, Z unchanged ───────────────
     expect(bInBState).toBeDefined();
@@ -324,7 +325,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
 
     // B moved right: x decreased (toward 0) by approximately
     // DISPLACEMENT_PER_TICK per tick of input.
-    expect(bInBState.x).toBeLessThan(5);
+    expect(bInBState.x).toBeLessThan(10.24);
     expect(bInBState.x).toBeGreaterThan(5 - DISPLACEMENT_PER_TICK * 3);
 
     // B did NOT move in the Z direction (its input had moveZ=0).

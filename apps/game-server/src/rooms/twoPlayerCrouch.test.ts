@@ -113,6 +113,11 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
     // Set the round IN_PROGRESS with a clean input buffer (movement + fire
     // inputs are then processed on the next tick).
     internal.br();
+    // Re-establish the legacy ±5 head-height aim geometry (prep-row spawns
+    // are 20.48 m apart, which is outside the ballistic envelope these
+    // crouch/capsule tests were authored against).
+    player(A).x = -SPAWN_DX / 2;
+    player(B).x = SPAWN_DX / 2;
   });
 
   afterEach(() => {

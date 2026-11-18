@@ -41,9 +41,19 @@
 export type RoundEndReason =
   /** A player's health reached zero (killed by the opponent). */
   | "elimination"
-  /** The round timer reached zero; the player with higher health wins. */
+  /**
+   * @deprecated REMOVED by the round-preparation batch: there is no round
+   * timer any more and a timeout must never award a round. The literal is
+   * kept only so older wire payloads/clients still type-check; the
+   * authoritative server never emits it.
+   */
   | "time_expired"
-  /** The anti-stall timeout expired; the inactive player lost the round. */
+  /**
+   * @deprecated REMOVED by the round-preparation batch: there is no
+   * anti-stall resolution any more and inactivity must never award a round.
+   * The literal is kept only for wire/typing compatibility; the server
+   * never emits it.
+   */
   | "anti_stall_timeout"
   /** A player disconnected; the remaining player wins the round. */
   | "disconnect";
@@ -56,6 +66,7 @@ export type RoundEndReason =
  */
 export const ROUND_END_REASONS = [
   "elimination",
+  // Deprecated wire-compat literals (never emitted by the server any more):
   "time_expired",
   "anti_stall_timeout",
   "disconnect",
@@ -79,10 +90,10 @@ export function isRoundEndReason(value: unknown): value is RoundEndReason {
  * Authoritative round timer state carried on the room state or broadcast
  * via {@link MATCH_LIFECYCLE_EVENTS.ROUND_TIMER_UPDATE}.
  *
- * The server updates this value every simulation tick during the `PLAYING`
- * phase. Clients use it to render a deterministic countdown display that
- * is always in sync with the authoritative server clock, eliminating the
- * client-side drift that a local `setTimeout` would introduce.
+ * @deprecated REMOVED by the round-preparation batch: active fights have
+ * no timer. The server no longer broadcasts round-timer updates and never
+ * resolves a round by elapsed time or remaining health. The shape is kept
+ * only for wire/typing compatibility with older clients.
  */
 export interface RoundTimerState {
   /**
@@ -108,14 +119,9 @@ export interface RoundTimerState {
 /**
  * Per-player anti-stall inactivity tracking state.
  *
- * The server maintains one entry per player during the `PLAYING` phase.
- * Every tick, the server increments `inactiveMs` by the tick duration if
- * the player produced no meaningful input (movement, build, or fire).
- * When the player produces any meaningful input, `inactiveMs` resets to 0.
- *
- * When `inactiveMs >= ANTI_STALL_TIMEOUT_SECONDS * 1000`, the server
- * ends the round with `RoundEndReason = "anti_stall_timeout"` and awards
- * the round to the other player.
+ * @deprecated REMOVED by the round-preparation batch: the server no longer
+ * tracks inactivity and inactivity never ends a round. The shape is kept
+ * only for wire/typing compatibility with older clients.
  */
 export interface AntiStallState {
   /** Colyseus `sessionId` of the tracked player. */

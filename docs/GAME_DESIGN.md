@@ -571,13 +571,25 @@ This prevents players from hiding indefinitely.
 
 # 4.6 Victory
 
-A round ends when:
+A normal round ends by elimination only. There is **no round timer and no
+time-based winner** — once the fight opens it runs until one side is gone:
 
 - One player is eliminated
 - One entire team is eliminated
-- Optional round timer expires
 
-A match ends when one player or team reaches the required number of round wins.
+The single documented exception is the explicit disconnect forfeit: a player who
+disconnects and does not return inside the reconnect grace window forfeits the
+round to the remaining player. A match ends when one player or team reaches the
+required number of round wins (or by an agreed rematch reset).
+
+Every round opens with a fixed **8 s build preparation** before the fight (the
+authoritative `BOX_FIGHT_PREPARATION` duration, identical for both players, and
+running only while both are connected). During preparation each side is confined
+to its OWN single build row — the outermost build-grid row on its side of the
+arena — where it may move, build and edit freely but cannot fire or deal damage;
+placements outside that row are rejected. Structures built during preparation
+survive into the fight. When the 8 s ends the fight opens untimed and the round
+is then decided by elimination (plus the disconnect-forfeit exception above).
 
 ---
 

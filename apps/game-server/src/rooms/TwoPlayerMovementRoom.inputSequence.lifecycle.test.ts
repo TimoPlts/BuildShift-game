@@ -33,7 +33,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
 
@@ -127,7 +128,7 @@ function createSequence(): { next: () => number; claim: (v: number) => void; las
 }
 
 async function setup(): Promise<{ server: GameServer; url: string; a: ClientRoom; b: ClientRoom }> {
-  const started = await deadline(startServer(0), 10_000, "startServer");
+  const started = await deadline(startTestServer(0), 10_000, "startServer");
   const url = `ws://127.0.0.1:${started.port}`;
   const a = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinA");
   const b = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinB");

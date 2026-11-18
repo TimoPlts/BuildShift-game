@@ -11,7 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -114,7 +115,7 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10_000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10_000, "startServer");
     server = started.server;
     port = started.port;
     const url = `ws://127.0.0.1:${port}`;
@@ -147,9 +148,9 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     // Snapshot spawn positions as plain values (Colyseus mutates in place).
     const a0 = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
     const b0 = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
-    expect(Math.abs(a0.x - (-5))).toBeLessThan(0.5);
+    expect(Math.abs(a0.x - (-10.24))).toBeLessThan(0.5);
     expect(Math.abs(a0.z)).toBeLessThan(0.5);
-    expect(Math.abs(b0.x - 5)).toBeLessThan(0.5);
+    expect(Math.abs(b0.x - 10.24)).toBeLessThan(0.5);
     expect(Math.abs(b0.z)).toBeLessThan(0.5);
 
     // Send 75 frames: A forward (moveZ=-1), B right (moveX=+1).
@@ -173,7 +174,7 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     // PREDICTION: sustained displacement in correct direction.
     expect(af.z).toBeLessThan(0); // A moved forward (−Z)
     expect(af.z - a0.z).toBeLessThan(-(MIN_FRAMES / 4) * DISPLACEMENT_PER_TICK);
-    expect(bf.x).toBeLessThan(5); // B moved right (−X from +5)
+    expect(bf.x).toBeLessThan(10.24); // B moved right (−X from +5)
     expect(b0.x - bf.x).toBeGreaterThan((MIN_FRAMES / 4) * DISPLACEMENT_PER_TICK);
 
     // RECONCILIATION: sequences tracked correctly.

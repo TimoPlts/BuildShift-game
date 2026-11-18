@@ -25,7 +25,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -127,7 +128,7 @@ describe("Stage 2D canonical two-player movement room", () => {
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await startServer(0);
+    const started = await startTestServer(0);
     server = started.server;
     port = started.port;
     expect(port).toBeGreaterThan(0);
@@ -176,14 +177,14 @@ describe("Stage 2D canonical two-player movement room", () => {
     // Player A (first to join) at x = -5.
     const playerA = playerFromState(roomA.state, roomA.sessionId);
     expect(playerA).toBeDefined();
-    expect(playerA.x).toBeCloseTo(-5, 1);
+    expect(playerA.x).toBeCloseTo(-10.24, 1);
     expect(playerA.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
     expect(playerA.z).toBeCloseTo(0, 1);
 
     // Player B (second to join) at x = +5.
     const playerB = playerFromState(roomA.state, roomB.sessionId);
     expect(playerB).toBeDefined();
-    expect(playerB.x).toBeCloseTo(5, 1);
+    expect(playerB.x).toBeCloseTo(10.24, 1);
     expect(playerB.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
     expect(playerB.z).toBeCloseTo(0, 1);
 
@@ -240,7 +241,7 @@ describe("Stage 2D canonical two-player movement room", () => {
 
     // Player B's position did NOT change (B sent nothing).
     const bAfter = playerFromState(roomA.state, roomB.sessionId);
-    expect(bAfter.x).toBeCloseTo(5, 1);
+    expect(bAfter.x).toBeCloseTo(10.24, 1);
     expect(bAfter.z).toBeCloseTo(0, 1);
   });
 

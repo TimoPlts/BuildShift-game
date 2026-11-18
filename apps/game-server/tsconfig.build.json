@@ -6,5 +6,5 @@
     "rootDir": "src",
     "paths": {}
   },
-  "exclude": ["**/*.test.ts"]
+  "exclude": ["**/*.test.ts", "src/test/testServerFixture.ts"]
 }

@@ -67,6 +67,12 @@ describe("canonical build slots (authoritative)", () => {
     vi.restoreAllMocks();
   });
 
+  /** Re-stand the players at the ramp tile (round resets re-spawn them). */
+  const standIn = () => {
+    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 0 });
+    Object.assign(internal.state.players.get("b")!, { x: 0, y: 0, z: 2 });
+  };
+
   /** A ramp at (0,0,0) with walls on all four of its edges and a floor at its top layer. */
   const rampBox = async () => {
     const ramp = await place(a, "ramp", { x: 0, y: 0, z: 0 }, 1);
@@ -114,12 +120,14 @@ describe("canonical build slots (authoritative)", () => {
   it("round reset and rematch clear every slot and collider", async () => {
     await rampBox();
     internal.bc(); // round reset
+    standIn();
     expect(internal.bld.structures.size).toBe(0);
     expect(internal.occ.size).toBe(0);
     expectOccupancyMatchesStructures();
     internal.br();
     await rampBox();
     internal.resetMatch(); // rematch
+    standIn();
     expect(internal.bld.structures.size).toBe(0);
     expect(internal.occ.size).toBe(0);
     expectOccupancyMatchesStructures();
@@ -193,12 +201,14 @@ describe("canonical build slots (authoritative)", () => {
     await boxLevel(0);
     await boxLevel(1);
     internal.bc();
+    standIn();
     expect([internal.bld.structures.size, internal.occ.size]).toEqual([0, 0]);
     expectOccupancyMatchesStructures();
     internal.br();
     await boxLevel(0);
     await boxLevel(1);
     internal.resetMatch();
+    standIn();
     expect([internal.bld.structures.size, internal.occ.size]).toEqual([0, 0]);
     expectOccupancyMatchesStructures();
     internal.br();
