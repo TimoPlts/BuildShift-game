@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { MatchPhase } from "@buildshift/protocol";
 import { GameRuntime } from "./GameRuntime";
 import type { MatchHudProps } from "../ui/MatchHud";
@@ -64,6 +64,17 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
   onLifecycleChangeRef.current = onMatchLifecycleChange;
   onRuntimeReadyRef.current = onRuntimeReady;
 
+  // Projected-reticle seam: the runtime positions the crosshair element
+  // directly (CSS transform, no React re-render at frame rate). The callback
+  // ref keeps runtime ↔ element wired across pointer-lock remounts; the
+  // runtime handoff below covers the runtime-arrives-later case.
+  const runtimeRef = useRef<GameRuntime | null>(null);
+  const crosshairElRef = useRef<HTMLDivElement | null>(null);
+  const attachCrosshair = useCallback((el: HTMLDivElement | null) => {
+    crosshairElRef.current = el;
+    runtimeRef.current?.setReticleElement(el);
+  }, []);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
@@ -90,6 +101,8 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
             return;
           }
           runtime = r;
+          runtimeRef.current = r;
+          r.setReticleElement(crosshairElRef.current);
           r.start();
 
           // Prime the local HUD (vitals, energy, weapon, build state) from the
@@ -165,6 +178,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
       unsubMatch?.();
       unsubLocalHud?.();
       document.removeEventListener("pointerlockchange", handlePointerLockChange);
+      runtimeRef.current = null;
       runtime?.dispose();
     };
   }, []);
@@ -176,7 +190,9 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
         className="game-canvas"
         aria-label="BuildShift 3D game viewport"
       />
-      {pointerLocked && <div className="crosshair" aria-hidden="true" />}
+      {pointerLocked && (
+        <div className="crosshair" ref={attachCrosshair} aria-hidden="true" />
+      )}
       {matchHudProps !== null && <GameHud match={matchHudProps} local={localHud} />}
       {localHud?.eliminated && matchHudProps?.phase === MatchPhase.IN_PROGRESS && (
         <EliminatedSpectatorOverlay visible={true} />

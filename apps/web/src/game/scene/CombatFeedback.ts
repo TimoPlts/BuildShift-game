@@ -82,11 +82,23 @@ export class CombatFeedback {
    * Local accepted shot: per-weapon muzzle flash at `origin` plus a short
    * tracer from `origin` along `aimDirection`.
    */
-  playShot(weaponType: WeaponType, origin: Vector3, aimDirection: Vector3): void {
+  /**
+   * Local accepted shot: per-weapon muzzle flash at `origin` plus a tracer
+   * from `origin` along `aimDirection`. When `tracerTarget` is supplied (the
+   * resolved authoritative shot point — see `game/aim/authoritativeAim.ts`) the
+   * tracer converges muzzle→target (capped at that distance) so the visual ray
+   * matches where the shot really goes instead of a parallel line.
+   */
+  playShot(
+    weaponType: WeaponType,
+    origin: Vector3,
+    aimDirection: Vector3,
+    tracerTarget?: Vector3
+  ): void {
     if (this._disposed) return;
     const nowMs = Date.now();
     activateMuzzleFlash(this._muzzleFlashes, weaponType, origin, nowMs);
-    activateTracer(this._tracers, weaponType, origin, aimDirection, nowMs);
+    activateTracer(this._tracers, weaponType, origin, aimDirection, nowMs, tracerTarget);
   }
 
   /**

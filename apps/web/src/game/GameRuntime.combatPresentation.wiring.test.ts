@@ -48,13 +48,47 @@ describe("GameRuntime combat presentation wiring", () => {
     expect(runtime).toContain(
       "this.weaponModel.getMuzzlePosition(this._muzzlePos)",
     );
+    // The tracer converges muzzle→resolved-shot-point: the fire path resolves
+    // the authoritative aim point LIVE at fire time (never a stale cached
+    // reticle point after a fast turn+fire) and passes it to playShot.
     expect(runtime).toContain(
-      "this.combatFeedback.playShot(r.request.weaponType,this._muzzlePos,d)",
+      "const liveAim=this.resolveLiveAimPoint();this.combatFeedback.playShot(r.request.weaponType,this._muzzlePos,d,liveAim?this._tracerTarget.set(liveAim.point.x,liveAim.point.y,liveAim.point.z):undefined)",
+    );
+    // Pure aim is refreshed from the CURRENT raw yaw/pitch at the top of
+    // handleWeaponInput (applied look lands in the same frame's shot).
+    const hwi = runtime.indexOf(
+      "private handleWeaponInput(route:PrimaryActionRoute):void{",
+    );
+    expect(hwi).toBeGreaterThan(-1);
+    expect(runtime.slice(hwi, hwi + 140)).toContain(
+      "this.cameraController.getAimDirection(this.currentAimDirection);",
     );
     // ...and registers a per-weapon camera-recoil kick.
     expect(runtime).toContain("this.cameraRecoil.kick(r.request.weaponType)");
     // The legacy flash-only shim is no longer on the fire path.
     expect(runtime).not.toContain("this.combatFeedback.triggerMuzzleFlash");
+  });
+
+  it("drives the projected authoritative reticle from the resolved shot point each frame", () => {
+    // Per-frame: after the aim direction refresh in the render loop, the
+    // runtime resolves + projects the authoritative shot point and writes the
+    // crosshair element (no React state churn).
+    expect(runtime).toContain(
+      "this.cameraController.getAimDirection(this.currentAimDirection);this.updateReticlePresentation();",
+    );
+    expect(runtime).toContain(
+      "private updateReticlePresentation():void{",
+    );
+    expect(runtime).toContain("projectPointToScreenOffset(");
+    expect(runtime).toContain("resolveAuthoritativeAimPoint(");
+    // The reticle is suppressed (never clamped) when projection is invalid.
+    const urpStart = runtime.indexOf("private updateReticlePresentation():void{");
+    const urp = runtime.slice(urpStart, runtime.indexOf("private updateBuildPresentation(", urpStart));
+    expect(urp).toContain('el.style.visibility="hidden"');
+    // Build/edit keep the centred reticle: the projection only runs in weapon mode.
+    expect(urp).toContain('this.interactionMode.mode==="weapon"');
+    // And the UI seam is a plain element handoff.
+    expect(canvas).toContain("setReticleElement");
   });
 
   it("applies the modular recoil to the camera each frame before the camera update", () => {

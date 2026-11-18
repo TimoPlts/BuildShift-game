@@ -44,6 +44,7 @@ function createRuntime() {
     leaveRoom: vi.fn(),
     rejoinRoom: vi.fn(),
     requestRematch: vi.fn(),
+    setReticleElement: vi.fn(),
   };
 }
 
@@ -93,6 +94,52 @@ describe("GameCanvas startup", () => {
     expect(runtimeMocks.create).toHaveBeenCalledTimes(1);
     expect(runtime.start).toHaveBeenCalledTimes(1);
     expect(runtime.dispose).not.toHaveBeenCalled();
+    // Projected-reticle seam: the runtime is handed the crosshair element as
+    // soon as it is ready (null here — pointer unlocked, no element yet).
+    expect(runtime.setReticleElement).toHaveBeenCalledWith(null);
+  });
+
+  it("hands the runtime the crosshair element when the pointer locks", async () => {
+    const runtime = createRuntime();
+    runtimeMocks.create.mockResolvedValue(runtime);
+
+    await act(async () => {
+      root.render(<GameCanvas />);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const canvas = host.querySelector("canvas");
+    expect(canvas).not.toBeNull();
+    Object.defineProperty(document, "pointerLockElement", {
+      configurable: true,
+      get: () => canvas,
+    });
+    try {
+      await act(async () => {
+        document.dispatchEvent(new Event("pointerlockchange"));
+      });
+
+      const crosshair = host.querySelector<HTMLDivElement>(".crosshair");
+      expect(crosshair).not.toBeNull();
+      // Latest handoff is the mounted crosshair the runtime projects onto.
+      const calls = runtime.setReticleElement.mock.calls as unknown as unknown[][];
+      expect(calls.at(-1)?.[0]).toBe(crosshair);
+
+      // Unlocking removes the element and detaches it from the runtime.
+      Object.defineProperty(document, "pointerLockElement", {
+        configurable: true,
+        get: () => null,
+      });
+      await act(async () => {
+        document.dispatchEvent(new Event("pointerlockchange"));
+      });
+      const calls2 = runtime.setReticleElement.mock.calls as unknown as unknown[][];
+      expect(calls2.at(-1)?.[0]).toBeNull();
+    } finally {
+      delete (document as { pointerLockElement?: unknown }).pointerLockElement;
+    }
   });
 
   it("cancels a pending startup instead of constructing then immediately disposing it", async () => {

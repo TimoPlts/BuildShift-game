@@ -109,6 +109,58 @@ describe("CombatFeedback", () => {
     expect(liveFeedbackMeshes(scene, "combat-feedback-tracer").length).toBe(0);
   });
 
+  it("playShot converges the tracer muzzle→resolved shot point and caps it at cover distance", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    // The muzzle ray (aim) and the resolved authoritative shot point diverge:
+    // the streak must re-aim to the true endpoint, not the parallel line.
+    const origin = new Vector3(0, 1, 0);
+    const aim = new Vector3(0, 0, 1);
+    const shotPoint = new Vector3(2, 1, 5);
+    feedback.playShot("assault_rifle", origin, aim, shotPoint);
+
+    const tracers = liveFeedbackMeshes(scene, "combat-feedback-tracer");
+    expect(tracers.length).toBe(1);
+    const dist = Math.hypot(2, 0, 5);
+    const dir = new Vector3(2 / dist, 0, 5 / dist);
+    const axis = tracers[0].getDirection(new Vector3(0, 1, 0)).normalize();
+    expect(axis.x).toBeCloseTo(dir.x, 4);
+    expect(axis.z).toBeCloseTo(dir.z, 4);
+    // Streak capped at the hit distance (rifle spec length is 10 > dist).
+    expect(tracers[0].scaling.y).toBeCloseTo(dist, 3);
+    expect(tracers[0].scaling.y).toBeLessThan(10);
+    expect(tracers[0].position.x).toBeCloseTo(dir.x * dist / 2, 3);
+    expect(tracers[0].position.z).toBeCloseTo(dir.z * dist / 2, 3);
+  });
+
+  it("converged tracer keeps the spec length when the shot point is beyond it", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    const origin = new Vector3(0, 1, 0);
+    const shotPoint = new Vector3(0, 1, 40); // far hit: 40 m > 10 m streak
+    feedback.playShot("assault_rifle", origin, new Vector3(0, 0, 1), shotPoint);
+
+    const tracers = liveFeedbackMeshes(scene, "combat-feedback-tracer");
+    expect(tracers.length).toBe(1);
+    expect(tracers[0].scaling.y).toBeCloseTo(10, 3); // spec streak length retained
+    expect(tracers[0].position.z).toBeCloseTo(5, 3);
+  });
+
+  it("a shot point essentially at the muzzle spawns flash only (no stub streak)", () => {
+    engine = new NullEngine();
+    scene = makeScene(engine);
+    feedback = new CombatFeedback(scene);
+
+    feedback.playShot("assault_rifle", new Vector3(0, 1, 0), new Vector3(0, 0, 1), new Vector3(0, 1, 0.05));
+
+    expect(liveFeedbackMeshes(scene, "combat-feedback-muzzle").length).toBe(1);
+    expect(liveFeedbackMeshes(scene, "combat-feedback-tracer").length).toBe(0);
+  });
+
   it("assault rifle and shotgun differ in muzzle flash, tracer, and weight", () => {
     engine = new NullEngine();
     scene = makeScene(engine);
