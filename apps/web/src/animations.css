@@ -175,7 +175,7 @@
 }
 
 .score-bar__pip--won-local {
-  --score-glow: rgb(52 211 153 / 60%);
+  --score-glow: rgb(77 182 255 / 65%);
   animation: lifecycle-score-highlight 550ms ease-out both;
 }
 

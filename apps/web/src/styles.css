@@ -2,6 +2,28 @@
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
+
+/* ── HUD design tokens ──
+ * Presentation-only custom properties for the competitive HUD language:
+ * deep-navy angled cards, white/steel ink, electric-blue accent for
+ * "you / active", red for "opponent / critical", amber for low-resource
+ * warning, green for health. Namespaced --hud-* and consumed only by HUD
+ * stylesheets; they alter nothing outside HUD presentation. */
+:root {
+  --hud-font: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --hud-surface: rgb(13 21 36 / 84%);
+  --hud-surface-top: rgb(23 35 58 / 90%);
+  --hud-surface-deep: rgb(8 13 24 / 92%);
+  --hud-line: rgb(148 180 220 / 24%);
+  --hud-shadow: 0 0.6rem 1.8rem rgb(0 0 0 / 38%);
+  --hud-accent: #4db6ff;
+  --hud-accent-edge: rgb(77 182 255 / 80%);
+  --hud-ink: #e8eef7;
+  --hud-ink-dim: #9aabc4;
+  /* Match identity: electric blue = local player, red = opponent. */
+  --hud-local: #4db6ff;
+  --hud-remote: #ff5a6a;
+}
 html, body {
   margin: 0;
   width: 100%;
@@ -221,41 +243,60 @@ html, body {
   font-size: 0.75rem;
   overflow-wrap: anywhere;
 }
+/* ── MatchHud — top-center score / timer / phase card ──
+ * Hierarchy: bold score numerals lead (electric blue = you, red = them),
+ * the authoritative timer follows, and the raw phase word stays deliberately
+ * quiet. Angled navy card with a blue top edge anchors the composition. */
 .match-hud {
   position: absolute;
-  top: 1rem;
+  top: 0.9rem;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.35rem;
-  padding: 0.6rem 1.2rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.5rem;
-  background: rgb(8 12 18 / 72%);
-  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 25%);
+  gap: 0.4rem;
+  min-width: 17rem;
+  padding: 0.55rem 1.4rem 0.7rem;
+  border: 1px solid var(--hud-line);
+  background: linear-gradient(
+    180deg,
+    var(--hud-surface-top) 0%,
+    var(--hud-surface) 55%,
+    var(--hud-surface-deep) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 0 var(--hud-accent-edge),
+    var(--hud-shadow);
   pointer-events: none;
-  backdrop-filter: blur(0.35rem);
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    14px 0,
+    calc(100% - 14px) 0,
+    100% 14px,
+    100% 100%,
+    14px 100%,
+    0 calc(100% - 14px)
+  );
   z-index: 1000;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--hud-font);
+  color: var(--hud-ink);
 }
 .match-hud__score {
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
+  align-items: baseline;
+  gap: 0.7rem;
 }
 /* Waiting-for-opponent pill (lobby state). */
 .match-hud__waiting {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #aeb9ca;
-  padding: 0.2rem 0.6rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.4rem;
-  background: rgb(255 255 255 / 4%);
+  letter-spacing: 0.1em;
+  color: var(--hud-ink-dim);
+  padding: 0.2rem 0.7rem;
+  border: 1px solid rgb(148 180 220 / 28%);
+  background: rgb(2 5 10 / 40%);
 }
 /* Pre-round countdown presentation lives in the full-screen lifecycle
    overlay (CountdownOverlay); the header keeps only persistent info. */
@@ -263,38 +304,38 @@ html, body {
 .match-hud__timer {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.55rem;
 }
 
 .match-hud__timer-track {
-  width: 11rem;
-  height: 6px;
-  background: rgb(0 0 0 / 55%);
-  border: 1px solid rgb(255 255 255 / 15%);
-  border-radius: 3px;
+  width: 12rem;
+  height: 7px;
+  background: rgb(2 5 10 / 72%);
+  border: 1px solid rgb(148 180 220 / 24%);
   overflow: hidden;
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 45%);
+  box-shadow: inset 0 1px 3px rgb(0 0 0 / 50%);
+  clip-path: polygon(4px 0, 100% 0, calc(100% - 4px) 100%, 0 100%);
 }
 .match-hud__timer-fill {
   height: 100%;
-  background: #67e8f9;
-  border-radius: 3px;
+  background: linear-gradient(180deg, #6cc5ff 0%, #2f9dff 100%);
   /* The authoritative timer updates at whole-second resolution; a linear
      1s transition keeps the bar visibly smooth between updates. */
   transition: width 1s linear;
 }
 .match-hud__timer--low .match-hud__timer-fill {
-  background: #f0616d;
+  background: linear-gradient(180deg, #ff7480 0%, #e33b4c 100%);
 }
 .match-hud__timer-value {
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: 1.1rem;
+  font-weight: 800;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  color: #e6e8ee;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  color: #ffffff;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
 }
 .match-hud__timer--low .match-hud__timer-value {
-  color: #f0616d;
+  color: var(--hud-remote);
   /* Subtle low-time cue: a gentle breath so remaining time is felt, not
      just read. Stops under prefers-reduced-motion (see animations.css). */
   animation: match-timer-low-pulse 1s ease-in-out infinite;
@@ -312,21 +353,23 @@ html, body {
 /* Round-end outcome presentation lives in the RoundEndBanner overlay; the
    header no longer carries a per-round reason tag. */
 .match-hud__score-value {
-  font-size: 1.5rem;
-  font-weight: 700;
+  font-size: 2rem;
+  font-weight: 900;
+  line-height: 1;
   font-variant-numeric: tabular-nums;
-  color: #e6e8ee;
-  text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
+  color: var(--hud-ink);
+  text-shadow: 0 2px 4px rgb(0 0 0 / 70%);
 }
 .match-hud__score-value--local {
-  color: #34d399;
+  color: var(--hud-local);
 }
 .match-hud__score-value--remote {
-  color: #f0616d;
+  color: var(--hud-remote);
 }
 .match-hud__score-separator {
-  font-size: 1.2rem;
-  color: #aeb9ca;
+  font-size: 1.3rem;
+  font-weight: 300;
+  color: var(--hud-ink-dim);
 }
 /* Score-change pulse: the span is re-keyed on its authoritative value, so
    the animation replays exactly when a round win is scored. */
@@ -340,8 +383,8 @@ html, body {
     transform: scale(1);
   }
   35% {
-    transform: scale(1.35);
-    text-shadow: 0 0 14px currentColor;
+    transform: scale(1.28);
+    text-shadow: 0 0 16px currentColor;
   }
   100% {
     transform: scale(1);
@@ -354,13 +397,18 @@ html, body {
 .match-hud__phase-row {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
+  justify-content: center;
+  gap: 0.55rem;
+  /* Hairline footrule separates the quiet strip from the card foot. */
+  border-top: 1px solid rgb(148 180 220 / 16%);
+  padding-top: 0.3rem;
+  width: 100%;
 }
 .match-hud__round {
   font-size: 0.75rem;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: #aeb9ca;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--hud-ink);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase {
@@ -368,12 +416,15 @@ html, body {
   font-weight: 500;
   text-transform: uppercase;
   letter-spacing: 0.08em;
-  color: rgb(139 147 167 / 80%);
+  color: rgb(154 171 196 / 75%);
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .match-hud__phase--active {
-  color: rgb(245 182 66 / 75%);
+  color: rgb(108 197 255 / 85%);
 }
+/* ── BuildHud — bottom-center build piece selector card ──
+ * Compact angular card in the shared navy/electric-blue language: the
+ * selected piece slot lights up electric blue, validity stays green/red. */
 .build-hud {
   position: absolute;
   bottom: 1.5rem;
@@ -382,16 +433,29 @@ html, body {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.45rem;
   padding: 0.6rem 1.2rem;
-  border: 1px solid rgb(255 255 255 / 12%);
-  border-radius: 0.5rem;
-  background: rgb(8 12 18 / 78%);
-  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
+  border: 1px solid var(--hud-line);
+  background: linear-gradient(
+    180deg,
+    var(--hud-surface-top) 0%,
+    var(--hud-surface) 55%,
+    var(--hud-surface-deep) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 0 var(--hud-accent-edge),
+    var(--hud-shadow);
   pointer-events: none;
-  backdrop-filter: blur(0.35rem);
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    12px 0,
+    calc(100% - 12px) 0,
+    calc(100% - 6px) 100%,
+    6px 100%
+  );
   z-index: 1000;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--hud-font);
+  color: var(--hud-ink);
 }
 .build-hud--inactive {
   opacity: 0.7;
@@ -422,23 +486,27 @@ html, body {
 }
 .build-hud__mode-label {
   font-size: 0.7rem;
-  font-weight: 600;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: #8b93a7;
+  letter-spacing: 0.1em;
+  color: var(--hud-ink-dim);
 }
 .build-hud__mode-label--active {
-  color: #f5b642;
+  color: var(--hud-accent);
+  text-shadow: 0 0 10px rgb(77 182 255 / 35%);
 }
 .build-hud__selected {
-  font-size: 0.95rem;
-  font-weight: 600;
-  color: #e6e8ee;
-  letter-spacing: 0.02em;
+  font-size: 1rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 3px rgb(0 0 0 / 75%);
 }
 .build-hud__cost {
-  font-size: 0.75rem;
-  color: #aeb9ca;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #6cc5ff;
   margin-left: 0.3rem;
 }
 .build-hud__types {
@@ -451,45 +519,54 @@ html, body {
   align-items: center;
   gap: 0.15rem;
   padding: 0.35rem 0.6rem;
-  border: 1px solid rgb(255 255 255 / 10%);
-  border-radius: 0.35rem;
-  background: rgb(255 255 255 / 4%);
-  min-width: 3.5rem;
+  border: 1px solid rgb(148 180 220 / 16%);
+  background: rgb(2 5 10 / 45%);
+  clip-path: polygon(
+    6px 0,
+    100% 0,
+    100% calc(100% - 6px),
+    calc(100% - 6px) 100%,
+    0 100%,
+    0 6px
+  );
+  min-width: 3.6rem;
   /* Settle selection changes smoothly instead of snapping. */
   transition:
     border-color 150ms ease-out,
     background 150ms ease-out;
 }
 .build-hud__type--selected {
-  border-color: rgb(245 182 66 / 60%);
-  background: rgb(245 182 66 / 12%);
+  border-color: rgb(77 182 255 / 70%);
+  background: rgb(47 157 255 / 18%);
+  box-shadow: inset 0 2px 0 0 rgb(108 197 255 / 90%);
 }
 .build-hud__type-icon {
-  font-size: 1.1rem;
+  font-size: 1.15rem;
   line-height: 1;
-  color: #aeb9ca;
+  color: var(--hud-ink-dim);
 }
 .build-hud__type--selected .build-hud__type-icon {
-  color: #f5b642;
+  color: #8fd0ff;
 }
 .build-hud__type-label {
   font-size: 0.6rem;
+  font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: #8b93a7;
+  letter-spacing: 0.06em;
+  color: var(--hud-ink-dim);
 }
 .build-hud__type--selected .build-hud__type-label {
-  color: #f5b642;
+  color: #8fd0ff;
 }
 /* Number-key hint under each build-type chip (mirrors BUILD_TYPE_KEYS). */
 .build-hud__type-key {
   font-size: 0.62rem;
-  font-weight: 700;
+  font-weight: 800;
   font-variant-numeric: tabular-nums;
-  color: #8b93a7;
+  color: var(--hud-ink-dim);
 }
 .build-hud__type--selected .build-hud__type-key {
-  color: #f5b642;
+  color: #cfe8ff;
 }
 /* Contextual control-hint row (rotate / place-or-aim / exit). */
 .build-hud__hint {
@@ -519,21 +596,21 @@ html, body {
   gap: 0.8rem;
 }
 .build-hud__validity {
-  font-size: 0.7rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
 }
 .build-hud__validity--valid {
-  color: #34d399;
+  color: #55e39b;
 }
 .build-hud__validity--invalid {
-  color: #f0616d;
+  color: #ff5a6a;
 }
 /* Grid coordinates: real data, but developer-flavored — demoted to a quiet
    read-out so the validity state stays the primary cue. */
 .build-hud__grid {
   font-size: 0.64rem;
-  color: rgb(139 147 167 / 70%);
+  color: rgb(154 171 196 / 65%);
   font-variant-numeric: tabular-nums;
 }
 
@@ -548,14 +625,29 @@ html, body {
   align-items: center;
   gap: 0.4rem;
   padding: 0.55rem 1.1rem;
-  border: 1px solid rgb(96 165 250 / 28%);
-  border-radius: 0.5rem;
-  background: rgb(8 12 20 / 80%);
-  box-shadow: 0 0.5rem 1.5rem rgb(0 0 0 / 30%);
+  border: 1px solid rgb(77 182 255 / 35%);
+  background: linear-gradient(
+    180deg,
+    var(--hud-surface-top) 0%,
+    var(--hud-surface) 55%,
+    var(--hud-surface-deep) 100%
+  );
+  box-shadow:
+    inset 0 2px 0 0 rgb(77 182 255 / 60%),
+    var(--hud-shadow);
   pointer-events: none;
-  backdrop-filter: blur(0.35rem);
+  backdrop-filter: blur(6px);
+  clip-path: polygon(
+    10px 0,
+    calc(100% - 10px) 0,
+    100% 10px,
+    100% 100%,
+    10px 100%,
+    0 calc(100% - 10px)
+  );
   z-index: 1000;
-  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--hud-font);
+  color: var(--hud-ink);
 }
 /* Header row: title + target read-out + pending summary + state chips.
    Wraps on narrow viewports so the panel never overflows the screen. */
@@ -569,86 +661,88 @@ html, body {
 /* "EDIT MODE" title — the panel's mode word, kept quiet. */
 .build-edit-hud__title {
   font-size: 0.7rem;
-  font-weight: 700;
+  font-weight: 800;
   text-transform: uppercase;
-  letter-spacing: 0.1em;
-  color: #60a5fa;
+  letter-spacing: 0.12em;
+  color: #6cc5ff;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 .build-edit-hud__target {
-  font-size: 0.8rem;
-  font-weight: 600;
-  color: #e6e8ee;
-  letter-spacing: 0.02em;
+  font-size: 0.85rem;
+  font-weight: 800;
+  color: #ffffff;
+  letter-spacing: 0.03em;
   font-variant-numeric: tabular-nums;
   text-shadow: 0 1px 2px rgb(0 0 0 / 60%);
 }
 /* Aim prompt (no target): a friendly secondary line, not an error. */
 .build-edit-hud__aim {
   font-size: 0.72rem;
-  color: #aeb9ca;
+  color: var(--hud-ink-dim);
 }
 /* "No target" chip: dashed to read as an empty state. */
 .build-edit-hud__none {
   font-size: 0.64rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: #8b93a7;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  color: var(--hud-ink-dim);
   padding: 0.1rem 0.45rem;
-  border: 1px dashed rgb(255 255 255 / 22%);
-  border-radius: 0.3rem;
-  background: rgb(255 255 255 / 4%);
+  border: 1px dashed rgb(154 171 196 / 40%);
+  background: rgb(2 5 10 / 35%);
 }
 /* Pending tile / ramp-variant summary. */
 .build-edit-hud__tiles {
   font-size: 0.72rem;
-  font-weight: 600;
-  color: #aeb9ca;
+  font-weight: 700;
+  color: var(--hud-ink-dim);
   font-variant-numeric: tabular-nums;
 }
 /* Blocked-confirm reason (takes precedence over the pending chip). */
 .build-edit-hud__invalid {
   font-size: 0.72rem;
-  font-weight: 600;
-  color: #f0616d;
+  font-weight: 800;
+  color: #ff5a6a;
 }
 .build-edit-hud__pending {
   font-size: 0.72rem;
-  font-weight: 600;
-  color: #fbbf24;
+  font-weight: 800;
+  color: #ffc857;
 }
 /* Result-only mode: the panel shrinks to a feedback pill after the edit
    session ends, so it stops reading as an active panel. */
 .build-edit-hud--result-only {
   padding: 0.3rem 0.7rem;
-  border-color: rgb(255 255 255 / 12%);
-  background: rgb(8 12 20 / 68%);
+  border-color: rgb(148 180 220 / 24%);
+  box-shadow:
+    inset 0 2px 0 0 rgb(148 180 220 / 30%),
+    var(--hud-shadow);
+  background: rgb(8 13 24 / 78%);
 }
 .build-edit-hud__feedback {
   display: flex;
   align-items: center;
   gap: 0.35rem;
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.03em;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
   padding: 0.18rem 0.65rem;
-  border-radius: 0.35rem;
 }
 .build-edit-hud__glyph {
   line-height: 1;
   font-size: 0.8rem;
 }
 .build-edit-hud__feedback--accepted {
-  color: #34d399;
-  background: rgb(52 211 153 / 12%);
+  color: #55e39b;
+  background: rgb(52 211 153 / 14%);
 }
 .build-edit-hud__feedback--rejected {
-  color: #f0616d;
-  background: rgb(240 97 109 / 12%);
+  color: #ff5a6a;
+  background: rgb(255 90 106 / 14%);
 }
 .build-edit-hud__feedback--info {
-  color: #60a5fa;
-  background: rgb(96 165 250 / 12%);
+  color: #6cc5ff;
+  background: rgb(77 182 255 / 14%);
 }
 .build-edit-hud__hint {
   display: flex;
@@ -663,9 +757,9 @@ html, body {
 /* Ready state: the binds are actionable right now — read as a quiet green.
    The bind words themselves are emphasized within the hint. */
 .build-edit-hud__hint--ok {
-  color: rgb(52 211 153 / 90%);
+  color: rgb(85 227 155 / 92%);
 }
 .build-edit-hud__hint--warn {
-  color: #fbbf24;
-  font-weight: 700;
+  color: #ffc857;
+  font-weight: 800;
 }
