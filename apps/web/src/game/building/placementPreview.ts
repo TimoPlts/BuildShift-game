@@ -46,6 +46,7 @@ import type {
   StructureEditState,
 } from "@buildshift/protocol";
 import { gridToWorldAnchor } from "./gridSnap";
+import { isGridAllowedDuringPreparation, type PreparationSide } from "../preparation/preparationContract";
 
 /**
  * The build layer a player standing at feet height `y` builds on: the layer
@@ -70,7 +71,14 @@ export type PlacementInvalidReason =
   /** Part of the footprint lies outside the shared `BUILD_BOUNDS` build volume. */
   | "out_of_bounds"
   /** The candidate footprint overlaps an existing (authoritative or pending) structure. */
-  | "overlap";
+  | "overlap"
+  /**
+   * Preparation is active and the candidate's anchor grid X is not the
+   * local player's assigned prep row (shared `isGridAllowedDuringPreparation`
+   * rule — the same check the authoritative server applies with the NEW
+   * `preparation_zone` rejection reason, CONTRACT.md §6).
+   */
+  | "outside_preparation";
 
 /** A plain 3-vector (avoids a Babylon dependency in pure preview math). */
 export interface Vec3Like {
@@ -107,6 +115,13 @@ export interface PlacementPreviewInput {
   rotation: GridRotation;
   /** All structures currently occupying grid cells (authoritative + pending). */
   occupied: readonly OccupiedStructure[];
+  /**
+   * The local player's assigned preparation row while the authoritative
+   * preparation is active (`""` / `null` / `undefined` = no preparation
+   * restriction). Mirrors the server's `preparationSide`-gated placement
+   * validation so the ghost previews the rejection the server would give.
+   */
+  preparationSide?: PreparationSide | "" | null;
 }
 
 /** The result of one frame's placement-preview calculation. */
@@ -210,6 +225,7 @@ export function computePlacementPreview(
     playerPosition,
     buildType,
     occupied,
+    preparationSide = null,
   } = input;
   // Canonical rotation for this piece (shared with the server): rotatable
   // kinds keep the selected quarter turn, rotation-invariant kinds use 0.
@@ -290,6 +306,20 @@ export function computePlacementPreview(
       present: true,
       valid: false,
       reason: "out_of_bounds",
+      grid,
+      rotation,
+      anchorWorld,
+    };
+  }
+
+  // ── Preparation row: the shared prep-zone rule the server enforces while
+  //    preparation is active (anchor grid X must equal the assigned row) ──
+  if (preparationSide !== "" && preparationSide !== null
+    && !isGridAllowedDuringPreparation(grid, preparationSide)) {
+    return {
+      present: true,
+      valid: false,
+      reason: "outside_preparation",
       grid,
       rotation,
       anchorWorld,

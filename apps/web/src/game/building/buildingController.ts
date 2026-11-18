@@ -54,6 +54,7 @@ import {
 } from "./placementPreview";
 import { parseStructureRejectedEvent } from "./buildingStateStore";
 import type { BuildLatencyMetrics } from "./buildLatencyMetrics";
+import type { PreparationSide } from "../preparation/preparationContract";
 
 /**
  * The narrow network surface the controller needs. {@link NetworkClient}
@@ -119,6 +120,14 @@ export class BuildingController {
   private preview: PlacementPreview = ABSENT_PREVIEW;
   private disposed = false;
   /**
+   * The local player's assigned preparation row while the authoritative
+   * preparation countdown runs (set by the runtime from the replicated
+   * `preparationActive` + `preparationSide`; `null` = no restriction). Fed
+   * into {@link computePlacementPreview} so the ghost previews the server's
+   * prep-row rejection (CONTRACT.md §6).
+   */
+  private preparationSide: PreparationSide | null = null;
+  /**
    * Set of placement sequences that have been accepted (via the
    * `structure_placed` event) but not yet resolved by a frame that sees
    * the structure in the mirror. Used to defer the
@@ -168,6 +177,14 @@ export class BuildingController {
     return this.preview;
   }
 
+  /**
+   * Assign the preparation-row placement restriction (`null` clears it).
+   * Driven only by the replicated preparation state — never derived.
+   */
+  public setPreparationSide(side: PreparationSide | null): void {
+    this.preparationSide = side;
+  }
+
   /** The authoritative structure mirror as a plain `BuildingState`. */
   public getBuildingState(): BuildingState {
     return this.store.getBuildingState();
@@ -210,6 +227,7 @@ export class BuildingController {
       buildType: this.input.getSelectedBuildType(),
       rotation: this.input.getRotation(),
       occupied: this.store.getOccupiedStructures(),
+      preparationSide: this.preparationSide,
     });
     this.resolvePendingMeshes();
     return this.preview;

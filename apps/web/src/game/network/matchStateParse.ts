@@ -41,6 +41,15 @@ export interface ParsedMatchState {
    * is still in progress.
    */
   matchWinnerId: string | null;
+  /**
+   * Whether the authoritative server is running the pre-round BUILD
+   * PREPARATION countdown (CONTRACT.md §4): `true` ONLY while both players
+   * are connected AND the preparation `COUNTDOWN` is actually running. The
+   * client uses it to lift the old frozen-countdown input gate for
+   * movement/build inside the assigned prep row — never to derive zones or
+   * timings from visuals.
+   */
+  preparationActive: boolean;
 }
 
 /**
@@ -60,7 +69,10 @@ export function parseMatchState(raw: unknown): ParsedMatchState {
   const matchWinnerId =
     matchPhase === MatchPhase.MATCH_ENDED ? deriveMatchWinner(roundScore) : null;
 
-  return { matchPhase, roundScore, currentRound, lastRoundResult, matchWinnerId };
+  // Defensive: anything but a literal replicated `true` means "not in prep".
+  const preparationActive = record?.preparationActive === true;
+
+  return { matchPhase, roundScore, currentRound, lastRoundResult, matchWinnerId, preparationActive };
 }
 
 /**

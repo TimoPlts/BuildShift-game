@@ -31,6 +31,12 @@ export interface ParsedPlayerState extends PlayerNetworkState {
   lastFireSequence: number;
   /** Whether the player is eliminated. */
   isEliminated: boolean;
+  /**
+   * The player's authoritative preparation side (CONTRACT.md §4):
+   * `"negative"` / `"positive"`, or `""` before assignment (and for any
+   * unexpected wire value — the client never invents a side).
+   */
+  preparationSide: string;
 }
 
 /**
@@ -121,6 +127,7 @@ export function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
     typeof r.lastFireSequence === "number" ? r.lastFireSequence : -1;
   const isEliminated = r.isEliminated === true;
   const crouch = r.crouch === true;
+  const preparationSide = typeof r.preparationSide === "string" ? r.preparationSide : "";
 
   return {
     x,
@@ -139,5 +146,6 @@ export function parsePlayerEntry(raw: unknown): ParsedPlayerState | null {
     ammo,
     lastFireSequence,
     isEliminated,
+    preparationSide,
   };
 }

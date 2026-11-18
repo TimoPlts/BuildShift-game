@@ -43,6 +43,7 @@ import {
 } from "@buildshift/game-config";
 import type { BuildingState } from "@buildshift/protocol";
 import type { BufferedInput } from "./inputBatcher";
+import { clampToPreparationZone, type PreparationSide } from "../preparation/preparationContract";
 
 /**
  * Documented client-side snap threshold (metres). If the server's
@@ -134,6 +135,26 @@ export interface FirePredictionResult {
 export class PredictionOrchestrator {
   private structureSolids: StructureCuboid[] = [];
 
+  /**
+   * The authoritative preparation strip to confine prediction to, or `null`
+   * for the free arena. Driven EXCLUSIVELY by the replicated preparation
+   * state (`preparationActive` + this session's `preparationSide`) — never
+   * derived client-side. The GameRuntime sets/clears it on every parsed
+   * state change and around resets; {@link reset} deliberately leaves it
+   * (it is room-scoped lifecycle state, not per-round simulation state).
+   */
+  private _preparationSide: PreparationSide | null = null;
+
+  /** Assign (or clear with `null`) the preparation-strip prediction clamp. */
+  public setPreparationSide(side: PreparationSide | null): void {
+    this._preparationSide = side;
+  }
+
+  /** The currently-enforced preparation side, or `null`. */
+  public get preparationSide(): PreparationSide | null {
+    return this._preparationSide;
+  }
+
   /** Refresh predicted collision from the same authoritative replicated
    * structures consumed by the permanent renderer. */
   public setBuildingState(building: BuildingState): void {
@@ -145,13 +166,19 @@ export class PredictionOrchestrator {
     }));
   }
 
-  /** Structure collision, then the authoritative arena boundary — the same
-   * order the server applies to each input. */
+  /** Structure collision, then the authoritative arena boundary, then (while
+   * a preparation side is set) the preparation strip — the same order the
+   * server applies to each input (CONTRACT.md §6: arena-clamp first, then the
+   * prep-strip clamp while `matchPhase === COUNTDOWN`), so predicted and
+   * authoritative positions agree and reconciliation never rubber-bands. */
   private collide(previous: FullMovementState, proposed: FullMovementState, crouched: boolean): FullMovementState {
-    return clampToPlayableArena(resolveStructureMovement(
+    const arena = clampToPlayableArena(resolveStructureMovement(
       previous, proposed, this.structureSolids, PLAYER_COLLIDER.radius,
       (crouched ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : PLAYER_COLLIDER_HALF_TOTAL_HEIGHT) * 2,
     ), PLAYER_COLLIDER.radius);
+    return this._preparationSide !== null
+      ? clampToPreparationZone(arena, PLAYER_COLLIDER.radius, this._preparationSide)
+      : arena;
   }
   private state: FullMovementState = { ...INITIAL_STATE };
   private correctionFrom: { x: number; y: number; z: number } | null = null;

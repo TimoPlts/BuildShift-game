@@ -63,11 +63,13 @@ describe("GameRuntime primary-action routing", () => {
 
   it("routes the held AND pressed primary into the building frame with the in-round gate", () => {
     // Building frame: routed build-owned hold (turbo building) + press edge,
-    // plus the `inRound` flag so placement intents are only submitted while
-    // the server can accept them (the server rejects placement outside
-    // IN_PROGRESS).
+    // plus the placement-allowed flag so intents are only submitted while the
+    // server can accept them: `IN_PROGRESS` (fight) OR the authoritative
+    // build preparation (`inRound||this.preparationActive` — placement during
+    // prep is restricted to the assigned row by the shared prep rule; the
+    // server rejects anything else with `preparation_zone`).
     expect(runtime).toContain(
-      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound,route.buildPlacePressed);",
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound||this.preparationActive,route.buildPlacePressed);",
     );
     // The fixed sim tick reads the held fire through the stored frame route
     // (same frame's decision — no re-reading of raw input).
