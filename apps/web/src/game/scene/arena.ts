@@ -55,35 +55,10 @@ export const ARENA_PALETTE = {
   coverColor: new Color3(0.42, 0.43, 0.49),
 } as const;
 
-/**
- * Presentation mapping: arena collider id -> scene material kind. Every
- * collider in the shared `ARENA_COLLIDERS` table has exactly one entry here,
- * so the browser can tint its visual mesh without that knowledge ever needing
- * to reach the shared config (or the server).
- *
- * Visual tiers: "ground" for the floor slab, "accent" (warm brass-gold) for
- * the central feature, "neutral" (muted warm grey) for cover pieces.
- *
- * NOTE (pending integration): the playground-obstacle colliders
- * (`center-box`, `reference-*`, `slide-corridor-*`, `low-block`,
- * `jump-platform`) are being removed from the shared `ARENA_COLLIDERS`
- * table by a parallel task. Their entries stay here until that lands —
- * this branch still renders those baseline colliders, and dropping the
- * entries first would make `getArenaMaterialKind` throw. After the merge
- * the unused entries can be deleted with no code change elsewhere.
- */
-export const ARENA_MATERIAL_BY_ID: Readonly<Record<string, ArenaMaterialKind>> =
-  {
-    "foundation-ground": "ground",
-    "center-box": "accent",
-    // Cover pieces read as intentional arena furniture, not debug blocks.
-    "reference-platform": "neutral",
-    "reference-tower": "neutral",
-    "slide-corridor-wall-west": "neutral",
-    "slide-corridor-wall-east": "neutral",
-    "low-block": "neutral",
-    "jump-platform": "neutral",
-  };
+/** Presentation mapping for the shared, obstacle-free arena geometry. */
+export const ARENA_MATERIAL_BY_ID: Readonly<Record<string, ArenaMaterialKind>> = {
+  "foundation-ground": "ground",
+};
 
 /**
  * The scene material kind for an arena collider, looked up by its stable id.

@@ -434,7 +434,7 @@ describe("Stage 2C1 authoritative movement (deterministic)", () => {
         expect(lastZ).toBeLessThan(REST_Z + 0.15);
 
         // Sustained forward input cannot grind through: still stopped here
-        // 20 more ticks (6.7 s) later.
+        // 20 more ticks (0.67 s) later.
         for (let i = 0; i < 20; i++) movement.runTick(TICK);
         const zAfter = movement.getPublishable(ID)!.position.z;
         expect(Math.abs(zAfter - lastZ)).toBeLessThan(0.02);
