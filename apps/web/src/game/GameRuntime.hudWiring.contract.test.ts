@@ -38,8 +38,9 @@ describe("GameRuntime HUD wiring", () => {
       "onEvent(MATCH_COUNTDOWN_TICK_EVENT,(p)=>this.handleCountdownTickEvent(p))",
     );
     // The countdown seconds are derived from the tick fraction and the
-    // shared game-config round countdown length.
-    expect(runtime).toContain("ROUND_COUNTDOWN_SECONDS");
+    // shared preparation duration (the COUNTDOWN phase IS the 8 s build
+    // preparation — CONTRACT.md §3/§5: `totalTicks` = durationSeconds × 30).
+    expect(runtime).toContain("BOX_FIGHT_PREPARATION.durationSeconds");
     const cdIdx = runtime.indexOf("handleCountdownTickEvent(payload:unknown)");
     expect(cdIdx).toBeGreaterThan(-1);
     const block = runtime.slice(cdIdx, cdIdx + 400);

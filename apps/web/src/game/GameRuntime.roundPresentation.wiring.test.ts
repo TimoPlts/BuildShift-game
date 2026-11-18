@@ -67,6 +67,16 @@ describe("GameCanvas round / match lifecycle wiring", () => {
     expect(canvas).toContain("r.getSessionId()");
     expect(canvas).toContain("r.getCountdownSeconds()");
     expect(canvas).toContain("r.connected");
+    // The replicated preparation side is read LIVE from the runtime's narrow
+    // getter on every view build (no mirrored flag in the React layer).
+    expect(canvas).toContain("r.getPreparationSide()");
+    // An active preparation excludes the waiting indicator (the opponent is
+    // present — the room is preparing, not waiting).
+    expect(canvas).toMatch(
+      /currentRound === 0 &&\s*!state\.preparationActive,\s*\}\);/,
+    );
+    // The HUD receives the raw replicated preparation flag (BUILD label).
+    expect(canvas).toContain("preparationActive: state.preparationActive === true,");
     // The view is pushed to the parent (App) for the overlay screens.
     expect(canvas).toContain("onLifecycleChangeRef.current?.(view);");
   });
@@ -140,7 +150,7 @@ describe("buildMatchLifecycleView (authoritative state -> local perspective)", (
       currentRound: 4,
       lastRoundResult: { winnerId: "session-a", roundNumber: 4 },
     });
-    const view = buildMatchLifecycleView(parsed, "session-a", 0, true);
+    const view = buildMatchLifecycleView(parsed, "session-a", 0, true, "");
     expect(view.roundState).toBe(RoundState.MATCH_OVER);
     expect(view.currentRound).toBe(4);
     expect(view.localScore).toBe(3);
@@ -156,7 +166,7 @@ describe("buildMatchLifecycleView (authoritative state -> local perspective)", (
       currentRound: 4,
       lastRoundResult: { winnerId: "session-b", roundNumber: 4 },
     });
-    const view = buildMatchLifecycleView(parsed, "session-a", 0, true);
+    const view = buildMatchLifecycleView(parsed, "session-a", 0, true, "");
     expect(view.localWonMatch).toBe(false);
     expect(view.localWonLastRound).toBe(false);
   });
@@ -168,11 +178,13 @@ describe("buildMatchLifecycleView (authoritative state -> local perspective)", (
       currentRound: 0,
     });
     // Disconnected: the authoritative countdown must not render.
-    const disconnected = buildMatchLifecycleView(parsed, "session-a", 3, false);
+    const disconnected = buildMatchLifecycleView(parsed, "session-a", 3, false, "negative");
     expect(disconnected.countdownRemainingSeconds).toBe(0);
     expect(disconnected.roundState).toBe(RoundState.COUNTDOWN);
+    // A stale preparation side must never survive a disconnect.
+    expect(disconnected.preparationSide).toBe("");
     // No session: perspective values are null, scores are zero.
-    const noSession = buildMatchLifecycleView(parsed, null, 3, true);
+    const noSession = buildMatchLifecycleView(parsed, null, 3, true, "positive");
     expect(noSession.localWonMatch).toBeNull();
     expect(noSession.localWonLastRound).toBeNull();
     expect(noSession.localScore).toBe(0);

@@ -43,6 +43,15 @@ const REJECTION_REASONS: readonly BuildRejectionReason[] = [
   "unaffordable",
 ];
 
+/**
+ * The preparation-zone rejection (`"preparation_zone"`, CONTRACT.md §6) the
+ * server sends when a placement during preparation leaves the assigned row.
+ * Kept separate until `@buildshift/protocol` adds the literal to
+ * `BuildRejectionReason` (shared-worker dependency) so the wire event is not
+ * dropped and the pending intent is released immediately.
+ */
+const PREPARATION_ZONE_REJECTION_REASON = "preparation_zone";
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -118,7 +127,8 @@ export function parseStructureRejectedEvent(
   }
   if (
     typeof raw.reason !== "string" ||
-    !(REJECTION_REASONS as readonly string[]).includes(raw.reason)
+    (!(REJECTION_REASONS as readonly string[]).includes(raw.reason) &&
+      raw.reason !== PREPARATION_ZONE_REJECTION_REASON)
   ) {
     return null;
   }

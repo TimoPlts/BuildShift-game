@@ -117,7 +117,8 @@ describe("GameRuntime audio wiring", () => {
   it("plays the countdown tick sound only when the displayed second changes", () => {
     const idx = runtime.indexOf("private handleCountdownTickEvent");
     expect(idx).toBeGreaterThan(-1);
-    const block = runtime.slice(idx, idx + 400);
+    // Window covers the shared preparation-duration seconds mapping.
+    const block = runtime.slice(idx, idx + 480);
     expect(block).toContain("this.audio.playCountdownTick()");
     // The server ticks at 30 Hz; the client must dedupe by displayed second.
     expect(block).toContain("if(next===this.countdownSeconds)return");

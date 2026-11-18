@@ -26,6 +26,9 @@ function view(overrides: Partial<MatchLifecycleView> = {}): MatchLifecycleView {
     localWonLastRound: null,
     localWonMatch: null,
     countdownRemainingSeconds: 0,
+    // Required replicated preparation fields (default: not preparing).
+    preparationActive: false,
+    preparationSide: "",
     ...overrides,
   };
 }
@@ -74,9 +77,13 @@ describe("round-intro: authoritative input lock during COUNTDOWN", () => {
     expect(runtime).toContain("if(route.weaponFirePressed&&active){");
   });
 
-  it("zeroes movement, fire, and jump in the sim tick during COUNTDOWN", () => {
+  it("zeroes movement, fire, and jump in the sim tick during COUNTDOWN — EXCEPT while authoritative preparation is active", () => {
+    // Round preparation (CONTRACT.md): COUNTDOWN IS the 8 s build-prep
+    // phase, and the server confines (but does not freeze) movement to the
+    // assigned row, so the freeze gate only applies while preparation is
+    // NOT active. Combat remains locked to IN_PROGRESS (test above).
     expect(runtime).toContain(
-      "const inCd=this.matchState.matchPhase===MatchPhase.COUNTDOWN",
+      "const inCd=(this.matchState.matchPhase===MatchPhase.COUNTDOWN&&!this.preparationActive)||this.predictionOrchestrator.getCombatState().isEliminated",
     );
     expect(runtime).toContain("moveX:inCd?0:m.x");
     expect(runtime).toContain("moveZ:inCd?0:m.z");
