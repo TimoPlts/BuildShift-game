@@ -11,7 +11,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -114,12 +115,12 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10_000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10_000, "startServer");
     server = started.server;
     port = started.port;
     const url = `ws://127.0.0.1:${port}`;
-    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join A");
-    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join B");
+    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join A");
+    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     expect(roomA.roomId).toBe(roomB.roomId);
   }, 30_000);

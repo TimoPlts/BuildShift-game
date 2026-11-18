@@ -26,7 +26,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { VERTICAL_MOVEMENT, MAX_HEALTH, MAX_SHIELD } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM } from "./TwoPlayerMovementRoom.js";
 import { RECONNECT_GRACE_MS } from "./lifecycle/reconnectGrace.js";
@@ -109,12 +110,12 @@ async function setupRoomWithPlayers(count: number): Promise<{
   server: GameServer;
   rooms: ClientRoom[];
 }> {
-  const { server, port } = await withDeadline(startServer(0), 10_000, "startServer");
+  const { server, port } = await withDeadline(startTestServer(0), 10_000, "startServer");
   const url = `ws://127.0.0.1:${port}`;
   const rooms: ClientRoom[] = [];
   for (let i = 0; i < count; i++) {
     const room = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       `join player ${i}`,
     );
@@ -359,7 +360,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // A new player joins with a brand-new session.
       const port = (server as any).transport.server.address().port;
       const newClient = new Client(`ws://127.0.0.1:${port}`);
-      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
       const sidC = roomC.sessionId;
       expect(sidC).not.toBe(sidB); // New session, not a duplicate.
 
@@ -584,7 +585,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // fill B's slot, which resumes preparation, and the round then opens.
       const port = (server as any).transport.server.address().port;
       const newClient = new Client(`ws://127.0.0.1:${port}`);
-      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
       const sidC = roomC.sessionId;
       await waitForState(roomC, (s) => playerFromState(s, sidC), 5_000);
 
@@ -662,7 +663,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
 
       const port = (server as any).transport.server.address().port;
       const newClient = new Client(`ws://127.0.0.1:${port}`);
-      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
       try {
         await waitForState(roomA, (s) => playerFromState(s, roomC.sessionId), 5_000);
         await waitForState(

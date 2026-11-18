@@ -37,7 +37,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { VERTICAL_MOVEMENT, PLAYER_MOVEMENT } from "@buildshift/game-config";
 import { MatchPhase } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -139,7 +140,7 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
   let roomB: ClientRoom;
 
   beforeAll(async () => {
-    const started = await startServer(0);
+    const started = await startTestServer(0);
     server = started.server;
     port = started.port;
     expect(port).toBeGreaterThan(0);
@@ -148,12 +149,12 @@ describe("Colyseus integration: two mock clients verify independent state snapsh
 
     // Join two client sessions to the same room.
     roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join room A",
     );
     roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join room B",
     );

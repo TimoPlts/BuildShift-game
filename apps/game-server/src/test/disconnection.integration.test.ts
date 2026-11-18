@@ -6,7 +6,8 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, EVENTS, type StructurePlacedEvent, type StructureDestroyedEvent } from "@buildshift/protocol";
 import { MAX_HEALTH, MAX_SHIELD, ENERGY, VERTICAL_MOVEMENT } from "@buildshift/game-config";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "./testServerFixture.js";
 import { TWO_PLAYER_MOVEMENT_ROOM } from "../rooms/TwoPlayerMovementRoom.js";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -55,16 +56,16 @@ async function dl<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 }
 
 async function setup() {
-  const st = await dl(startServer(0), 10_000, "startServer");
+  const st = await dl(startTestServer(0), 10_000, "startServer");
   const url = `ws://127.0.0.1:${st.port}`;
-  const a = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinA");
-  const b = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinB");
+  const a = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinA");
+  const b = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinB");
   await wfs(a, (s) => pf(s, a.sessionId) && pf(s, b.sessionId));
   return { server: st.server, url, a, b };
 }
 
 async function jn(url: string): Promise<ClientRoom> {
-  return await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join");
+  return await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join");
 }
 
 async function wp(room: ClientRoom, timeoutMs = 8000): Promise<void> {

@@ -27,7 +27,8 @@ import {
   type PlayerEliminatedEvent,
 } from "@buildshift/protocol";
 
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -132,14 +133,14 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
   const eliminated: PlayerEliminatedEvent[] = [];
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10000, "startServer");
     server = started.server;
     port = started.port;
     expect(port).toBeGreaterThan(0);
 
     const url = `ws://127.0.0.1:${port}`;
-    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "join A");
-    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "join B");
+    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "join A");
+    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "join B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     expect(roomA.roomId).toBe(roomB.roomId);
 

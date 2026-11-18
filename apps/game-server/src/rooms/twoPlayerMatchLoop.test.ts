@@ -10,7 +10,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { MatchPhase } from "@buildshift/protocol";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM } from "./TwoPlayerMovementRoom.js";
 
@@ -65,7 +66,7 @@ describe("Full match lifecycle", () => {
   let port: number;
 
   beforeAll(async () => {
-    const started = await withDeadline(startServer(0), 10_000, "startServer");
+    const started = await withDeadline(startTestServer(0), 10_000, "startServer");
     server = started.server;
     port = started.port;
   }, 20_000);
@@ -77,12 +78,12 @@ describe("Full match lifecycle", () => {
   it("starts in COUNTDOWN and transitions to IN_PROGRESS after countdown", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join B",
     );
@@ -120,12 +121,12 @@ describe("Full match lifecycle", () => {
   it("disconnect during IN_PROGRESS awards round to opponent", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join B",
     );
@@ -176,12 +177,12 @@ describe("Full match lifecycle", () => {
   it("round reset returns to COUNTDOWN then IN_PROGRESS (round 2)", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
       10_000,
       "join B",
     );
@@ -215,7 +216,7 @@ describe("Full match lifecycle", () => {
 
       // Preparation pauses while A is alone; a replacement player resumes it.
       const roomC = await withDeadline(
-        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
         10_000,
         "join C",
       );

@@ -24,7 +24,8 @@ import {
   ROUNDS_TO_WIN,
   VERTICAL_MOVEMENT,
 } from "@buildshift/game-config";
-import { startServer, shutdownServer } from "../src/server.js";
+import { shutdownServer } from "../src/server.js";
+import { startTestServer } from "../src/test/testServerFixture.js";
 import type { GameServer } from "../src/server.js";
 import {
   TWO_PLAYER_MOVEMENT_ROOM,
@@ -83,10 +84,10 @@ async function deadline<T>(p: Promise<T>, ms: number, label: string): Promise<T>
 }
 
 async function setup(): Promise<{ server: GameServer; roomA: ClientRoom; roomB: ClientRoom }> {
-  const started = await deadline(startServer(0), 10000, "startServer");
+  const started = await deadline(startTestServer(0, { testPreparationSeconds: 2 }), 10000, "startServer");
   const url = `ws://127.0.0.1:${started.port}`;
-  const roomA = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "joinA");
-  const roomB = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "joinB");
+  const roomA = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinA");
+  const roomB = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinB");
   await waitForState(roomA, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
   return { server: started.server, roomA, roomB };
 }
@@ -203,7 +204,7 @@ describe("Match lifecycle state machine", () => {
       await waitForState(roomA, (s) => phase(s) === MatchPhase.COUNTDOWN, 15000);
       const addr = server.transport.server!.address() as { port: number };
       const url = `ws://127.0.0.1:${addr.port}`;
-      const roomB2 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "rejoinB2");
+      const roomB2 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "rejoinB2");
       await waitForState(roomA, (s) => playerFromState(s, roomB2.sessionId), 5000);
       await waitForPlay(roomA, 15000);
       expect((roomA.state as Record<string, any>).currentRound).toBe(2);
@@ -216,7 +217,7 @@ describe("Match lifecycle state machine", () => {
 
       // Transition to round 3 (prep pauses solo; replacement reopens it).
       await waitForState(roomA, (s) => phase(s) === MatchPhase.COUNTDOWN, 15000);
-      const roomB3 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "rejoinB3");
+      const roomB3 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "rejoinB3");
       await waitForState(roomA, (s) => playerFromState(s, roomB3.sessionId), 5000);
       await waitForPlay(roomA, 15000);
       expect((roomA.state as Record<string, any>).currentRound).toBe(3);

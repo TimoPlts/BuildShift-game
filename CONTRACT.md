@@ -138,8 +138,39 @@ Clients: render prep UI from `preparationActive` + `matchPhase === COUNTDOWN`
   clamp to the strip. Reconnect restores `preparationSide` and clamps the
   restored position into the row when reconnecting during prep.
 
-## 7. Test-only escape hatch
+## 7. Test-only escape hatch (server-owned capability token)
 
-`joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: <sec> })`
-shortens the preparation countdown for integration tests only. Default (no
-option) is the authoritative 8 s. Clients must never send room options.
+The preparation length is never a client input. A real `joinOrCreate(...)`
+payload can contain anything at all, so the contract does not ask clients to
+refrain — the server simply has no way to honour it:
+
+- **Production (`createServer()`, i.e. what `src/index.ts` boots) registers the
+  canonical room with `{ __testPreparationToken: "" }`** and the room resolves
+  the preparation length only from a token this process issued
+  (`apps/game-server/src/rooms/testPreparationOverride.js`). No token ⇒ the
+  authoritative `BOX_FIGHT_PREPARATION.durationSeconds` (8 s) for both players.
+  A client cannot shorten its own or the opponent's preparation with
+  `testPreparationSeconds` or any guard/flag name it invents.
+- **Why a token and not a boolean guard:** Colyseus 0.18 hands `onCreate`
+  `merge({}, clientOptions, handler.options)`
+  (`@colyseus/core/src/MatchMaker.ts`), a shallow key assignment. Every option
+  name the registration does NOT pin arrives verbatim from the client, so a
+  client-supplied boolean "test mode" flag would be spoofable — and an absent
+  key (rather than an explicitly pinned one) would not be overwritten either.
+  The duration is therefore resolved server-side from the issued token; the room
+  never reads a duration out of `onCreate` options at all.
+- **Allowed test setup:** construct the server with the override, which puts a
+  freshly issued token in the server-defined handler options —
+  `createServer({}, { testPreparationSeconds: 0.4 })`, wrapped by the test
+  fixture `apps/game-server/src/test/testServerFixture.js`
+  (`startTestServer(0, { testPreparationSeconds })`, default 0.1 s). The token is
+  random per registration and is never sent to clients, so even a client on a
+  test server can neither arm nor widen the shortening.
+- **Not allowed / not honoured:** no environment variable, no `NODE_ENV`-derived
+  behaviour, no dedicated test room type, and no client-side option name. Tests
+  must join the single canonical `ROOMS.TWO_PLAYER_MOVEMENT` route exactly as the
+  web client does.
+- Contract coverage: `twoPlayerPreparationGuard.test.ts` (production registration
+  + hostile join proving 8 s survives spoofed durations/flags/tokens) and
+  `twoPlayerPreparationFixture.test.ts` (positive control: the server-pinned
+  short preparation really is what clients observe).

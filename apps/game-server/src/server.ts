@@ -25,6 +25,11 @@ import { ROOMS, type RoomType } from "@buildshift/protocol";
 import { createAiChatRouter } from "./aiChat/aiChatRoute.js";
 import { createChatService, type ChatService } from "./aiChat/chatService.js";
 import { TwoPlayerMovementRoom } from "./rooms/TwoPlayerMovementRoom.js";
+import {
+  issueTestPreparationOverride,
+  normalizeTestPreparationSeconds,
+  TEST_PREPARATION_TOKEN_OPTION,
+} from "./rooms/testPreparationOverride.js";
 
 export type GameServer = Server;
 
@@ -43,6 +48,40 @@ export interface CreateServerDeps {
    * (bounded in-memory store + school LLM); tests may inject a stub.
    */
   readonly aiChatService?: ChatService;
+  /**
+   * TEST-ONLY server-owned preparation override (see CONTRACT.md §7).
+   *
+   * When a finite number > 0 is supplied, the canonical room is registered with
+   * SERVER-DEFINED handler options carrying a capability token issued by this
+   * process, and the room resolves the preparation length SERVER-SIDE from that
+   * token. A client join option can neither arm the override nor pick a
+   * duration — it has no token, and Colyseus 0.18 merges handler options over
+   * client options (`merge({}, clientOptions, handler.options)`).
+   *
+   * Production callers (and `createServer()` with no deps) leave this unset, so
+   * the room registers with an empty token and always runs the authoritative 8 s
+   * preparation for BOTH players. This is deliberately NOT inferred from
+   * `NODE_ENV`; it is explicit, per-server construction.
+   */
+  readonly testPreparationSeconds?: number;
+}
+
+/**
+ * Handler (server-defined) options for the canonical room registration.
+ *
+ * Exported for contract tests. The production shape is exactly
+ * `{ __testPreparationToken: "" }` — an explicit neutral value that the shallow
+ * Colyseus merge assigns OVER any client-sent token. The test shape carries a
+ * freshly issued, server-side-only token (never transmitted to clients) bound to
+ * the requested duration.
+ */
+export function roomRegistrationOptions(
+  deps: Pick<CreateServerDeps, "testPreparationSeconds"> = {},
+): Record<string, unknown> {
+  const token = issueTestPreparationOverride(
+    normalizeTestPreparationSeconds(deps.testPreparationSeconds),
+  );
+  return { [TEST_PREPARATION_TOKEN_OPTION]: token ?? "" };
 }
 
 /**
@@ -74,7 +113,11 @@ export function createServer(
     },
     ...options,
   });
-  server.define(ROOMS.TWO_PLAYER_MOVEMENT, TwoPlayerMovementRoom);
+  server.define(
+    ROOMS.TWO_PLAYER_MOVEMENT,
+    TwoPlayerMovementRoom,
+    roomRegistrationOptions(deps),
+  );
   console.log(`[buildshift:game-server] gameplay room registered ("${ROOMS.TWO_PLAYER_MOVEMENT}")`);
   return server;
 }

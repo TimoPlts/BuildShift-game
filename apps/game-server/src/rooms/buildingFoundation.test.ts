@@ -5,7 +5,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { BUILD_EVENTS, type StructurePlacedEvent, type StructureRejectedEvent } from "@buildshift/protocol";
-import { startServer, shutdownServer } from "../server.js";
+import { shutdownServer } from "../server.js";
+import { startTestServer } from "../test/testServerFixture.js";
 import type { GameServer } from "../server.js";
 import { TWO_PLAYER_MOVEMENT_ROOM, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
@@ -51,11 +52,11 @@ const RATE_WAIT = 400;
 
 describe("Building foundation — server-authoritative contract", () => {
   beforeAll(async () => {
-    const s = await wd(startServer(0), 10_000, "start");
+    const s = await wd(startTestServer(0), 10_000, "start");
     server = s.server;
     const url = `ws://127.0.0.1:${s.port}`;
-    roomA = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "A");
-    roomB = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "B");
+    roomA = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "A");
+    roomB = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     roomA.onMessage(BUILD_EVENTS.STRUCTURE_PLACED, (m) => pA.push(m as StructurePlacedEvent));
     roomB.onMessage(BUILD_EVENTS.STRUCTURE_PLACED, (m) => pB.push(m as StructurePlacedEvent));

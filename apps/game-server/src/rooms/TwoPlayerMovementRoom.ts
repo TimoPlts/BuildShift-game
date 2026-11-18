@@ -7,6 +7,7 @@ import { BuildingStateSchema, StructureStateSchema, oc } from "../state/building
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
+import { resolveTestPreparationSeconds } from "./testPreparationOverride.js";
 import { classifyFloorForm } from "../match/floorEditGeometry.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 import { PlayerInputQueue } from "./lifecycle/playerInputQueue.js";
@@ -105,7 +106,8 @@ export class TwoPlayerMovementRoom extends Room<{
     private ptl = 0;
     private readonly wps = new Map<string, PWS>();
     private readonly nextFireTick = new Map<string, number>();
-    /** Preparation countdown length in ticks (set in onCreate; test-overridable). */
+    /** Preparation countdown length in ticks (set in onCreate; 8 s unless the
+     *  SERVER-OWNED test guard is present — see CONTRACT.md §7). */
     private ptt = Math.max(1, Math.round(BOX_FIGHT_PREPARATION.durationSeconds * THZ));
     private readonly rematchVotes = new Set<string>();
     private matchEndedAt = 0;
@@ -117,10 +119,13 @@ export class TwoPlayerMovementRoom extends Room<{
         this.reconnectGrace = createReconnectGraceManager(RECONNECT_GRACE_MS, (sid, snap) => this.handleGraceExpire(sid, snap as PlayerSnapshot));
     }
     onCreate(options?: Record<string, unknown>): void { this.maxClients = 2; this.onMessage(TWO_PLAYER_MOVEMENT_INPUT, (c, m) => { this.hi(c, m); }); this.onMessage(WEAPON_SWITCH_INPUT, (c, m) => { this.hws(c, m); }); this.onMessage("two-player:weapon_reload", (c, m) => { this.hr(c, m); }); this.onMessage(EDIT_GRID_ACTION_INPUT, (c, m) => { this.hega(c, m); }); this.onMessage(BUILD_EVENTS.PLACEMENT_REQUEST, (c, m) => { this.hpr(c, m); }); this.onMessage(REMATCH_REQUEST, (c) => { this.rm(c); });
-        // Preparation countdown length: authoritative 8 s, with a
-        // documented test-only join-option override (CONTRACT.md §7).
-        const tps = options?.testPreparationSeconds;
-        const secs = typeof tps === "number" && Number.isFinite(tps) && tps > 0 ? tps : BOX_FIGHT_PREPARATION.durationSeconds;
+        // Preparation countdown length: the authoritative 8 s from
+        // BOX_FIGHT_PREPARATION. A shorter length is honoured ONLY when `onCreate`
+        // carries a capability token this process actually issued from server-side
+        // registration (CONTRACT.md §7, see ./testPreparationOverride.ts). Client
+        // join options can never shorten either player's preparation: they carry no
+        // token, and the production registration pins the token key to "".
+        const secs = resolveTestPreparationSeconds(options) ?? BOX_FIGHT_PREPARATION.durationSeconds;
         this.ptt = Math.max(1, Math.round(secs * THZ));
         this.state.matchPhase = MatchPhase.COUNTDOWN; this.state.currentRound = 0; this.ptl = this.ptt; this.setFixedTimestep(() => this.tick(), THZ); }
     onJoin(c: Client): void {
