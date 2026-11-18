@@ -67,6 +67,10 @@ describe("authoritative 2×2 floor edit system", () => {
     room.onJoin(a);
     room.onJoin(b);
     internal.br(); // COUNTDOWN → IN_PROGRESS
+    // Stand near the centre tiles so every test placement is in range
+    // (prep-row spawns are ~20 m from the arena centre).
+    Object.assign(internal.state.players.get("a")!, { x: -2, y: 0, z: 0 });
+    Object.assign(internal.state.players.get("b")!, { x: 2, y: 0, z: 0 });
   });
   afterEach(() => {
     room.onDispose();
@@ -176,7 +180,9 @@ describe("authoritative 2×2 floor edit system", () => {
     );
     expect(editResults()).toHaveLength(0);
 
-    room.state.matchPhase = MatchPhase.COUNTDOWN;
+    // Edits are allowed in COUNTDOWN (preparation) AND IN_PROGRESS; any
+    // other lifecycle phase must reject them.
+    room.state.matchPhase = MatchPhase.ROUND_ENDED;
     await edit({ structureId: id, action: "select", tileIndex: 0 });
     expect(a.send).toHaveBeenLastCalledWith(
       EDIT_GRID_ACTION_INPUT,

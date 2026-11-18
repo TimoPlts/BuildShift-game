@@ -129,8 +129,8 @@ function createSequence(): { next: () => number; claim: (v: number) => void; las
 async function setup(): Promise<{ server: GameServer; url: string; a: ClientRoom; b: ClientRoom }> {
   const started = await deadline(startServer(0), 10_000, "startServer");
   const url = `ws://127.0.0.1:${started.port}`;
-  const a = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinA");
-  const b = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinB");
+  const a = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinA");
+  const b = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinB");
   await waitForState(
     a,
     (s) => playerFromState(s, a.sessionId) && playerFromState(s, b.sessionId),
@@ -395,7 +395,7 @@ describe("input-sequence lifecycle (session-lifetime monotonic)", () => {
         "old session removed",
       );
       const aNewRoom = await deadline(
-        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
         10_000,
         "rejoin",
       );

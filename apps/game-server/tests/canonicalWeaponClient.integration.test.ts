@@ -4,8 +4,8 @@ import { BUILD_EVENTS, MatchPhase } from "@buildshift/protocol";
 import { NetworkClient } from "../../web/src/game/network/NetworkClient";
 import { startServer, shutdownServer } from "../src/server.js";
 
-async function until(predicate: () => boolean) {
-  const deadline = Date.now() + 8000;
+async function until(predicate: () => boolean, ms = 8000) {
+  const deadline = Date.now() + ms;
   while (!predicate()) {
     if (Date.now() > deadline) throw new Error("Timed out waiting for authoritative client state");
     await new Promise(resolve => setTimeout(resolve, 25));
@@ -24,12 +24,17 @@ it("real NetworkClient fire, reload, and build edits round-trip through the cano
   a.onEvent("two-player:edit_grid_action", event => editResults.push(event));
   try {
     await a.start(); await b.start();
-    await until(() => a.state.match.matchPhase === MatchPhase.IN_PROGRESS);
+    // The authoritative 8 s build-preparation countdown (CONTRACT.md) must
+    // elapse before the fight phase, so this first wait gets extra headroom.
+    await until(() => a.state.match.matchPhase === MatchPhase.IN_PROGRESS, 20_000);
     const timerCountBeforeFire = roundTimers.length;
     // Fire is carried only by the next canonical input frame.
     a.sendInput({ sequence: 10, moveX: 0, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: true, secondaryFire: false });
     await until(() => a.state.players[a.sessionId!]?.ammo === ASSAULT_RIFLE.maxAmmo - 1);
-    await until(() => roundTimers.length >= timerCountBeforeFire + 2);
+    // Contract (CONTRACT.md §5): the fight has no timed round — no
+    // match:round_timer events are emitted once the phase is IN_PROGRESS.
+    await new Promise(resolve => setTimeout(resolve, 500));
+    expect(roundTimers.length).toBe(timerCountBeforeFire);
     expect(a.isConnected).toBe(true);
     expect(a.state.match.matchPhase).toBe(MatchPhase.IN_PROGRESS);
     a.sendWeaponReload();

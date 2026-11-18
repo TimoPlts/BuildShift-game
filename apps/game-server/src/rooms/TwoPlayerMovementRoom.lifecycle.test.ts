@@ -114,7 +114,7 @@ async function setupRoomWithPlayers(count: number): Promise<{
   const rooms: ClientRoom[] = [];
   for (let i = 0; i < count; i++) {
     const room = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       `join player ${i}`,
     );
@@ -151,7 +151,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // Player A (first to join) at x = -5, ground level, z = 0.
       const playerA = playerFromState(roomA.state, roomA.sessionId);
       expect(playerA).toBeDefined();
-      expect(playerA.x).toBeCloseTo(-5, 1);
+      expect(playerA.x).toBeCloseTo(-10.24, 1);
       expect(playerA.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
       expect(playerA.z).toBeCloseTo(0, 1);
       expect(playerA.yaw).toBeCloseTo(0, 2);
@@ -163,7 +163,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // Player B (second to join) at x = +5, ground level, z = 0.
       const playerB = playerFromState(roomA.state, roomB.sessionId);
       expect(playerB).toBeDefined();
-      expect(playerB.x).toBeCloseTo(5, 1);
+      expect(playerB.x).toBeCloseTo(10.24, 1);
       expect(playerB.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
       expect(playerB.z).toBeCloseTo(0, 1);
       expect(playerB.yaw).toBeCloseTo(0, 2);
@@ -176,8 +176,8 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       const playerBInB = playerFromState(roomB.state, roomB.sessionId);
       expect(playerAInB).toBeDefined();
       expect(playerBInB).toBeDefined();
-      expect(playerAInB.x).toBeCloseTo(-5, 1);
-      expect(playerBInB.x).toBeCloseTo(5, 1);
+      expect(playerAInB.x).toBeCloseTo(-10.24, 1);
+      expect(playerBInB.x).toBeCloseTo(10.24, 1);
     } finally {
       await withDeadline(
         Promise.all([teardownRoom(roomB), teardownRoom(roomA)]),
@@ -359,7 +359,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // A new player joins with a brand-new session.
       const port = (server as any).transport.server.address().port;
       const newClient = new Client(`ws://127.0.0.1:${port}`);
-      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
       const sidC = roomC.sessionId;
       expect(sidC).not.toBe(sidB); // New session, not a duplicate.
 
@@ -571,8 +571,24 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
         RECONNECT_GRACE_MS + 4_000,
       );
 
-      // Wait for the round to reset and the next round to begin.
-      // Sequence: ROUND_ENDED → (reset delay) → COUNTDOWN → IN_PROGRESS.
+      // Wait for the next round's preparation to begin:
+      // ROUND_ENDED → (reset delay) → COUNTDOWN.
+      await waitForState(
+        roomA,
+        (s) => (s?.matchPhase as string) === MatchPhase.COUNTDOWN,
+        8_000,
+      );
+
+      // Under the round-preparation rules the countdown PAUSES while only one
+      // player is connected (a fair prep needs both). A new player C joins to
+      // fill B's slot, which resumes preparation, and the round then opens.
+      const port = (server as any).transport.server.address().port;
+      const newClient = new Client(`ws://127.0.0.1:${port}`);
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
+      const sidC = roomC.sessionId;
+      await waitForState(roomC, (s) => playerFromState(s, sidC), 5_000);
+
+      // Wait for preparation to complete and the round to open.
       await waitForState(
         roomA,
         (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS,
@@ -582,7 +598,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // A should be reset: spawn position, full health, alive.
       const aReset = playerFromState(roomA.state, sidA);
       expect(aReset).toBeDefined();
-      expect(aReset.x).toBeCloseTo(-5, 0); // spawn[0].x
+      expect(aReset.x).toBeCloseTo(-10.24, 0); // preparation spawn x
       expect(aReset.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 0);
       expect(aReset.z).toBeCloseTo(0, 0);
       expect(aReset.health).toBe(MAX_HEALTH);
@@ -593,14 +609,7 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
       // B is not present (grace expired, no reconnection).
       expect(playerFromState(roomA.state, sidB)).toBeUndefined();
 
-      // A new player C joins to fill B's slot.
-      const port = (server as any).transport.server.address().port;
-      const newClient = new Client(`ws://127.0.0.1:${port}`);
-      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join C");
-      const sidC = roomC.sessionId;
-
       try {
-        await waitForState(roomC, (s) => playerFromState(s, sidC), 5_000);
         const cState = playerFromState(roomC.state, sidC);
         expect(cState).toBeDefined();
         expect(cState.health).toBe(MAX_HEALTH);
@@ -642,24 +651,37 @@ describe("TwoPlayerMovementRoom lifecycle", () => {
         RECONNECT_GRACE_MS + 4_000,
       );
 
-      // The round reset (ROUND_ENDED → COUNTDOWN → IN_PROGRESS) should proceed
-      // without interference from the grace timer. The reset delay is
-      // ROUND_RESET_DELAY_SECONDS (2s) followed by countdown (3s).
-      // Total max wait: ~6s from ROUND_ENDED to IN_PROGRESS.
+      // The round reset (ROUND_ENDED → COUNTDOWN) proceeds without interference
+      // from the grace timer. The preparation countdown then PAUSES while A is
+      // alone; a replacement joining resumes it and the round opens.
       await waitForState(
         roomA,
-        (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS,
+        (s) => (s?.matchPhase as string) === MatchPhase.COUNTDOWN,
         12_000,
       );
 
-      // A is the only player, at spawn position, full health.
-      const aState = playerFromState(roomA.state, roomA.sessionId);
-      expect(aState).toBeDefined();
-      expect(aState.health).toBe(MAX_HEALTH);
-      expect(aState.alive).toBe(true);
+      const port = (server as any).transport.server.address().port;
+      const newClient = new Client(`ws://127.0.0.1:${port}`);
+      const roomC = await withDeadline(newClient.joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join C");
+      try {
+        await waitForState(roomA, (s) => playerFromState(s, roomC.sessionId), 5_000);
+        await waitForState(
+          roomA,
+          (s) => (s?.matchPhase as string) === MatchPhase.IN_PROGRESS,
+          12_000,
+        );
 
-      // B is definitively absent.
-      expect(playerFromState(roomA.state, sidB)).toBeUndefined();
+        // A is at full health.
+        const aState = playerFromState(roomA.state, roomA.sessionId);
+        expect(aState).toBeDefined();
+        expect(aState.health).toBe(MAX_HEALTH);
+        expect(aState.alive).toBe(true);
+
+        // B is definitively absent.
+        expect(playerFromState(roomA.state, sidB)).toBeUndefined();
+      } finally {
+        await withDeadline(teardownRoom(roomC), 5_000, "teardown roomC");
+      }
     } finally {
       await withDeadline(teardownRoom(roomA), 5_000, "teardown roomA");
       await withDeadline(shutdownServer(server), 8_000, "shutdownServer");

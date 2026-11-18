@@ -77,12 +77,12 @@ describe("Full match lifecycle", () => {
   it("starts in COUNTDOWN and transitions to IN_PROGRESS after countdown", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join B",
     );
@@ -120,12 +120,12 @@ describe("Full match lifecycle", () => {
   it("disconnect during IN_PROGRESS awards round to opponent", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join B",
     );
@@ -176,12 +176,12 @@ describe("Full match lifecycle", () => {
   it("round reset returns to COUNTDOWN then IN_PROGRESS (round 2)", async () => {
     const url = `ws://127.0.0.1:${port}`;
     const roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join A",
     );
     const roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join B",
     );
@@ -199,13 +199,25 @@ describe("Full match lifecycle", () => {
         roomB.connection.close();
       } catch {}
 
-      // Wait for transition to ROUND_ENDED or COUNTDOWN.
+      // Wait for the transition into the next round's preparation COUNTDOWN.
       await waitForState(
         roomA,
         (s) =>
           matchPhase(s) === MatchPhase.ROUND_ENDED ||
           matchPhase(s) === MatchPhase.COUNTDOWN,
         8_000,
+      );
+      await waitForState(
+        roomA,
+        (s) => matchPhase(s) === MatchPhase.COUNTDOWN,
+        8_000,
+      );
+
+      // Preparation pauses while A is alone; a replacement player resumes it.
+      const roomC = await withDeadline(
+        new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
+        10_000,
+        "join C",
       );
 
       // Wait for COUNTDOWN → IN_PROGRESS (round 2).
@@ -214,6 +226,7 @@ describe("Full match lifecycle", () => {
         (s) => matchPhase(s) === MatchPhase.IN_PROGRESS,
         12_000,
       );
+      await withDeadline(teardownRoom(roomC), 5_000, "teardown C");
 
       // Round should be 2.
       const state = roomA.state as Record<string, any>;

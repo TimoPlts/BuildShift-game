@@ -7,7 +7,7 @@ import { Client, type Room as ClientRoom } from "@colyseus/sdk";
 import { BUILD_EVENTS, type StructurePlacedEvent, type StructureRejectedEvent } from "@buildshift/protocol";
 import { startServer, shutdownServer } from "../server.js";
 import type { GameServer } from "../server.js";
-import { TWO_PLAYER_MOVEMENT_ROOM } from "./TwoPlayerMovementRoom.js";
+import { TWO_PLAYER_MOVEMENT_ROOM, TWO_PLAYER_MOVEMENT_INPUT } from "./TwoPlayerMovementRoom.js";
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
@@ -54,8 +54,8 @@ describe("Building foundation — server-authoritative contract", () => {
     const s = await wd(startServer(0), 10_000, "start");
     server = s.server;
     const url = `ws://127.0.0.1:${s.port}`;
-    roomA = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "A");
-    roomB = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "B");
+    roomA = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "A");
+    roomB = await wd(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     roomA.onMessage(BUILD_EVENTS.STRUCTURE_PLACED, (m) => pA.push(m as StructurePlacedEvent));
     roomB.onMessage(BUILD_EVENTS.STRUCTURE_PLACED, (m) => pB.push(m as StructurePlacedEvent));
@@ -64,9 +64,17 @@ describe("Building foundation — server-authoritative contract", () => {
     const both = (st: unknown) => pfs(st, roomA.sessionId) && pfs(st, roomB.sessionId);
     await wfs(roomA, both);
     await wfs(roomB, both);
-    // Wait for the match countdown to finish so the phase is IN_PROGRESS.
-    // Builds are rejected during COUNTDOWN.
+    // Wait for the preparation countdown to finish so the phase is IN_PROGRESS.
     await wfs(roomA, (s) => (s as Record<string, any>)?.matchPhase === "IN_PROGRESS", 10_000);
+    // Re-establish the legacy build geometry: prep-row spawns are 20.48 m
+    // apart, so walk both players to their old x≈∓5 stand spots first.
+    const mp = (r: typeof roomA, seq: number, moveX: number) =>
+      r.send(TWO_PLAYER_MOVEMENT_INPUT, { sequence: seq, moveX, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
+    let ms = 5000;
+    while (pfs(roomA.state, roomA.sessionId)?.x < -5.1) { mp(roomA, ms++, -1); await new Promise((r) => setTimeout(r, 40)); }
+    while (pfs(roomB.state, roomB.sessionId)?.x < 5.1) { mp(roomB, ms++, 1); await new Promise((r) => setTimeout(r, 40)); }
+    mp(roomA, ms++, 0); mp(roomB, ms++, 0);
+    await new Promise((r) => setTimeout(r, 200));
   }, 20_000);
   afterAll(async () => {
     await wd(Promise.all([td(roomB), td(roomA)]), 5000, "td");

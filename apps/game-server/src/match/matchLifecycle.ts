@@ -12,10 +12,11 @@
 
 // ─── Event names ─────────────────────────────────────────────────────────────
 
-/**
- * Broadcast each tick during the COUNTDOWN phase with the remaining
- * countdown value (in ticks). Clients use this to render a countdown UI.
- */
+  /**
+   * Broadcast each tick during the build-PREPARATION countdown (the reused
+   * COUNTDOWN phase) while both players are connected. Clients use it to
+   * render the preparation countdown UI.
+   */
 export const MATCH_EVENTS = {
   /** Payload: `{ countdownTicks: number }` */
   COUNTDOWN_TICK: "match:countdown_tick",
@@ -35,7 +36,11 @@ export const MATCH_EVENTS = {
    * Payload: `{ winnerId: string, scores: Record<string, number> }`.
    */
   MATCH_END: "match:end",
-  /** Authoritative active-round timer; timeout is resolved by the server. */
+  /**
+   * @deprecated REMOVED by the round-preparation batch: active fights have
+   * no timer, so the server NEVER broadcasts this any more. The constant is
+   * kept only so older clients still resolve the event name; it is dead.
+   */
   ROUND_TIMER: "match:round_timer",
   /** Both players accepted a rematch and a fresh countdown has begun. */
   REMATCH_ACCEPTED: "match:rematch_accepted",

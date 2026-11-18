@@ -85,8 +85,8 @@ async function deadline<T>(p: Promise<T>, ms: number, label: string): Promise<T>
 async function setup(): Promise<{ server: GameServer; roomA: ClientRoom; roomB: ClientRoom }> {
   const started = await deadline(startServer(0), 10000, "startServer");
   const url = `ws://127.0.0.1:${started.port}`;
-  const roomA = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinA");
-  const roomB = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinB");
+  const roomA = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "joinA");
+  const roomB = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "joinB");
   await waitForState(roomA, (s) => playerFromState(s, roomA.sessionId) && playerFromState(s, roomB.sessionId));
   return { server: started.server, roomA, roomB };
 }
@@ -135,9 +135,9 @@ describe("Match lifecycle state machine", () => {
       expect(a.alive).toBe(true);
       expect(a.isEliminated).toBe(false);
 
-      expect(a.x).toBeCloseTo(-5, 1);
+      expect(a.x).toBeCloseTo(-10.24, 1);
       expect(a.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
-      expect(b.x).toBeCloseTo(5, 1);
+      expect(b.x).toBeCloseTo(10.24, 1);
       expect(b.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
     } finally {
       await deadline(Promise.all([teardown(roomB), teardown(roomA)]), 5000, "teardown");
@@ -196,27 +196,32 @@ describe("Match lifecycle state machine", () => {
       await waitForState(roomA, (s) => phase(s) === MatchPhase.ROUND_ENDED, 8000);
       expect(score(roomA.state, roomA.sessionId)).toBe(1);
 
-      // Transition to round 2
+      // Transition to round 2: ROUND_ENDED → preparation COUNTDOWN. With the
+      // round-preparation rules the preparation countdown PAUSES while only
+      // one player is connected (a fair 8 s prep needs both), so a
+      // replacement player must join before the fight opens.
+      await waitForState(roomA, (s) => phase(s) === MatchPhase.COUNTDOWN, 15000);
+      const addr = server.transport.server!.address() as { port: number };
+      const url = `ws://127.0.0.1:${addr.port}`;
+      const roomB2 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "rejoinB2");
+      await waitForState(roomA, (s) => playerFromState(s, roomB2.sessionId), 5000);
       await waitForPlay(roomA, 15000);
       expect((roomA.state as Record<string, any>).currentRound).toBe(2);
 
-      // Round 2: B reconnects and disconnects
-      const addr = server.transport.server!.address() as { port: number };
-      const url = `ws://127.0.0.1:${addr.port}`;
-      const roomB2 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "rejoinB2");
-      await waitForState(roomA, (s) => playerFromState(s, roomB2.sessionId), 5000);
+      // Round 2: B's replacement disconnects again (grace-forfeit).
       try { roomB2.connection.close(); } catch {}
 
       await waitForState(roomA, (s) => phase(s) === MatchPhase.ROUND_ENDED, 8000);
       expect(score(roomA.state, roomA.sessionId)).toBe(2);
 
-      // Transition to round 3
+      // Transition to round 3 (prep pauses solo; replacement reopens it).
+      await waitForState(roomA, (s) => phase(s) === MatchPhase.COUNTDOWN, 15000);
+      const roomB3 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 2 }), 10000, "rejoinB3");
+      await waitForState(roomA, (s) => playerFromState(s, roomB3.sessionId), 5000);
       await waitForPlay(roomA, 15000);
       expect((roomA.state as Record<string, any>).currentRound).toBe(3);
 
-      // Round 3: B reconnects and disconnects → MATCH_ENDED
-      const roomB3 = await deadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "rejoinB3");
-      await waitForState(roomA, (s) => playerFromState(s, roomB3.sessionId), 5000);
+      // Round 3: replacement disconnects → MATCH_ENDED
       try { roomB3.connection.close(); } catch {}
 
       await waitForState(roomA, (s) => phase(s) === MatchPhase.MATCH_ENDED, 8000);
@@ -292,7 +297,7 @@ describe("Match lifecycle state machine", () => {
       expect(aAfter.isEliminated).toBe(false);
 
       // A should be back at spawn position.
-      expect(aAfter.x).toBeCloseTo(-5, 1);
+      expect(aAfter.x).toBeCloseTo(-10.24, 1);
       expect(aAfter.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
       expect(aAfter.z).toBeCloseTo(0, 1);
 

@@ -57,14 +57,14 @@ async function dl<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
 async function setup() {
   const st = await dl(startServer(0), 10_000, "startServer");
   const url = `ws://127.0.0.1:${st.port}`;
-  const a = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinA");
-  const b = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "joinB");
+  const a = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinA");
+  const b = await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "joinB");
   await wfs(a, (s) => pf(s, a.sessionId) && pf(s, b.sessionId));
   return { server: st.server, url, a, b };
 }
 
 async function jn(url: string): Promise<ClientRoom> {
-  return await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join");
+  return await dl(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join");
 }
 
 async function wp(room: ClientRoom, timeoutMs = 8000): Promise<void> {
@@ -137,7 +137,7 @@ describe("Disconnection integration", () => {
       expect(ba.energy).toBe(ENERGY.startingEnergy);
       expect(ba.alive).toBe(true);
       expect(ba.isEliminated).toBe(false);
-      expect(ba.x).toBeCloseTo(5, 1);
+      expect(ba.x).toBeCloseTo(10.24, 1);
       expect(ba.y).toBeCloseTo(VERTICAL_MOVEMENT.groundY, 1);
       expect(ba.z).toBeCloseTo(0, 1);
       expect(sc(b.state, sidB)).toBe(1);
@@ -176,6 +176,10 @@ describe("Disconnection integration", () => {
       await wfs(b2, (s) => pf(s, b2.sessionId) !== undefined, 5000);
       // A disconnects during countdown
       try { a.connection.close(); } catch {}
+      await wfs(b2, (s) => pf(s, sidA) === undefined, 5_000);
+      // Preparation pauses while b2 is alone; a replacement player resumes it.
+      const c = await jn(url);
+      await wfs(b2, (s) => pf(s, c.sessionId) !== undefined, 5_000);
       try {
         // Synchronize on the authoritative transition into an active round
         // at or past round 2. Do NOT assert an exact round number after this
@@ -214,6 +218,7 @@ describe("Disconnection integration", () => {
           }
         }
       } finally {
+        await dl(td(c), 5000, "tdC");
         await dl(td(b2), 5000, "tdB2");
       }
     } finally {

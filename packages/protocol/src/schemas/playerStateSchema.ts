@@ -158,6 +158,16 @@ export const PlayerStateSchema = schema(
      * removals, and value updates to every client automatically.
      */
     weapons: t.map(WeaponAmmoStateSchema),
+    /**
+     * Preparation side assignment: `"negative"` (outermost −X build row),
+     * `"positive"` (outermost +X build row), or `""` before assignment
+     * (Colyseus string default). During the preparation (`COUNTDOWN`) phase
+     * the server confines the player's movement and placements to this
+     * side's zone (see `@buildshift/game-config` `getPreparationZone`);
+     * the assignment is stable for the session lifetime including
+     * reconnect-restore.
+     */
+    preparationSide: t.string(),
   },
   "PlayerStateSchema",
 );

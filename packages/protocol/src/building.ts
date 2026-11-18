@@ -192,7 +192,10 @@ export type BuildRejectionReason =
   | "out_of_range"
   | "overlap"
   | "rate_limited"
-  | "unaffordable";
+  | "unaffordable"
+  /** Placement anchor lies outside the player's assigned preparation row
+   *  while the preparation (`COUNTDOWN`) phase is active. */
+  | "preparation_zone";
 
 /** Payload for {@link BUILD_EVENTS.STRUCTURE_PLACED}. */
 export interface StructurePlacedEvent {

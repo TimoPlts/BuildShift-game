@@ -134,7 +134,9 @@ describe("canonical weapon and build-edit authority", () => {
   });
   it("fires multiple shotgun pellets but consumes only one shell", () => {
     network.sendWeaponSwitch("shotgun");
+    const shooter = room.state.players.get("a")!;
     const target = room.state.players.get("b")!;
+    shooter.x = -5; // legacy 1 m pellet-cone geometry (prep-row spawns are 20 m apart)
     target.x = -4;
     const before = target.health + target.shield;
     fire(10, Math.PI / 2);

@@ -138,8 +138,8 @@ describe("TwoPlayerMovementRoom fireGate + hitscan wiring", () => {
     expect(port).toBeGreaterThan(0);
 
     const url = `ws://127.0.0.1:${port}`;
-    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "join A");
-    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "join B");
+    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "join A");
+    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "join B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     expect(roomA.roomId).toBe(roomB.roomId);
 

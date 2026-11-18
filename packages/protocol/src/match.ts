@@ -15,13 +15,17 @@ import { schema, t } from "@colyseus/schema";
  * Authoritative match lifecycle phases.
  *
  * The server transitions through these phases as the match progresses:
- *  - `COUNTDOWN` — pre-round countdown; players are locked in.
- *  - `IN_PROGRESS` — active round; players can move, aim, and fire.
+ *  - `COUNTDOWN` — build PREPARATION phase (see `@buildshift/game-config`
+ *    `BOX_FIGHT_PREPARATION`): both players are confined to their assigned
+ *    preparation row where they may move, build, and edit, but cannot fire
+ *    or deal damage; the arena opens when the countdown ends.
+ *  - `IN_PROGRESS` — active fight; players can move, aim, fire, and build
+ *    anywhere in the arena. Ends on elimination only (no timers).
  *  - `ROUND_ENDED` — a player was eliminated; round score updated.
  *  - `MATCH_ENDED` — a player reached `ROUNDS_TO_WIN`; match over.
  */
 export enum MatchPhase {
-  /** Pre-round countdown; players are locked in. */
+  /** Build preparation countdown; confined to the assigned prep row. */
   COUNTDOWN = "COUNTDOWN",
   /** Active round; players can move, aim, and fire. */
   IN_PROGRESS = "IN_PROGRESS",

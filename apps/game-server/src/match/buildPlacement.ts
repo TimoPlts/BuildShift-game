@@ -16,6 +16,8 @@ import {
   ENERGY,
   getStructureDurability,
   structureCuboids,
+  isGridAllowedDuringPreparation,
+  type PreparationSide,
 } from "@buildshift/game-config";
 import {
   StructureStateSchema,
@@ -68,12 +70,22 @@ export async function handleBuildPlacement(
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
     return;
   }
-  if (ctx.state.matchPhase !== "IN_PROGRESS") {
+  // Placement is accepted during the fight (IN_PROGRESS) AND during build
+  // preparation (COUNTDOWN); in any other phase it is refused as before.
+  const phase = ctx.state.matchPhase as string;
+  if (phase !== "IN_PROGRESS" && phase !== "COUNTDOWN") {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "rate_limited" });
     return;
   }
   if (!ib(it.grid, cfg, it.rotation)) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "invalid_grid" });
+    return;
+  }
+  // Preparation-row gate (CONTRACT.md §6): during COUNTDOWN the placement
+  // anchor must lie in the player's ASSIGNED preparation row. Enemy and
+  // centre rows are always denied, server-side, regardless of the client.
+  if (phase === "COUNTDOWN" && !isGridAllowedDuringPreparation(it.grid, pl.preparationSide as PreparationSide | "")) {
+    ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "preparation_zone" });
     return;
   }
   // Canonical range rule shared with the client preview (full 3D distance).

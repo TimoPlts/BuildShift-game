@@ -118,8 +118,8 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     server = started.server;
     port = started.port;
     const url = `ws://127.0.0.1:${port}`;
-    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join A");
-    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10_000, "join B");
+    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join A");
+    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10_000, "join B");
     expect(roomA.sessionId).not.toBe(roomB.sessionId);
     expect(roomA.roomId).toBe(roomB.roomId);
   }, 30_000);
@@ -147,9 +147,9 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     // Snapshot spawn positions as plain values (Colyseus mutates in place).
     const a0 = snapshotPlayer(playerFromState(roomA.state, roomA.sessionId));
     const b0 = snapshotPlayer(playerFromState(roomA.state, roomB.sessionId));
-    expect(Math.abs(a0.x - (-5))).toBeLessThan(0.5);
+    expect(Math.abs(a0.x - (-10.24))).toBeLessThan(0.5);
     expect(Math.abs(a0.z)).toBeLessThan(0.5);
-    expect(Math.abs(b0.x - 5)).toBeLessThan(0.5);
+    expect(Math.abs(b0.x - 10.24)).toBeLessThan(0.5);
     expect(Math.abs(b0.z)).toBeLessThan(0.5);
 
     // Send 75 frames: A forward (moveZ=-1), B right (moveX=+1).
@@ -173,7 +173,7 @@ describe("TwoPlayerMovementRoom sustained 60+ frame simulation", () => {
     // PREDICTION: sustained displacement in correct direction.
     expect(af.z).toBeLessThan(0); // A moved forward (−Z)
     expect(af.z - a0.z).toBeLessThan(-(MIN_FRAMES / 4) * DISPLACEMENT_PER_TICK);
-    expect(bf.x).toBeLessThan(5); // B moved right (−X from +5)
+    expect(bf.x).toBeLessThan(10.24); // B moved right (−X from +5)
     expect(b0.x - bf.x).toBeGreaterThan((MIN_FRAMES / 4) * DISPLACEMENT_PER_TICK);
 
     // RECONCILIATION: sequences tracked correctly.

@@ -162,12 +162,12 @@ describe("Canonical gameplay path — integration contract", () => {
 
     const url = `ws://127.0.0.1:${port}`;
     roomA = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join A",
     );
     roomB = await withDeadline(
-      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM),
+      new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }),
       10_000,
       "join B",
     );
@@ -215,9 +215,9 @@ describe("Canonical gameplay path — integration contract", () => {
     expect(b).toBeDefined();
 
     // Player A (first to join) spawns at x ≈ -5.
-    expect(a.x).toBeCloseTo(-5, 0);
+    expect(a.x).toBeCloseTo(-10.24, 0);
     // Player B (second to join) spawns at x ≈ +5.
-    expect(b.x).toBeCloseTo(5, 0);
+    expect(b.x).toBeCloseTo(10.24, 0);
 
     // They are distinct (not the same position).
     expect(a.x).not.toBeCloseTo(b.x, 0);

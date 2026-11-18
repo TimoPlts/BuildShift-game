@@ -78,6 +78,15 @@ while(Date.now()-t0<10000){const a=pl(ra.state,ra.sessionId),b=pl(ra.state,rb.se
 // Wait for the match countdown to finish so the phase is IN_PROGRESS.
 // Builds are rejected during COUNTDOWN.
 await pollState(() => (ra.state as any)?.matchPhase === "IN_PROGRESS", 10000, "matchPhase");
+// Re-establish the legacy aim/build geometry: prep-row spawns are 20.48 m
+// apart, so drive A to its old x≈-5 stand spot before the build tests run.
+let iseq = 1;
+while (pl(ra.state, ra.sessionId).x < -5.1) {
+  ra.send(TMI, { sequence: iseq++, moveX: -1, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
+  await W(40);
+}
+ra.send(TMI, { sequence: iseq++, moveX: 0, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
+await W(200);
 },20000);
 afterAll(async()=>{
 await wd(Promise.all([td(rb),td(ra)]),5000,"td");

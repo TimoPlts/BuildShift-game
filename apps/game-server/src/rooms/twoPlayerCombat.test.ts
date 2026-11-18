@@ -78,8 +78,8 @@ describe("TwoPlayerMovementRoom combat", () => {
     server = started.server;
     const port = started.port;
     const url = `ws://127.0.0.1:${port}`;
-    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinA");
-    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM), 10000, "joinB");
+    roomA = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "joinA");
+    roomB = await withDeadline(new Client(url).joinOrCreate(TWO_PLAYER_MOVEMENT_ROOM, { testPreparationSeconds: 0.1 }), 10000, "joinB");
     // Wait until both players appear in both clients' state.
     await waitForState(roomA, (s) => pfs(s, roomA.sessionId) && pfs(s, roomB.sessionId));
     await waitForState(roomB, (s) => pfs(s, roomA.sessionId) && pfs(s, roomB.sessionId));

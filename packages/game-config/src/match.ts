@@ -22,10 +22,14 @@ export const WIN_ROUNDS = 3;
 export const ROUNDS_TO_WIN = WIN_ROUNDS;
 
 /**
- * Duration of the pre-round countdown, in seconds.
+ * LEGACY pre-round countdown length, in seconds.
  *
- * The server sets `RoundState.COUNTDOWN` for this many seconds before
- * each round begins. Players are locked in during this phase.
+ * Superseded by the round-preparation batch: the server's `COUNTDOWN`
+ * phase is now the build PREPARATION phase and runs for
+ * `BOX_FIGHT_PREPARATION.durationSeconds` (8 s, see
+ * `boxFightPreparation.ts`), not this value. Kept exported only for
+ * legacy consumers still importing it; new code must use
+ * `BOX_FIGHT_PREPARATION` for the pre-fight countdown duration.
  */
 export const ROUND_COUNTDOWN_SECONDS = 3;
 
