@@ -53,6 +53,20 @@ export interface MatchLifecycleView {
    * (>= 1) only during {@link RoundState.COUNTDOWN}; `0` otherwise.
    */
   countdownRemainingSeconds: number;
+  /**
+   * Whether the authoritative server is running the pre-round BUILD
+   * PREPARATION countdown for this room (CONTRACT.md §4): `true` ONLY while
+   * both players are connected AND the preparation COUNTDOWN is actually
+   * running. This is the raw replicated room flag — the presentation layer
+   * (`derivePreparationUi`) turns it into the waiting / preparing moment.
+   */
+  preparationActive: boolean;
+  /**
+   * The local player's replicated preparation side (`"negative"` /
+   * `"positive"`), or `""` before assignment and while preparation is not
+   * running (never invented client-side).
+   */
+  preparationSide: string;
 }
 
 /**
@@ -66,12 +80,18 @@ export interface MatchLifecycleView {
  * @param countdownRemainingSeconds The current countdown value in whole
  *        seconds (the runtime tracks this from the server's countdown ticks).
  * @param connected Whether the runtime is connected to a room.
+ * @param preparationSide The local player's CURRENT replicated preparation
+ *        side from the runtime (`"negative"` / `"positive"` / `""`). Passed
+ *        per call — never a mirrored long-lived flag — so every view build
+ *        (initial, change, countdown, reconnect, reset) carries the values
+ *        of the snapshot being mapped.
  */
 export function buildMatchLifecycleView(
   match: ParsedMatchState,
   sessionId: string | null,
   countdownRemainingSeconds: number,
   connected: boolean,
+  preparationSide: string,
 ): MatchLifecycleView {
   const localScore = sessionId ? match.roundScore[sessionId] ?? 0 : 0;
 
@@ -105,5 +125,10 @@ export function buildMatchLifecycleView(
     localWonLastRound,
     localWonMatch,
     countdownRemainingSeconds: connected ? countdownRemainingSeconds : 0,
+    // Raw replicated room flag straight off the parsed snapshot, and the
+    // local side zeroed while disconnected (a stale side must never render
+    // a row hint for a room we left).
+    preparationActive: match.preparationActive === true,
+    preparationSide: connected ? preparationSide : "",
   };
 }

@@ -30,6 +30,9 @@ function view(overrides: Partial<MatchLifecycleView> = {}): MatchLifecycleView {
     localWonLastRound: null,
     localWonMatch: null,
     countdownRemainingSeconds: 0,
+    // Required replicated preparation fields (default: not preparing).
+    preparationActive: false,
+    preparationSide: "",
     ...overrides,
   };
 }

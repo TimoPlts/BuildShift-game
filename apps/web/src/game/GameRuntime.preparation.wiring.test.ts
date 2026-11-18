@@ -113,6 +113,44 @@ describe("GameRuntime preparation wiring", () => {
     );
   });
 
+  it("republishes match state AFTER preparation sync so listeners never see stale prep flags", () => {
+    // One emission per replicated snapshot, ordered AFTER the lifecycle
+    // reset handling AND the preparation sync — so waiting→preparing and
+    // prep pause/resume toggles inside COUNTDOWN (no phase / score change)
+    // always reach the React layer with the CURRENT flags of that snapshot.
+    const handleIdx = runtime.indexOf(
+      "private handleNetworkState(state:ParsedRoomState):void{",
+    );
+    const handleEnd = runtime.indexOf("private handleMatchState", handleIdx);
+    const matchIdx = runtime.indexOf("this.handleMatchState(state.match);", handleIdx);
+    const syncIdx = runtime.indexOf("this.syncPreparation(state,sid);", handleIdx);
+    const emitIdx = runtime.indexOf("this.emitMatchState();", handleIdx);
+    expect(handleIdx).toBeGreaterThan(-1);
+    expect(matchIdx).toBeGreaterThan(handleIdx);
+    expect(syncIdx).toBeGreaterThan(matchIdx);
+    expect(emitIdx).toBeGreaterThan(syncIdx);
+    expect(emitIdx).toBeLessThan(handleEnd);
+    // handleMatchState itself no longer publishes inline (the reset path's
+    // clearPreparation therefore happens BEFORE any emission).
+    const matchFn = runtime.slice(
+      runtime.indexOf("private handleMatchState(match:ParsedMatchState):void{"),
+      runtime.indexOf("private syncPreparation", handleEnd),
+    );
+    expect(matchFn).toContain("this.clearPreparation();");
+    expect(matchFn).not.toContain("matchStateListeners");
+    // The single republish seam iterates the listeners with the fresh state.
+    const emitFnIdx = runtime.indexOf("private emitMatchState():void{");
+    expect(emitFnIdx).toBeGreaterThan(-1);
+    expect(
+      runtime.slice(emitFnIdx, emitFnIdx + 160),
+    ).toContain("for(const l of this.matchStateListeners){l(this.matchState);}");
+    // Narrow read seam for the lifecycle view (current side, no mirrored
+    // flag in the React layer).
+    expect(runtime).toContain(
+      "public getPreparationSide():string{return this.preparationSide;}",
+    );
+  });
+
   it("maps the countdown ticks through the shared preparation duration", () => {
     expect(runtime).toContain(
       "Math.ceil((e.countdownTicks/e.totalTicks)*BOX_FIGHT_PREPARATION.durationSeconds)",

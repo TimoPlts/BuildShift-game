@@ -34,6 +34,18 @@ export interface GameRuntimeActions {
 }
 
 /**
+ * MatchHudProps plus the client-supplied replicated preparation flag. The
+ * approved UI branch adds `preparationActive?: boolean` to `MatchHudProps`
+ * itself (BUILD phase label + waiting-pill suppression); until that merge
+ * lands, this structural intersection keeps the wiring honest on this branch
+ * and is a no-op afterwards (identical optional member, no duplication).
+ */
+type GameMatchHudProps = MatchHudProps & {
+  /** Raw replicated room preparation flag (CONTRACT.md §4). */
+  preparationActive?: boolean;
+};
+
+/**
  * Props for the GameCanvas component.
  */
 export interface GameCanvasProps {
@@ -57,7 +69,7 @@ export interface GameCanvasProps {
 export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanvasProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [pointerLocked, setPointerLocked] = useState(false);
-  const [matchHudProps, setMatchHudProps] = useState<MatchHudProps | null>(null);
+  const [matchHudProps, setMatchHudProps] = useState<GameMatchHudProps | null>(null);
   const [localHud, setLocalHud] = useState<LocalHudView | null>(null);
   const onLifecycleChangeRef = useRef(onMatchLifecycleChange);
   const onRuntimeReadyRef = useRef(onRuntimeReady);
@@ -106,6 +118,7 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
             r.getSessionId(),
             r.getCountdownSeconds(),
             r.connected,
+            r.getPreparationSide(),
           );
           onLifecycleChangeRef.current?.(initialView);
 
@@ -128,24 +141,33 @@ export function GameCanvas({ onMatchLifecycleChange, onRuntimeReady }: GameCanva
             const sid = r.getSessionId();
             if (!sid) return;
 
-            // Build the lifecycle view to derive countdown and connection state.
+            // Build the lifecycle view to derive countdown and connection
+            // state. The preparation fields come from the CURRENT snapshot:
+            // the runtime republishes AFTER its preparation sync, and the
+            // side is read live from the runtime's narrow getter — never a
+            // mirrored flag in the React layer.
             const view = buildMatchLifecycleView(
               state,
               sid,
               r.getCountdownSeconds(),
               r.connected,
+              r.getPreparationSide(),
             );
 
             // Wire the full lifecycle-derived props into the presentation-only
             // MatchHud: base score/phase data plus the optional countdown and
-            // waiting-for-opponent indicator.
+            // waiting-for-opponent indicator. The replicated preparation flag
+            // drives the BUILD label, and an ACTIVE preparation excludes the
+            // waiting indicator (the opponent is present — we are building).
             const baseHud = mapMatchStateToHudProps(state, sid);
             setMatchHudProps({
               ...baseHud,
+              preparationActive: state.preparationActive === true,
               waitingForOpponent:
                 r.connected &&
                 state.matchPhase === MatchPhase.COUNTDOWN &&
-                state.currentRound === 0,
+                state.currentRound === 0 &&
+                !state.preparationActive,
             });
 
             // Propagate the lifecycle view to the parent for overlay screens.
