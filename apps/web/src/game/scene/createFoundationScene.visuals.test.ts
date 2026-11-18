@@ -36,15 +36,15 @@ describe("createFoundationScene — visual wiring", () => {
     engine.dispose();
   });
 
-  it("uses palette accent color for the accent material", () => {
+  it("uses palette brass color for the room trim material", () => {
     const { engine, scene } = makeScene();
 
-    const accentMat = scene.getMaterialByName("accent-material");
+    const accentMat = scene.getMaterialByName("arena-trim-material");
     expect(accentMat).toBeInstanceOf(StandardMaterial);
     const diffuse = (accentMat as StandardMaterial).diffuseColor;
-    expect(diffuse!.r).toBeCloseTo(ARENA_PALETTE.accentColor.r, 5);
-    expect(diffuse!.g).toBeCloseTo(ARENA_PALETTE.accentColor.g, 5);
-    expect(diffuse!.b).toBeCloseTo(ARENA_PALETTE.accentColor.b, 5);
+    expect(diffuse!.r).toBeCloseTo(ARENA_PALETTE.trimColor.r, 5);
+    expect(diffuse!.g).toBeCloseTo(ARENA_PALETTE.trimColor.g, 5);
+    expect(diffuse!.b).toBeCloseTo(ARENA_PALETTE.trimColor.b, 5);
 
     scene.dispose();
     engine.dispose();

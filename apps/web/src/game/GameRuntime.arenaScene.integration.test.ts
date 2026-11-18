@@ -40,7 +40,8 @@ describe("production runtime arena visuals", () => {
     expect(scene.clearColor.asArray()).toEqual([...ARENA_PALETTE.skyColor.asArray(), 1]);
     for (const [name, color] of [
       ["ground-material", ARENA_PALETTE.groundColor],
-      ["accent-material", ARENA_PALETTE.accentColor],
+      ["arena-wall-material", ARENA_PALETTE.wallPanelColor],
+      ["arena-trim-material", ARENA_PALETTE.trimColor],
     ] as const) {
       const material = scene.getMaterialByName(name);
       expect(material).toBeInstanceOf(StandardMaterial);
