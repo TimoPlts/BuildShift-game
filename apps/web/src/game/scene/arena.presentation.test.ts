@@ -1,13 +1,17 @@
 /**
- * Focused regression coverage for the Box Fight arena presentation.
+ * Focused regression coverage for the clean Box Fight arena presentation.
  *
  * Proves:
  *   1. The canonical ARENA_COLLIDERS and PLAYER_SPAWN configuration is
  *      byte-for-byte unchanged after scene creation.
  *   2. Every collider presentation mesh is non-pickable and non-collidable,
  *      ensuring it cannot intercept gameplay picking or physics queries.
- *   3. Every decorative/presentation-only mesh (shell, caps, floor grid,
- *      spawn markers, skybox) is non-pickable and non-collidable.
+ *   3. Every decorative/presentation-only mesh (room shell, caps, ceiling,
+ *      perimeter architecture, spawn wall marks, sky dome) is non-pickable
+ *      and non-collidable.
+ *   4. All removed clutter (floor grid, plate, spawn pads/bars/rings/
+ *      strips, outdoor backdrop pylons/monoliths/banners/inlays/rings)
+ *      stays gone.
  *
  * Uses Babylon's NullEngine (headless, no WebGL required).
  */
@@ -37,27 +41,13 @@ const CANONICAL_COLLIDERS = ARENA_COLLIDERS.map((c) => ({
 /** Canonical snapshot of the player spawn. */
 const CANONICAL_SPAWN = { x: PLAYER_SPAWN.x, y: PLAYER_SPAWN.y, z: PLAYER_SPAWN.z };
 
-/**
- * The floor grid line names expected for one axis, derived the same way
- * `setupArenaDecorations` does: cell boundaries `i*cellSize` for
- * `i = min..max+1`, clipped to the arena interior.
- */
-function expectedGridLineNames(
-  axis: "x" | "z",
-  min: number,
-  max: number,
-  halfExtent: number,
-): string[] {
-  const names: string[] = [];
-  for (let i = min; i <= max + 1; i += 1) {
-    if (Math.abs(i * BUILD_GRID.cellSize) < halfExtent) {
-      names.push(`arena-grid-line-${axis}-${names.length}`);
-    }
-  }
-  return names;
-}
-
 const GROUND = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
+
+/** Pilaster ids for one wall's pair of perimeter pilasters. */
+const PILASTER_NAMES = ["n", "s", "e", "w"].flatMap((side) => [
+  `arena-env-pilaster-${side}-0`,
+  `arena-env-pilaster-${side}-1`,
+]);
 
 /**
  * Names of all presentation-only (non-gameplay) meshes created by
@@ -65,28 +55,79 @@ const GROUND = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
  * participate in picking or collision.
  */
 const PRESENTATION_MESH_NAMES = [
-  // Sky
+  // Room background dome
   "arena-skybox",
-  // Play-field plate (build-area boundary)
-  "arena-playfield-plate",
-  // Indestructible shell
+  // Room shell (pale-blue walls + brass caps) + enclosed ceiling
   "arena-shell-n",
   "arena-shell-s",
   "arena-shell-e",
   "arena-shell-w",
-  // Accent shell caps
   "arena-shell-cap-n",
   "arena-shell-cap-s",
   "arena-shell-cap-e",
   "arena-shell-cap-w",
-  // Floor build grid
-  ...expectedGridLineNames("x", BUILD_BOUNDS.minX, BUILD_BOUNDS.maxX, GROUND.halfExtents[0]),
-  ...expectedGridLineNames("z", BUILD_BOUNDS.minZ, BUILD_BOUNDS.maxZ, GROUND.halfExtents[2]),
-  // Mirrored 1v1 spawn markers
+  "arena-ceiling",
+  // Perimeter architecture (burgundy bands + pilasters, brass crown + beams)
+  "arena-env-band-n",
+  "arena-env-band-s",
+  "arena-env-band-e",
+  "arena-env-band-w",
+  ...PILASTER_NAMES,
+  "arena-env-crown-n",
+  "arena-env-crown-s",
+  "arena-env-crown-e",
+  "arena-env-crown-w",
+  "arena-env-beam-0",
+  "arena-env-beam-1",
+  "arena-env-beam-2",
+  "arena-env-beam-3",
+  // Spawn-side wall marks
+  "arena-spawnzone-mark-primary",
+  "arena-spawnzone-mark-mirror",
+];
+
+/** Everything that used to clutter the outdoor playground — must be gone. */
+const REMOVED_CLUTTER_NAMES = [
+  // Old playground furniture / posts / borders
+  "arena-post-ne",
+  "arena-post-nw",
+  "arena-post-se",
+  "arena-post-sw",
+  "arena-border-n",
+  "arena-border-s",
+  "arena-border-e",
+  "arena-border-w",
+  "arena-center-ring",
+  // Floor plate, grid, spawn clutter
+  "arena-playfield-plate",
   "arena-spawn-pad",
-  "arena-spawn-bar",
   "arena-spawn-pad-mirror",
+  "arena-spawn-bar",
   "arena-spawn-bar-mirror",
+  "arena-spawnzone-ring-primary",
+  "arena-spawnzone-ring-mirror",
+  "arena-spawnzone-strip-primary",
+  "arena-spawnzone-strip-mirror",
+  // Outdoor backdrop / boundary clutter
+  "arena-env-pylon-n",
+  "arena-env-pylon-s",
+  "arena-env-pylon-e",
+  "arena-env-pylon-w",
+  "arena-env-pylon-cap-n",
+  "arena-env-monolith-0",
+  "arena-env-monolith-7",
+  "arena-env-inlay-n",
+  "arena-env-inlay-s",
+  "arena-env-inlay-e",
+  "arena-env-inlay-w",
+  "arena-env-center-ring-n",
+  "arena-env-center-ring-s",
+  "arena-env-center-ring-e",
+  "arena-env-center-ring-w",
+  "arena-env-banner-n",
+  "arena-env-banner-s",
+  "arena-env-banner-e",
+  "arena-env-banner-w",
 ];
 
 describe("arena presentation — canonical config invariants", () => {
@@ -118,11 +159,13 @@ describe("arena presentation — canonical config invariants", () => {
     engine.dispose();
   });
 
-  it("collider count is exactly 8", () => {
+  it("scene creation neither adds nor removes shared colliders", () => {
     const engine = new NullEngine();
     const scene = createFoundationScene(engine);
-    // Creating the scene must not add or remove colliders.
-    expect(ARENA_COLLIDERS).toHaveLength(8);
+    // Compare against the import-time snapshot rather than a hardcoded
+    // count, so the invariant holds across collider-table changes made in
+    // the shared config by other tasks.
+    expect(ARENA_COLLIDERS).toHaveLength(CANONICAL_COLLIDERS.length);
     scene.dispose();
     engine.dispose();
   });
@@ -211,26 +254,21 @@ describe("arena presentation — decorative meshes are non-pickable/non-collidab
     engine.dispose();
   });
 
-  it("removes the old clutter pieces (posts, border strips, center ring)", () => {
+  it("keeps all playground/backdrop/floor clutter removed", () => {
     const engine = new NullEngine();
     const scene = createFoundationScene(engine);
 
-    for (const name of [
-      "arena-post-ne",
-      "arena-post-nw",
-      "arena-post-se",
-      "arena-post-sw",
-      "arena-border-n",
-      "arena-border-s",
-      "arena-border-e",
-      "arena-border-w",
-      "arena-center-ring",
-    ]) {
+    for (const name of REMOVED_CLUTTER_NAMES) {
       expect(
         scene.getMeshByName(name),
         `clutter mesh "${name}" should no longer exist`,
       ).toBeNull();
     }
+
+    // No floor grid lines by name prefix either.
+    expect(
+      scene.meshes.filter((m) => m.name.startsWith("arena-grid-line-")),
+    ).toHaveLength(0);
 
     scene.dispose();
     engine.dispose();
@@ -241,27 +279,8 @@ describe("arena presentation — decorations derive from canonical config", () =
   const [gx, , gz] = GROUND.position;
   const [hx, , hz] = GROUND.halfExtents;
 
-  const buildSpanX =
-    (BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize;
-  const buildSpanZ =
-    (BUILD_BOUNDS.maxZ - BUILD_BOUNDS.minZ + 1) * BUILD_GRID.cellSize;
   const buildLayerSpan =
     (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) * BUILD_GRID.layerHeight;
-
-  it("play-field plate is centred on the ground and spans the build volume", () => {
-    const engine = new NullEngine();
-    const scene = createFoundationScene(engine);
-
-    const plate = scene.getMeshByName("arena-playfield-plate")!;
-    expect(plate.position.x).toBeCloseTo(gx);
-    expect(plate.position.z).toBeCloseTo(gz);
-    const size = worldSize(plate);
-    expect(size.x).toBeCloseTo(buildSpanX);
-    expect(size.z).toBeCloseTo(buildSpanZ);
-
-    scene.dispose();
-    engine.dispose();
-  });
 
   it("shell walls sit on the ground's half-extents and clear the build layers", () => {
     const engine = new NullEngine();
@@ -286,19 +305,51 @@ describe("arena presentation — decorations derive from canonical config", () =
     engine.dispose();
   });
 
-  it("spawn markers sit on PLAYER_SPAWN and its mirror across the ground centre", () => {
+  it("ceiling encloses the room above the build layers with camera margin", () => {
     const engine = new NullEngine();
     const scene = createFoundationScene(engine);
 
-    const pad = scene.getMeshByName("arena-spawn-pad")!;
-    const mirrorPad = scene.getMeshByName("arena-spawn-pad-mirror")!;
+    const ceiling = scene.getMeshByName("arena-ceiling")!;
+    const size = worldSize(ceiling);
+    expect(size.x).toBeCloseTo(hx * 2);
+    expect(size.z).toBeCloseTo(hz * 2);
+    const underside = ceiling.position.y - size.y / 2;
+    expect(underside).toBeGreaterThan(buildLayerSpan);
 
-    expect(pad.position.x).toBeCloseTo(PLAYER_SPAWN.x);
-    expect(pad.position.z).toBeCloseTo(PLAYER_SPAWN.z);
+    scene.dispose();
+    engine.dispose();
+  });
 
-    // The mirror spawn is the shared spawn reflected across the ground centre.
-    expect(mirrorPad.position.x).toBeCloseTo(gx * 2 - PLAYER_SPAWN.x);
-    expect(mirrorPad.position.z).toBeCloseTo(gz * 2 - PLAYER_SPAWN.z);
+  it("all perimeter decoration stays off the playable floor inside the build volume", () => {
+    const engine = new NullEngine();
+    const scene = createFoundationScene(engine);
+
+    // Build volume half-span; anything decorative at floor level inside it
+    // would be clutter on the playable ground.
+    const buildHalf =
+      ((BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize) / 2;
+
+    for (const mesh of scene.meshes) {
+      if (!mesh.name.startsWith("arena-")) continue;
+      if (mesh.name === "arena-skybox" || mesh.name === "foundation-ground") {
+        continue;
+      }
+      const bb = mesh.getBoundingInfo().boundingBox;
+      const minY = bb.minimum.y + mesh.position.y;
+      const maxY = bb.maximum.y + mesh.position.y;
+      const minAbsX = Math.max(0, Math.abs(mesh.position.x) - (bb.maximum.x - bb.minimum.x) / 2);
+      const minAbsZ = Math.max(0, Math.abs(mesh.position.z) - (bb.maximum.z - bb.minimum.z) / 2);
+      const insideBuildColumns = minAbsX < buildHalf && minAbsZ < buildHalf;
+      // A mesh may only dip into low space outside the build columns, or it
+      // must sit fully above every legal build height.
+      if (minY < buildLayerSpan) {
+        expect(
+          insideBuildColumns,
+          `${mesh.name} intrudes into the buildable floor`,
+        ).toBe(false);
+      }
+      void maxY;
+    }
 
     scene.dispose();
     engine.dispose();

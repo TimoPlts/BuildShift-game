@@ -1,13 +1,15 @@
 /**
- * Focused tests for the arena environment V2 module
+ * Focused tests for the arena perimeter-architecture module
  * (`arena/environment.ts`) — lifecycle, geometry invariants, material reuse
- * and disposal. Headless via Babylon's NullEngine.
+ * and disposal in the clean Box Fight room. Headless via Babylon's
+ * NullEngine.
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
 import { Scene } from "@babylonjs/core/scene";
 import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { setupArenaEnvironment } from "./environment";
+import { ceilingHeight, shellWallHeight } from "../arenaDecorations";
 import {
   ARENA_COLLIDERS,
   BUILD_BOUNDS,
@@ -16,21 +18,25 @@ import {
 
 const GROUND_ID = "foundation-ground";
 
-/** Every mesh this module is expected to create, by stable name prefix. */
+/** Every mesh this module creates lives under this stable name prefix. */
 const ENV_PREFIX = "arena-env-";
 
-function groundHalfExtents(): { hx: number; hz: number } {
+function groundFrame(): { gx: number; gz: number; hx: number; hz: number } {
   const ground = ARENA_COLLIDERS.find((c) => c.id === GROUND_ID)!;
-  return { hx: ground.halfExtents[0], hz: ground.halfExtents[2] };
+  return {
+    gx: ground.position[0],
+    gz: ground.position[2],
+    hx: ground.halfExtents[0],
+    hz: ground.halfExtents[2],
+  };
 }
 
-/** Expected pylon height: same clearance rule as the V1 shell + margin. */
-function expectedPylonHeight(): number {
-  const shellHeight =
-    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
-      BUILD_GRID.layerHeight +
-      1.0;
-  return shellHeight + 1.5;
+/** Half-span of the buildable volume — decoration must stay outside it at
+ *  any height below the top build layer. */
+function buildHalfSpan(): number {
+  return (
+    ((BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize) / 2
+  );
 }
 
 function makeScene(): { engine: NullEngine; scene: Scene } {
@@ -43,48 +49,70 @@ function envMeshes(scene: Scene) {
   return scene.meshes.filter((m) => m.name.startsWith(ENV_PREFIX));
 }
 
-/**
- * World-space X/Z extents of a root-level mesh, derived from its position
- * plus the local geometry size (NullEngine does not refresh world bounding
- * boxes without a render tick, so position + local size is the stable route).
- */
-function worldXZ(mesh: AbstractMesh) {
+/** Lowest world-space Y of a root-level mesh (NullEngine does not refresh
+ *  world bounding boxes without a render tick). */
+function lowestY(mesh: AbstractMesh): number {
   const bb = mesh.getBoundingInfo().boundingBox;
-  const size = bb.maximum.subtract(bb.minimum);
-  return {
-    minX: mesh.position.x - size.x / 2,
-    maxX: mesh.position.x + size.x / 2,
-    minZ: mesh.position.z - size.z / 2,
-    maxZ: mesh.position.z + size.z / 2,
-  };
+  return mesh.position.y + bb.minimum.y;
+}
+
+/** Size (local geometry extents) of a root-level mesh. */
+function sizeOf(mesh: AbstractMesh) {
+  const bb = mesh.getBoundingInfo().boundingBox;
+  return bb.maximum.subtract(bb.minimum);
 }
 
 describe("setupArenaEnvironment — lifecycle", () => {
-  it("creates the bounded set of environment meshes", () => {
+  it("creates the bounded set of perimeter meshes (4 bands + 8 pilasters + 4 crowns + 4 beams)", () => {
     const { engine, scene } = makeScene();
     setupArenaEnvironment(scene);
 
     const meshes = envMeshes(scene);
-    // 4 pylons + 4 caps + 4 inlays + 4 center ring + 8 monoliths + 4 banners
-    expect(meshes.length).toBe(28);
+    expect(meshes.length).toBe(20);
 
     for (const suffix of [
-      "pylon-n", "pylon-s", "pylon-e", "pylon-w",
-      "pylon-cap-n", "pylon-cap-s", "pylon-cap-e", "pylon-cap-w",
-      "inlay-n", "inlay-s", "inlay-e", "inlay-w",
-      "center-ring-n", "center-ring-s", "center-ring-e", "center-ring-w",
-      "banner-n", "banner-s", "banner-e", "banner-w",
+      "band-n", "band-s", "band-e", "band-w",
+      "crown-n", "crown-s", "crown-e", "crown-w",
     ]) {
       expect(
         scene.getMeshByName(`arena-env-${suffix}`),
         `missing mesh arena-env-${suffix}`,
       ).not.toBeNull();
     }
-    for (let i = 0; i < 8; i += 1) {
+    for (const side of ["n", "s", "e", "w"]) {
+      for (const i of [0, 1]) {
+        expect(
+          scene.getMeshByName(`arena-env-pilaster-${side}-${i}`),
+          `missing mesh arena-env-pilaster-${side}-${i}`,
+        ).not.toBeNull();
+      }
+    }
+    for (let i = 0; i < 4; i += 1) {
       expect(
-        scene.getMeshByName(`arena-env-monolith-${i}`),
-        `missing mesh arena-env-monolith-${i}`,
+        scene.getMeshByName(`arena-env-beam-${i}`),
+        `missing mesh arena-env-beam-${i}`,
       ).not.toBeNull();
+    }
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("removes the old outdoor backdrop clutter (pylons, monoliths, inlays, rings, banners)", () => {
+    const { engine, scene } = makeScene();
+    setupArenaEnvironment(scene);
+
+    for (const suffix of [
+      "pylon-n", "pylon-s", "pylon-e", "pylon-w",
+      "pylon-cap-n", "inlay-n", "inlay-e",
+      "center-ring-n", "center-ring-w",
+      "banner-n", "banner-s", "banner-e", "banner-w",
+      "monolith-0", "monolith-7",
+    ]) {
+      expect(
+        scene.getMeshByName(`arena-env-${suffix}`),
+        `obsolete clutter arena-env-${suffix} should not exist`,
+      ).toBeNull();
     }
 
     scene.dispose();
@@ -106,38 +134,40 @@ describe("setupArenaEnvironment — lifecycle", () => {
     engine.dispose();
   });
 
-  it("reuses materials (pylon, backdrop, shared accent glow) — bounded count", () => {
+  it("reuses shared materials (section + trim only) — bounded count", () => {
     const { engine, scene } = makeScene();
     setupArenaEnvironment(scene);
 
-    // Only 3 materials exist in a bare scene after this module runs.
-    expect(scene.materials.length).toBe(3);
+    // Only 2 materials exist in a bare scene after this module runs.
+    expect(scene.materials.length).toBe(2);
 
-    const pyloins = ["n", "s", "e", "w"].map((id) =>
-      scene.getMeshByName(`arena-env-pylon-${id}`)!,
-    );
-    const pylonMats = new Set(pyloins.map((m) => m.material));
-    expect(pylonMats.size).toBe(1);
+    const section = scene.getMaterialByName("arena-section-material");
+    const trim = scene.getMaterialByName("arena-trim-material");
+    expect(section).not.toBeNull();
+    expect(trim).not.toBeNull();
 
-    const monoliths = envMeshes(scene).filter((m) =>
-      m.name.startsWith("arena-env-monolith-"),
-    );
-    const monoMats = new Set(monoliths.map((m) => m.material));
-    expect(monoMats.size).toBe(1);
-
-    // Caps, inlays, ring and banners all share the accent-glow material.
-    const accent = scene.getMaterialByName("arena-accent-glow-material");
     for (const name of [
-      "arena-env-pylon-cap-n",
-      "arena-env-inlay-e",
-      "arena-env-center-ring-s",
-      "arena-env-banner-w",
+      "arena-env-band-n",
+      "arena-env-pilaster-e-1",
     ]) {
-      expect(
-        scene.getMeshByName(name)!.material,
-        `${name} should reuse accent glow`,
-      ).toBe(accent);
+      expect(scene.getMeshByName(name)!.material, name).toBe(section);
     }
+    for (const name of ["arena-env-crown-s", "arena-env-beam-2"]) {
+      expect(scene.getMeshByName(name)!.material, name).toBe(trim);
+    }
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("does not double-create materials when decorations already ran", () => {
+    const { engine, scene } = makeScene();
+    // Simulate the shell having run first by re-invoking the environment
+    // module twice — the shared ensure-materials must be idempotent.
+    setupArenaEnvironment(scene);
+    setupArenaEnvironment(scene);
+    expect(scene.materials.filter((m) => m.name === "arena-trim-material")).toHaveLength(1);
+    expect(scene.materials.filter((m) => m.name === "arena-section-material")).toHaveLength(1);
 
     scene.dispose();
     engine.dispose();
@@ -153,75 +183,57 @@ describe("setupArenaEnvironment — lifecycle", () => {
 });
 
 describe("setupArenaEnvironment — geometry invariants", () => {
-  it("pyloins sit at the four wall ends and clear the shell height", () => {
+  it("bands and pilasters are flush on the walls' inner faces, full-perimeter only", () => {
     const { engine, scene } = makeScene();
     setupArenaEnvironment(scene);
 
-    const { hx, hz } = groundHalfExtents();
-    const pylonHeight = expectedPylonHeight();
+    const { hx, hz } = groundFrame();
+    const wallHeight = shellWallHeight();
 
-    const expected: { id: string; x: number; z: number }[] = [
-      { id: "n", x: 0, z: -hz },
-      { id: "s", x: 0, z: hz },
-      { id: "e", x: hx, z: 0 },
-      { id: "w", x: -hx, z: 0 },
-    ];
-    for (const { id, x, z } of expected) {
-      const pylon = scene.getMeshByName(`arena-env-pylon-${id}`)!;
-      expect(pylon.position.x, `${id} x`).toBeCloseTo(x, 5);
-      expect(pylon.position.z, `${id} z`).toBeCloseTo(z, 5);
-      expect(pylon.position.y, `${id} y`).toBeCloseTo(pylonHeight / 2, 5);
-      const size = pylon.getBoundingInfo().boundingBox.maximum
-        .subtract(pylon.getBoundingInfo().boundingBox.minimum);
-      expect(size.y, `${id} height`).toBeCloseTo(pylonHeight, 3);
-    }
+    // Band centres sit just inside each wall's inner face (wall centre ±
+    // half thickness, minus half the band's proud thickness).
+    const bandN = scene.getMeshByName("arena-env-band-n")!;
+    expect(bandN.position.z).toBeCloseTo(-hz + 0.15 + 0.05, 3);
+    const bandS = scene.getMeshByName("arena-env-band-s")!;
+    expect(bandS.position.z).toBeCloseTo(hz - 0.15 - 0.05, 3);
+    const bandE = scene.getMeshByName("arena-env-band-e")!;
+    expect(bandE.position.x).toBeCloseTo(hx - 0.15 - 0.05, 3);
+    const pilasterW = scene.getMeshByName("arena-env-pilaster-w-0")!;
+    expect(pilasterW.position.x).toBeGreaterThan(-hx + 0.15);
+
+    // Pilasters span the full wall height.
+    const pilaster = scene.getMeshByName("arena-env-pilaster-n-0")!;
+    const size = sizeOf(pilaster);
+    expect(size.y).toBeCloseTo(wallHeight, 3);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("boundary inlays stay strictly inside the playable bounds", () => {
+  it("no decoration touches the playable floor inside the build volume", () => {
     const { engine, scene } = makeScene();
     setupArenaEnvironment(scene);
 
-    const { hx, hz } = groundHalfExtents();
-    for (const id of ["n", "s", "e", "w"]) {
-      const bb = scene
-        .getMeshByName(`arena-env-inlay-${id}`)!
-        .getBoundingInfo()
-        .boundingBox;
-      const max = bb.maximum;
-      const min = bb.minimum;
-      expect(Math.max(Math.abs(min.x), Math.abs(max.x)), `${id} |x|`)
-        .toBeLessThanOrEqual(hx);
-      expect(Math.max(Math.abs(min.z), Math.abs(max.z)), `${id} |z|`)
-        .toBeLessThanOrEqual(hz);
-    }
-
-    scene.dispose();
-    engine.dispose();
-  });
-
-  it("center ring frames the center-box footprint without covering it", () => {
-    const { engine, scene } = makeScene();
-    setupArenaEnvironment(scene);
-
-    const centerBox = ARENA_COLLIDERS.find((c) => c.id === "center-box")!;
-    const half = centerBox.halfExtents[0];
-
-    for (const id of ["n", "s", "e", "w"]) {
-      const mesh = scene.getMeshByName(`arena-env-center-ring-${id}`)!;
-      const wz = worldXZ(mesh);
-      // The ring band must be OUTSIDE the center-box footprint on both
-      // sides along its long axis (no overlap with the box's visual mesh).
-      if (id === "n" || id === "s") {
-        const edge = Math.min(Math.abs(wz.minZ), Math.abs(wz.maxZ));
-        expect(edge, `${id} ring |z|`).toBeGreaterThan(half);
-        expect(Math.abs(mesh.position.x)).toBeCloseTo(0, 5);
-      } else {
-        const edge = Math.min(Math.abs(wz.minX), Math.abs(wz.maxX));
-        expect(edge, `${id} ring |x|`).toBeGreaterThan(half);
-        expect(Math.abs(mesh.position.z)).toBeCloseTo(0, 5);
+    const buildHalf = buildHalfSpan();
+    for (const mesh of envMeshes(scene)) {
+      const bb = mesh.getBoundingInfo().boundingBox;
+      const size = bb.maximum.subtract(bb.minimum);
+      const minAbsX = Math.max(0, Math.abs(mesh.position.x) - size.x / 2);
+      const minAbsZ = Math.max(0, Math.abs(mesh.position.z) - size.z / 2);
+      // "Lower volumes" = everything up to the top legal build surface.
+      // (Wall tops now meet the ceiling underside, so the wall height is no
+      // longer the meaningful threshold — ceiling-hugging pieces like the
+      // beams sit just below it but must still pass.)
+      const buildTop =
+        (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
+        BUILD_GRID.layerHeight;
+      if (lowestY(mesh) < buildTop) {
+        // Anything that reaches down into the room's lower volumes must be
+        // fully outside the buildable columns (i.e. at the perimeter).
+        const insideColumns = minAbsX < buildHalf && minAbsZ < buildHalf;
+        expect(insideColumns, `${mesh.name} intrudes on the build volume`).toBe(
+          false,
+        );
       }
     }
 
@@ -229,39 +241,25 @@ describe("setupArenaEnvironment — geometry invariants", () => {
     engine.dispose();
   });
 
-  it("backdrop monoliths stay outside the playable bounds", () => {
+  it("crowns and beams hug the ceiling above every legal build", () => {
     const { engine, scene } = makeScene();
     setupArenaEnvironment(scene);
 
-    const { hx, hz } = groundHalfExtents();
-    for (let i = 0; i < 8; i += 1) {
-      const mono = scene.getMeshByName(`arena-env-monolith-${i}`)!;
-      const bb = mono.getBoundingInfo().boundingBox;
-      // Nearest corner of the monolith to the centre must clear the slab.
-      const minDistX = Math.abs(mono.position.x) - (bb.maximum.x - bb.minimum.x) / 2;
-      const minDistZ = Math.abs(mono.position.z) - (bb.maximum.z - bb.minimum.z) / 2;
-      expect(
-        Math.max(minDistX, minDistZ),
-        `monolith-${i} closest approach to centre`,
-      ).toBeGreaterThan(Math.max(hx, hz));
-    }
+    const maxBuild =
+      (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
+      BUILD_GRID.layerHeight;
+    const ceilingY = ceilingHeight();
 
-    scene.dispose();
-    engine.dispose();
-  });
-
-  it("banners are offset inward from their pylons toward the arena centre", () => {
-    const { engine, scene } = makeScene();
-    setupArenaEnvironment(scene);
-
-    for (const id of ["n", "s", "e", "w"]) {
-      const pylon = scene.getMeshByName(`arena-env-pylon-${id}`)!;
-      const banner = scene.getMeshByName(`arena-env-banner-${id}`)!;
-      // The banner centre must be strictly closer to the arena centre (0,0)
-      // along at least one axis than its pylon.
-      const pylonDist = Math.hypot(pylon.position.x, pylon.position.z);
-      const bannerDist = Math.hypot(banner.position.x, banner.position.z);
-      expect(bannerDist, `${id} banner distance`).toBeLessThan(pylonDist);
+    for (const name of [
+      "arena-env-crown-n",
+      "arena-env-crown-e",
+      "arena-env-beam-0",
+      "arena-env-beam-3",
+    ]) {
+      const mesh = scene.getMeshByName(name)!;
+      const size = sizeOf(mesh);
+      expect(lowestY(mesh), `${name} lowest point`).toBeGreaterThan(maxBuild);
+      expect(mesh.position.y + size.y / 2).toBeLessThanOrEqual(ceilingY + 1e-6);
     }
 
     scene.dispose();

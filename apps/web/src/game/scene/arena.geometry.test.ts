@@ -1,11 +1,11 @@
 /**
- * Behavioral tests for `setupArenaDecorations` — the decorative 1v1 arena
- * geometry helper. Uses Babylon's NullEngine (headless, no WebGL) to verify:
- *   - All decorative meshes exist with correct names
- *   - Shell walls use ARENA_PALETTE.wallColor with accent cap strips
- *   - The play-field plate is a thin slab exactly the build-volume span
- *   - Floor grid lines mark the real build-cell boundaries
+ * Behavioral tests for `setupArenaDecorations` — the clean Box Fight room
+ * shell. Uses Babylon's NullEngine (headless, no WebGL) to verify:
+ *   - Four shell walls + brass caps + one enclosed ceiling exist
+ *   - Shell walls use ARENA_PALETTE.wallPanelColor with brass cap trim
+ *   - The ceiling sits above the maximum legal build height (camera margin)
  *   - Shell positions and dimensions are derived from ARENA_COLLIDERS ground
+ *   - The floor is CLEAN: no plate, no grid lines, no spawn pads/bars
  *   - All decorative meshes are non-pickable and non-collidable
  *   - Gameplay configuration (ARENA_COLLIDERS) is unchanged
  */
@@ -16,9 +16,17 @@ import {
   ARENA_COLLIDERS,
   BUILD_BOUNDS,
   BUILD_GRID,
+  PLAYER_PHYSICS,
 } from "@buildshift/game-config";
+import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
 import { createFoundationScene } from "./createFoundationScene";
 import { ARENA_PALETTE } from "./arena";
+import {
+  ceilingHeight,
+  jumpApexHeight,
+  maxBuildHeight,
+  shellWallHeight,
+} from "./arenaDecorations";
 
 const EPSILON = 0.01;
 
@@ -45,29 +53,12 @@ const GROUND = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground")!;
 const [GX, , GZ] = GROUND.position;
 const [HX, , HZ] = GROUND.halfExtents;
 
-/** Build-volume world span per axis (5 cells × 5.12 m = 25.6 m). */
-const BUILD_SPAN_X =
-  (BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize;
-const BUILD_SPAN_Z =
-  (BUILD_BOUNDS.maxZ - BUILD_BOUNDS.minZ + 1) * BUILD_GRID.cellSize;
+/** The highest reachable build surface (top of the top build layer). */
+const MAX_BUILD_HEIGHT =
+  (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) * BUILD_GRID.layerHeight;
 
-/**
- * Cell-boundary line positions for one axis, clipped to the arena interior —
- * the same derivation `setupArenaDecorations` uses.
- */
-function gridLinePositions(min: number, max: number, halfExtent: number): number[] {
-  const positions: number[] = [];
-  for (let i = min; i <= max + 1; i += 1) {
-    const p = i * BUILD_GRID.cellSize;
-    if (Math.abs(p) < halfExtent) {
-      positions.push(p);
-    }
-  }
-  return positions;
-}
-
-describe("setupArenaDecorations", () => {
-  it("creates the shell, caps, plate, grid, and mirrored spawn meshes", () => {
+describe("setupArenaDecorations — clean room shell", () => {
+  it("creates the shell walls, brass caps, and ceiling", () => {
     const { engine, scene } = buildScene();
 
     for (const name of [
@@ -76,11 +67,10 @@ describe("setupArenaDecorations", () => {
       "arena-shell-e",
       "arena-shell-w",
       "arena-shell-cap-n",
-      "arena-playfield-plate",
-      "arena-spawn-pad",
-      "arena-spawn-pad-mirror",
-      "arena-spawn-bar",
-      "arena-spawn-bar-mirror",
+      "arena-shell-cap-s",
+      "arena-shell-cap-e",
+      "arena-shell-cap-w",
+      "arena-ceiling",
     ]) {
       expect(scene.getMeshByName(name), `${name} not found`).not.toBeNull();
     }
@@ -89,7 +79,7 @@ describe("setupArenaDecorations", () => {
     engine.dispose();
   });
 
-  it("shell walls use ARENA_PALETTE.wallColor with accent cap strips", () => {
+  it("shell walls use ARENA_PALETTE.wallPanelColor with brass cap trim", () => {
     const { engine, scene } = buildScene();
 
     const shellN = scene.getMeshByName("arena-shell-n")!;
@@ -97,66 +87,132 @@ describe("setupArenaDecorations", () => {
     expect(shellMaterial).toBeInstanceOf(StandardMaterial);
 
     const diffuse = (shellMaterial as StandardMaterial).diffuseColor;
-    expect(colorClose(diffuse, ARENA_PALETTE.wallColor)).toBe(true);
+    expect(colorClose(diffuse, ARENA_PALETTE.wallPanelColor)).toBe(true);
 
     const capN = scene.getMeshByName("arena-shell-cap-n")!;
     const capMaterial = capN.material as StandardMaterial;
-    const capDiffuse = capMaterial.diffuseColor;
-    expect(colorClose(capDiffuse, ARENA_PALETTE.accentColor)).toBe(true);
+    expect(colorClose(capMaterial.diffuseColor, ARENA_PALETTE.trimColor)).toBe(
+      true,
+    );
+    // The trim is muted brass, NOT a glowing accent: the emissive sheen is
+    // a small fraction of the diffuse (the old cyan overglow is gone).
+    expect(capMaterial.emissiveColor.r).toBeLessThan(capMaterial.diffuseColor.r);
+    expect(capMaterial.emissiveColor.g).toBeLessThan(capMaterial.diffuseColor.g);
+    expect(capMaterial.emissiveColor.b).toBeLessThan(capMaterial.diffuseColor.b);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("play-field plate is a thin slab exactly the build-volume span", () => {
+  it("ceiling encloses the room above the maximum build height", () => {
     const { engine, scene } = buildScene();
 
-    const plate = scene.getMeshByName("arena-playfield-plate")!;
-    const bb = plate.getBoundingInfo().boundingBox;
+    const ceiling = scene.getMeshByName("arena-ceiling")!;
+    const bb = ceiling.getBoundingInfo().boundingBox;
     const size = bb.maximum.subtract(bb.minimum);
 
-    // Centred on the arena, exactly the build-volume span on both axes.
-    expect(plate.position.x).toBeCloseTo(GX, 3);
-    expect(plate.position.z).toBeCloseTo(GZ, 3);
-    expect(size.x).toBeCloseTo(BUILD_SPAN_X, 3);
-    expect(size.z).toBeCloseTo(BUILD_SPAN_Z, 3);
-    // Inside the 30 m ground slab.
-    expect(size.x).toBeLessThan(HX * 2);
-    expect(size.z).toBeLessThan(HZ * 2);
-    // Thin — a raised floor plate, not a block.
-    expect(size.y).toBeLessThan(0.1);
-    // Sits at ground level.
-    expect(plate.position.y).toBeGreaterThanOrEqual(0);
-    expect(plate.position.y).toBeLessThan(0.1);
+    expect(ceiling.position.x).toBeCloseTo(GX, 3);
+    expect(ceiling.position.z).toBeCloseTo(GZ, 3);
+    // Spans the full room footprint.
+    expect(size.x).toBeCloseTo(HX * 2, 2);
+    expect(size.z).toBeCloseTo(HZ * 2, 2);
+
+    // The underside clears the maximum legal build height with the derived
+    // third-person camera clearance — building is NOT capped, the room is
+    // just enclosed.
+    const underside = ceiling.position.y - size.y / 2;
+    expect(underside).toBeGreaterThan(MAX_BUILD_HEIGHT + 1);
+    expect(underside).toBeCloseTo(ceilingHeight(), 3);
+    // The clearance is derived from the real camera + shared jump physics,
+    // not a flat guess: orbit distance + pivot height + jump apex + safety.
+    expect(ceilingHeight() - maxBuildHeight()).toBeGreaterThanOrEqual(
+      THIRD_PERSON_CAMERA.distance +
+        THIRD_PERSON_CAMERA.targetHeight +
+        jumpApexHeight() +
+        0.5,
+    );
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("floor grid lines mark the real build-cell boundaries", () => {
+  it("room encloses from inside: shell wall tops meet the ceiling underside", () => {
     const { engine, scene } = buildScene();
 
-    const xPositions = gridLinePositions(BUILD_BOUNDS.minX, BUILD_BOUNDS.maxX, HX);
-    const zPositions = gridLinePositions(BUILD_BOUNDS.minZ, BUILD_BOUNDS.maxZ, HZ);
+    const ceiling = scene.getMeshByName("arena-ceiling")!;
+    const ceilingSize = ceiling
+      .getBoundingInfo()
+      .boundingBox.maximum.subtract(ceiling.getBoundingInfo().boundingBox.minimum);
+    const ceilingUnderside = ceiling.position.y - ceilingSize.y / 2;
 
-    xPositions.forEach((p, i) => {
-      const line = scene.getMeshByName(`arena-grid-line-x-${i}`);
-      expect(line, `arena-grid-line-x-${i} not found`).not.toBeNull();
-      // Z position sits exactly on a cell boundary; X is arena-centred.
-      expect(line!.position.z).toBeCloseTo(GZ + p, 5);
-      expect(line!.position.x).toBeCloseTo(GX, 3);
-    });
+    // Walls must rise exactly to the ceiling underside — no horizontal gap.
+    expect(shellWallHeight()).toBeCloseTo(ceilingUnderside, 3);
+    for (const name of [
+      "arena-shell-n",
+      "arena-shell-s",
+      "arena-shell-e",
+      "arena-shell-w",
+    ]) {
+      const wall = scene.getMeshByName(name)!;
+      const size = wall
+        .getBoundingInfo()
+        .boundingBox.maximum.subtract(
+          wall.getBoundingInfo().boundingBox.minimum,
+        );
+      const wallTop = wall.position.y + size.y / 2;
+      expect(wallTop, `${name} top`).toBeCloseTo(ceilingUnderside, 3);
+    }
 
-    zPositions.forEach((p, i) => {
-      const line = scene.getMeshByName(`arena-grid-line-z-${i}`);
-      expect(line, `arena-grid-line-z-${i} not found`).not.toBeNull();
-      expect(line!.position.x).toBeCloseTo(GX + p, 5);
-      expect(line!.position.z).toBeCloseTo(GZ, 3);
-    });
+    scene.dispose();
+    engine.dispose();
+  });
 
-    // No extra grid lines beyond the expected count.
-    const gridMeshes = scene.meshes.filter((m) => m.name.startsWith("arena-grid-line-"));
-    expect(gridMeshes).toHaveLength(xPositions.length + zPositions.length);
+  it("worst-case third-person camera on the highest legal build stays under the ceiling", () => {
+    // Derivation mirrors ThirdPersonCameraController.update():
+    // cameraY = feet + targetHeight - crouchDip + transient + verticalOffset
+    //           - distance * sin(effectivePitch).
+    // Conservative bound: the orbit can never raise the camera more than the
+    // FULL orbit distance above the pivot (max at the -60° pitch clamp is
+    // distance * sin 60° ≈ 6.06 m; the full 7 m absorbs the transient recoil
+    // pitch nudge too). Worst case: standing (not crouched) on the top legal
+    // build layer, at the shared jump apex, looking straight down.
+    const jumpApex =
+      (PLAYER_PHYSICS.jumpSpeed * PLAYER_PHYSICS.jumpSpeed) /
+      (2 * Math.abs(PLAYER_PHYSICS.gravity));
+    // The apex formula must match the shared physics the sim integrates.
+    expect(jumpApexHeight()).toBeCloseTo(jumpApex, 6);
+
+    const worstCaseCameraY =
+      MAX_BUILD_HEIGHT +
+      THIRD_PERSON_CAMERA.targetHeight +
+      THIRD_PERSON_CAMERA.distance +
+      jumpApex;
+
+    expect(ceilingHeight()).toBeGreaterThan(worstCaseCameraY);
+    // And there is a real safety margin left over, not a hair's width.
+    expect(ceilingHeight() - worstCaseCameraY).toBeGreaterThanOrEqual(0.5);
+
+    // The pitch clamp confirms the orbit rise is bounded by `distance`.
+    expect(Math.abs(Math.sin(THIRD_PERSON_CAMERA.minimumPitch))).toBeLessThan(
+      1,
+    );
+  });
+
+  it("floor is clean — no plate, no grid lines, no spawn pads or bars", () => {
+    const { engine, scene } = buildScene();
+
+    expect(scene.getMeshByName("arena-playfield-plate")).toBeNull();
+    expect(scene.getMeshByName("arena-spawn-pad")).toBeNull();
+    expect(scene.getMeshByName("arena-spawn-pad-mirror")).toBeNull();
+    expect(scene.getMeshByName("arena-spawn-bar")).toBeNull();
+    expect(scene.getMeshByName("arena-spawn-bar-mirror")).toBeNull();
+
+    // Zero floor grid lines: nothing may form squares or a lattice on the
+    // ground. Any floor-level decoration mesh would also be a violation —
+    // no floor-mounted decoration meshes exist at all in the clean room.
+    expect(
+      scene.meshes.filter((m) => m.name.startsWith("arena-grid-line-")),
+    ).toHaveLength(0);
 
     scene.dispose();
     engine.dispose();
@@ -197,17 +253,15 @@ describe("setupArenaDecorations", () => {
   });
 
   it("all decorative meshes are non-pickable and non-collidable", () => {
-    const engine = new NullEngine();
-    const scene = createFoundationScene(engine);
+    const { engine, scene } = buildScene();
 
     const names = [
       "arena-shell-n",
       "arena-shell-s",
       "arena-shell-e",
       "arena-shell-w",
-      "arena-playfield-plate",
-      "arena-spawn-pad",
-      "arena-spawn-pad-mirror",
+      "arena-shell-cap-n",
+      "arena-ceiling",
     ];
 
     for (const name of names) {
@@ -222,11 +276,23 @@ describe("setupArenaDecorations", () => {
   });
 
   it("does not modify ARENA_COLLIDERS gameplay configuration", () => {
-    const engine = new NullEngine();
-    const scene = createFoundationScene(engine);
+    // Snapshot at import time so the assertion is about scene creation not
+    // mutating the shared table, independent of how many colliders the
+    // current production table contains.
+    const snapshot = ARENA_COLLIDERS.map((c) => ({
+      id: c.id,
+      position: [...c.position],
+      halfExtents: [...c.halfExtents],
+    }));
 
-    // Verify the shared colliders table is unchanged
-    expect(ARENA_COLLIDERS).toHaveLength(8);
+    const { engine, scene } = buildScene();
+
+    expect(ARENA_COLLIDERS).toHaveLength(snapshot.length);
+    snapshot.forEach((c, i) => {
+      expect(ARENA_COLLIDERS[i].id).toBe(c.id);
+      expect(ARENA_COLLIDERS[i].position).toEqual(c.position);
+      expect(ARENA_COLLIDERS[i].halfExtents).toEqual(c.halfExtents);
+    });
 
     const ground = ARENA_COLLIDERS.find((c) => c.id === "foundation-ground");
     expect(ground).toBeDefined();

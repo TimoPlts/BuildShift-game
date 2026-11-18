@@ -1,11 +1,13 @@
 /**
- * Focused tests for the spawn-zone visual treatment module
- * (`arena/spawnZones.ts`) — geometry invariants, material reuse, lifecycle
- * and disposal. Headless via Babylon's NullEngine.
+ * Focused tests for the spawn-side wall-mark module
+ * (`arena/spawnZones.ts`) in the clean Box Fight room — geometry
+ * invariants, material reuse, lifecycle and disposal. The former floor
+ * rings and lane strips are removed clutter. Headless via Babylon's
+ * NullEngine.
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
-import { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Scene } from "@babylonjs/core/scene";
 import { setupArenaSpawnZones } from "./spawnZones";
 import { ARENA_COLLIDERS, PLAYER_SPAWN } from "@buildshift/game-config";
@@ -27,37 +29,27 @@ function groundCentre(): { gx: number; gz: number; hz: number } {
   };
 }
 
-/**
- * World-space X/Z extents of a root-level mesh from position + local size
- * (NullEngine does not refresh world bounding boxes without a render tick).
- */
-function worldXZ(mesh: AbstractMesh) {
-  const bb = mesh.getBoundingInfo().boundingBox;
-  const size = bb.maximum.subtract(bb.minimum);
-  return {
-    minX: mesh.position.x - size.x / 2,
-    maxX: mesh.position.x + size.x / 2,
-    minZ: mesh.position.z - size.z / 2,
-    maxZ: mesh.position.z + size.z / 2,
-  };
-}
-
-describe("setupArenaSpawnZones — geometry invariants", () => {
-  it("creates exactly the 4 spawn-zone meshes (2 rings + 2 strips)", () => {
+describe("setupArenaSpawnZones — wall-mounted spawn-side marks", () => {
+  it("creates exactly the 2 spawn-side wall marks", () => {
     const { engine, scene } = makeScene();
     setupArenaSpawnZones(scene);
 
     const meshes = scene.meshes.filter((m) =>
       m.name.startsWith("arena-spawnzone-"),
     );
-    expect(meshes.length).toBe(4);
+    expect(meshes.length).toBe(2);
     for (const name of [
-      "arena-spawnzone-ring-primary",
-      "arena-spawnzone-ring-mirror",
-      "arena-spawnzone-strip-primary",
-      "arena-spawnzone-strip-mirror",
+      "arena-spawnzone-mark-primary",
+      "arena-spawnzone-mark-mirror",
     ]) {
       expect(scene.getMeshByName(name), `missing ${name}`).not.toBeNull();
+    }
+    // Obsolete floor clutter stays removed.
+    for (const name of [
+      "arena-spawnzone-ring-primary",
+      "arena-spawnzone-strip-primary",
+    ]) {
+      expect(scene.getMeshByName(name), `obsolete ${name}`).toBeNull();
     }
 
     scene.dispose();
@@ -79,71 +71,49 @@ describe("setupArenaSpawnZones — geometry invariants", () => {
     engine.dispose();
   });
 
-  it("rings are centred on the shared spawn and its mirror", () => {
+  it("marks sit on the end walls behind the shared spawn and its mirror", () => {
     const { engine, scene } = makeScene();
     setupArenaSpawnZones(scene);
 
-    const { gx, gz } = groundCentre();
+    const { gx, gz, hz } = groundCentre();
 
-    const primary = scene.getMeshByName("arena-spawnzone-ring-primary")!;
+    const primary = scene.getMeshByName("arena-spawnzone-mark-primary")!;
     expect(primary.position.x).toBeCloseTo(PLAYER_SPAWN.x, 5);
-    expect(primary.position.z).toBeCloseTo(PLAYER_SPAWN.z, 5);
+    // Primary spawn is at z = +6 → mark on the +z end wall, proud of the
+    // wall's inner face into the room.
+    expect(primary.position.z).toBeCloseTo(gz + hz - 0.15 - 0.04, 3);
 
-    const mirror = scene.getMeshByName("arena-spawnzone-ring-mirror")!;
+    const mirror = scene.getMeshByName("arena-spawnzone-mark-mirror")!;
     expect(mirror.position.x).toBeCloseTo(gx * 2 - PLAYER_SPAWN.x, 5);
-    expect(mirror.position.z).toBeCloseTo(gz * 2 - PLAYER_SPAWN.z, 5);
+    expect(mirror.position.z).toBeCloseTo(gz - hz + 0.15 + 0.04, 3);
 
-    // Laid flat: the ring bounding box is wide in x/z and thin in y.
+    // Mirrored across the arena centre.
+    expect(primary.position.z + mirror.position.z).toBeCloseTo(gz * 2, 5);
+
+    // Wall-mounted, well off the floor: entirely above head height.
     const bb = primary.getBoundingInfo().boundingBox;
-    const size = bb.maximum.subtract(bb.minimum);
-    expect(size.y).toBeLessThan(0.5);
-    expect(size.x).toBeGreaterThan(3.0);
+    expect(primary.position.y + bb.minimum.y).toBeGreaterThan(2);
 
     scene.dispose();
     engine.dispose();
   });
 
-  it("lane strips run from past the pad out to the boundary, inside the slab", () => {
+  it("reuses the single shared brass trim material (created on demand)", () => {
     const { engine, scene } = makeScene();
     setupArenaSpawnZones(scene);
 
-    const { hz } = groundCentre();
-
-    const primary = scene.getMeshByName("arena-spawnzone-strip-primary")!;
-    const pw = worldXZ(primary);
-    // Primary spawn is at z = +6: the strip should occupy roughly
-    // [7.4, 14.6] in z (past the start-line bar, short of the inlay).
-    expect(pw.minZ).toBeGreaterThanOrEqual(7.0);
-    expect(pw.maxZ).toBeLessThanOrEqual(hz - 0.3);
-
-    const mirror = scene.getMeshByName("arena-spawnzone-strip-mirror")!;
-    const mw = worldXZ(mirror);
-    expect(mw.maxZ).toBeLessThanOrEqual(-7.0);
-    expect(mw.minZ).toBeGreaterThanOrEqual(-(hz - 0.3));
-
-    // Both strips stay inside the playable slab.
-    for (const w of [pw, mw]) {
-      expect(Math.abs(w.minZ)).toBeLessThanOrEqual(hz);
-      expect(Math.abs(w.maxZ)).toBeLessThanOrEqual(hz);
-    }
-
-    scene.dispose();
-    engine.dispose();
-  });
-
-  it("reuses the single shared accent-glow material (created on demand)", () => {
-    const { engine, scene } = makeScene();
-    setupArenaSpawnZones(scene);
-
-    // Bare scene: exactly one material, the accent glow, shared by all 4.
+    // Bare scene: exactly one material, the shared trim, used by both.
     expect(scene.materials.length).toBe(1);
-    const accent = scene.materials[0];
-    expect(accent.name).toBe("arena-accent-glow-material");
+    const trim = scene.materials[0];
+    expect(trim.name).toBe("arena-trim-material");
     for (const mesh of scene.meshes.filter((m) =>
       m.name.startsWith("arena-spawnzone-"),
     )) {
-      expect(mesh.material, `${mesh.name} material`).toBe(accent);
+      expect(mesh.material, `${mesh.name} material`).toBe(trim);
     }
+    // Muted brass, not a glow: emissive strictly dimmer than diffuse.
+    const trimMat = trim as StandardMaterial;
+    expect(trimMat.emissiveColor.r).toBeLessThan(trimMat.diffuseColor.r);
 
     scene.dispose();
     engine.dispose();

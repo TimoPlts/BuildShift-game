@@ -1,34 +1,35 @@
 /**
- * Independent decorative arena geometry module for the BuildShift Box Fight
- * 1v1 arena.
+ * Clean Box Fight room shell — decorative geometry for the BuildShift 1v1
+ * arena, derived from the validated build scale (shared `BUILD_GRID` /
+ * `BUILD_BOUNDS`) and the shared `ARENA_COLLIDERS` ground entry.
  *
- * The arena is a compact, symmetrical original BuildShift space built at the
- * validated build scale (the shared `BUILD_GRID` / `BUILD_BOUNDS` lattice):
+ * The room is a cohesive enclosed interior, modelled on a tidy competitive
+ * "box fight" room rather than an outdoor physics-test playground:
  *
- *  - A raised play-field plate (`arena-playfield-plate`) sized exactly to
- *    the build-volume span, so the plate edge reads as the build-area
- *    boundary on the floor.
- *  - A floor grid (`arena-grid-line-x-{i}` / `arena-grid-line-z-{i}`)
- *    marking the real build-cell
- *    boundaries derived from `BUILD_GRID` / `BUILD_BOUNDS` — boundary lines
- *    that would fall outside the arena shell are omitted — so the floor
- *    shows where structures actually snap.
- *  - Four solid, tall perimeter walls (`arena-shell-n/s/e/w`) forming the
- *    indestructible arena shell, with bright accent cap strips
- *    (`arena-shell-cap-n/s/e/w`) marking the boundary. The shell is tall
- *    enough to clear every build layer with margin (several levels of
- *    vertical clearance).
- *  - Mirrored spawn markers for the 1v1: a pad (`arena-spawn-pad`) and low
- *    start-line bar (`arena-spawn-bar`) at the shared `PLAYER_SPAWN`, plus
- *    their mirror (`arena-spawn-pad-mirror` / `arena-spawn-bar-mirror`) on
- *    the opposite side.
+ *  - Four pale-blue perimeter wall panels (`arena-shell-n/s/e/w`) forming
+ *    the indestructible arena shell, sized from the ground slab footprint
+ *    and rising exactly to the ceiling underside so the room encloses.
+ *  - Warm brass cap trim along the top of each wall (`arena-shell-cap-*`).
+ *  - A single enclosed ceiling slab (`arena-ceiling`) spanning the room at
+ *    the derived ceiling height — ABOVE the maximum legal build height by a
+ *    clearance derived from the real third-person orbit camera plus shared
+ *    jump physics, so the camera stays under the ceiling even when a jumping
+ *    player on the highest legal build looks straight down. Building
+ *    heights are unchanged.
+ *
+ * What was REMOVED (user requirement — the floor must stay clean):
+ *  - the raised play-field plate,
+ *  - all floor build-grid lines (no squares/lattice on the ground),
+ *  - the neon spawn pads, start-line bars, and every cyan accent.
  *
  * All boundary dimensions are derived from the shared `ARENA_COLLIDERS`
  * ground entry and the shared build grid — never duplicated or modified.
- * The spawn markers derive from the shared `PLAYER_SPAWN`.
+ * No gameplay geometry, spawn positions, collision bodies, camera rules, or
+ * networking state are created or altered here.
  *
- * This module does NOT create or alter any gameplay geometry, spawn
- * positions, collision bodies, or networking state.
+ * Performance: 9 static boxes total in this module, 3 shared materials
+ * (exported through the `ensure*` helpers so the environment/spawn-zone
+ * layers reuse them). No per-frame work, no textures.
  */
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
@@ -39,8 +40,9 @@ import {
   ARENA_COLLIDERS,
   BUILD_BOUNDS,
   BUILD_GRID,
-  PLAYER_SPAWN,
+  PLAYER_PHYSICS,
 } from "@buildshift/game-config";
+import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
 import { ARENA_PALETTE } from "./arena";
 
 /** Stable id of the ground collider from which we derive the arena boundary. */
@@ -49,78 +51,138 @@ const GROUND_ID = "foundation-ground";
 /** Thickness (metres) of each shell wall — solid, not a thin sheet. */
 const SHELL_THICKNESS = 0.3;
 
-/**
- * Vertical clearance (metres) above the top build layer that the shell must
- * provide — several build levels of clearance plus a visible margin.
- */
-const SHELL_CLEARANCE = 1.0;
-
-/** Height (metres) of the accent cap strip sitting on top of each wall. */
+/** Height (metres) of the brass cap strip sitting on top of each wall. */
 const SHELL_CAP_HEIGHT = 0.1;
 
-/** Width (metres) of a floor grid line. */
-const GRID_LINE_WIDTH = 0.12;
-
-/** Height (metres) of a floor grid line. */
-const GRID_LINE_HEIGHT = 0.02;
-
-/** Width (metres) of the play-field plate inset ring around the plate. */
-const PLATE_HEIGHT = 0.02;
-
-/** Diameter (metres) of each spawn pad. */
-const PAD_DIAMETER = 2.4;
-
-/** Height (metres) of each spawn pad. */
-const PAD_HEIGHT = 0.04;
-
-/** Width (metres) of each low start-line bar. */
-const BAR_WIDTH = 3.2;
-
-/** Height (metres) of each start-line bar. */
-const BAR_HEIGHT = 0.6;
-
-/** Depth (metres) of each start-line bar. */
-const BAR_DEPTH = 0.12;
+/**
+ * Extra safety (metres) added on top of the derived third-person camera
+ * clearance, covering transient presentation nudges (recoil pitch, camera
+ * motion dips) beyond the conservative orbit bound.
+ */
+const CEILING_SAFETY = 1.0;
 
 /**
- * Distance (metres) behind a spawn point (away from the arena centre) where
- * that side's start-line bar sits.
+ * Shared jump apex (metres) above the feet: v² / (2|g|) from the shared
+ * `PLAYER_PHYSICS` (jumpSpeed 9, gravity −25 → 1.62 m).
  */
-const BAR_OFFSET = 1.6;
-
-/**
- * The world-space positions of the build-cell boundary lines along one axis,
- * clipped to the arena interior.
- *
- * Cell `i` covers `[i*cellSize, (i+1)*cellSize)` in world space (the same
- * half-open convention `worldToGridPosition` uses), so the boundaries of the
- * buildable cells `minX..maxX` sit at `i*cellSize` for `i = minX..maxX+1`.
- * Boundary lines that would fall outside the arena ground are omitted so the
- * visible grid never runs past the shell.
- */
-function buildGridLines(halfExtent: number): number[] {
-  const { cellSize } = BUILD_GRID;
-  const lines: number[] = [];
-  for (let i = BUILD_BOUNDS.minX; i <= BUILD_BOUNDS.maxX + 1; i += 1) {
-    const p = i * cellSize;
-    if (Math.abs(p) < halfExtent) {
-      lines.push(p);
-    }
-  }
-  return lines;
+export function jumpApexHeight(): number {
+  return (
+    (PLAYER_PHYSICS.jumpSpeed * PLAYER_PHYSICS.jumpSpeed) /
+    (2 * Math.abs(PLAYER_PHYSICS.gravity))
+  );
 }
 
 /**
- * Adds decorative, non-interactive 1v1 arena geometry to the scene:
- *  - A raised play-field plate sized to the build-volume span.
- *  - Floor grid lines marking the real build-cell boundaries.
- *  - Four tall perimeter shell walls + accent cap strips (the indestructible
- *    boundary).
- *  - Mirrored spawn pads and start-line bars for the two 1v1 spawn sides.
+ * Conservative vertical clearance (metres) needed above the top legal build
+ * so the third-person camera stays below the ceiling.
  *
- * All meshes are non-pickable and non-collidable. Dimensions are derived from
- * the shared `ARENA_COLLIDERS` ground entry and the shared build grid so they
- * always match the gameplay arena without duplicating or modifying it.
+ * Derived from the REAL camera formula in `ThirdPersonCameraController`:
+ * cameraY = pivotY − distance·sin(effectivePitch), pivotY = feet +
+ * `targetHeight` (minus crouch dip). The orbit can never raise the camera
+ * more than the FULL orbit `distance` above the pivot (actual max at the
+ * −60° pitch clamp is distance·sin 60° ≈ 6.06 m; using the full 7 m also
+ * absorbs the transient recoil pitch nudge). Adding the shared jump apex
+ * and a small safety margin bounds the worst case: a player standing on the
+ * highest legal build, jumping, looking straight down.
+ */
+export function ceilingCameraClearance(): number {
+  return (
+    THIRD_PERSON_CAMERA.distance +
+    THIRD_PERSON_CAMERA.targetHeight +
+    jumpApexHeight() +
+    CEILING_SAFETY
+  );
+}
+
+/** Thickness (metres) of the ceiling slab. */
+const CEILING_THICKNESS = 0.2;
+
+/**
+ * The world-space top of the build volume (top of the highest legal layer).
+ */
+export function maxBuildHeight(): number {
+  return (
+    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) * BUILD_GRID.layerHeight
+  );
+}
+
+/**
+ * The underside height of the enclosed ceiling — the maximum legal build
+ * height plus the derived third-person camera clearance, so even a jumping
+ * player on the highest legal build looking straight down keeps the camera
+ * below the ceiling. Building is NOT capped at this height; the ceiling
+ * simply encloses the room far above anything a player can legally place.
+ */
+export function ceilingHeight(): number {
+  return maxBuildHeight() + ceilingCameraClearance();
+}
+
+/**
+ * The interior height of the perimeter shell walls — equal to the ceiling
+ * underside so the room actually encloses from the inside (no horizontal
+ * gap between wall tops and ceiling). Exported so the environment layer
+ * frames the walls at exactly the same height.
+ */
+export function shellWallHeight(): number {
+  return ceilingHeight();
+}
+
+/**
+ * Creates (or reuses) the shared pale-blue wall-panel material so dependent
+ * decoration modules never duplicate it.
+ */
+export function ensureWallPanelMaterial(scene: Scene): StandardMaterial {
+  const existing = scene.getMaterialByName("arena-wall-material");
+  if (existing instanceof StandardMaterial) {
+    return existing;
+  }
+  const material = new StandardMaterial("arena-wall-material", scene);
+  material.diffuseColor = ARENA_PALETTE.wallPanelColor;
+  material.specularColor = new Color3(0.02, 0.02, 0.03);
+  return material;
+}
+
+/**
+ * Creates (or reuses) the shared warm-brass trim material used by every
+ * perimeter/ceiling trim piece (wall caps, crown lines, beams, spawn-side
+ * marks). Muted, low-emissive brass — never a neon glow.
+ */
+export function ensureTrimMaterial(scene: Scene): StandardMaterial {
+  const existing = scene.getMaterialByName("arena-trim-material");
+  if (existing instanceof StandardMaterial) {
+    return existing;
+  }
+  const material = new StandardMaterial("arena-trim-material", scene);
+  material.diffuseColor = ARENA_PALETTE.trimColor;
+  material.emissiveColor = ARENA_PALETTE.trimColor.scale(0.12); // faint warm sheen
+  material.specularColor = new Color3(0.2, 0.16, 0.08);
+  material.specularPower = 64;
+  return material;
+}
+
+/**
+ * Creates (or reuses) the shared burgundy architectural-section material
+ * used by the perimeter bands, pilasters and spawn-side insets.
+ */
+export function ensureSectionMaterial(scene: Scene): StandardMaterial {
+  const existing = scene.getMaterialByName("arena-section-material");
+  if (existing instanceof StandardMaterial) {
+    return existing;
+  }
+  const material = new StandardMaterial("arena-section-material", scene);
+  material.diffuseColor = ARENA_PALETTE.wallSectionColor;
+  material.specularColor = new Color3(0.03, 0.02, 0.02);
+  return material;
+}
+
+/**
+ * Adds the clean room-shell geometry to the scene:
+ *  - Four tall pale-blue perimeter wall panels + brass cap trim.
+ *  - One enclosed ceiling slab above the maximum build height.
+ *
+ * All meshes are non-pickable and non-collidable. Dimensions derive from
+ * the shared `ARENA_COLLIDERS` ground entry and the shared build grid so
+ * they always match the gameplay arena without duplicating or modifying it.
  */
 export function setupArenaDecorations(scene: Scene): void {
   const ground = ARENA_COLLIDERS.find((c) => c.id === GROUND_ID);
@@ -133,226 +195,71 @@ export function setupArenaDecorations(scene: Scene): void {
   const [gx, , gz] = ground.position;
   const [hx, , hz] = ground.halfExtents;
 
-  // The build volume's world span on each axis (5 cells × 5.12 m = 25.6 m).
-  const buildSpanX =
-    (BUILD_BOUNDS.maxX - BUILD_BOUNDS.minX + 1) * BUILD_GRID.cellSize;
-  const buildSpanZ =
-    (BUILD_BOUNDS.maxZ - BUILD_BOUNDS.minZ + 1) * BUILD_GRID.cellSize;
+  const wallHeight = shellWallHeight();
+  const ceilingY = ceilingHeight();
 
-  // The shell clears every build layer plus a visible margin — several
-  // levels of vertical clearance.
-  const shellHeight =
-    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
-      BUILD_GRID.layerHeight +
-    SHELL_CLEARANCE;
+  const wallMaterial = ensureWallPanelMaterial(scene);
+  const trimMaterial = ensureTrimMaterial(scene);
 
-  // --- Materials -------------------------------------------------------
+  // Ceiling: warm dark slab. The underside is what the interior camera
+  // sees; the slab is a box, so it renders correctly from both sides.
+  const existingCeiling = scene.getMaterialByName("arena-ceiling-material");
+  const ceilingMaterial =
+    existingCeiling instanceof StandardMaterial
+      ? existingCeiling
+      : createCeilingMaterial(scene);
 
-  // Play-field plate: lighter slate — the intentional competition floor.
-  const plateMaterial = new StandardMaterial("arena-plate-material", scene);
-  plateMaterial.diffuseColor = ARENA_PALETTE.playFieldColor;
-  plateMaterial.specularColor = new Color3(0.03, 0.04, 0.06);
+  // --- Perimeter walls + brass cap trim ----------------------------------
 
-  // Shell: solid dark navy — the indestructible boundary.
-  const shellMaterial = new StandardMaterial("arena-shell-material", scene);
-  shellMaterial.diffuseColor = ARENA_PALETTE.wallColor;
-  shellMaterial.specularColor = new Color3(0.02, 0.03, 0.05);
+  const walls: Array<{ id: "n" | "s" | "e" | "w"; x: number; z: number; width: number; depth: number }> = [
+    { id: "n", x: gx, z: gz - hz, width: hx * 2, depth: SHELL_THICKNESS },
+    { id: "s", x: gx, z: gz + hz, width: hx * 2, depth: SHELL_THICKNESS },
+    { id: "e", x: gx + hx, z: gz, width: SHELL_THICKNESS, depth: hz * 2 },
+    { id: "w", x: gx - hx, z: gz, width: SHELL_THICKNESS, depth: hz * 2 },
+  ];
 
-  // Floor grid: a step lighter than the plate so the build lattice reads on
-  // the floor.
-  const gridMaterial = new StandardMaterial("arena-grid-material", scene);
-  gridMaterial.diffuseColor = ARENA_PALETTE.gridColor;
-  gridMaterial.specularColor = new Color3(0.02, 0.03, 0.05);
-
-  // Accent glow: shared by the shell caps and spawn markers — one bright
-  // cyan material keeps the identity consistent and the material count low.
-  const accentGlowMaterial = new StandardMaterial(
-    "arena-accent-glow-material",
-    scene,
-  );
-  accentGlowMaterial.diffuseColor = ARENA_PALETTE.accentColor;
-  accentGlowMaterial.emissiveColor = ARENA_PALETTE.accentColor
-    .clone()
-    .scale(0.45);
-  accentGlowMaterial.specularColor = new Color3(0.1, 0.12, 0.15);
-
-  // --- Play-field plate (build-area boundary) ---------------------------
-
-  createBox(
-    scene,
-    "arena-playfield-plate",
-    plateMaterial,
-    new Vector3(gx, PLATE_HEIGHT / 2, gz),
-    buildSpanX,
-    PLATE_HEIGHT,
-    buildSpanZ,
-  );
-
-  // --- Floor grid (real build-cell boundaries) ---------------------------
-
-  const xLines = buildGridLines(hx);
-  const zLines = buildGridLines(hz);
-  const gridY = PLATE_HEIGHT + GRID_LINE_HEIGHT / 2;
-
-  xLines.forEach((p, i) => {
+  for (const wall of walls) {
     createBox(
       scene,
-      `arena-grid-line-x-${i}`,
-      gridMaterial,
-      new Vector3(gx, gridY, gz + p),
-      xLines[xLines.length - 1] - xLines[0],
-      GRID_LINE_HEIGHT,
-      GRID_LINE_WIDTH,
+      `arena-shell-${wall.id}`,
+      wallMaterial,
+      new Vector3(wall.x, wallHeight / 2, wall.z),
+      wall.width,
+      wallHeight,
+      wall.depth,
     );
-  });
-
-  zLines.forEach((p, i) => {
     createBox(
       scene,
-      `arena-grid-line-z-${i}`,
-      gridMaterial,
-      new Vector3(gx + p, gridY, gz),
-      GRID_LINE_WIDTH,
-      GRID_LINE_HEIGHT,
-      zLines[zLines.length - 1] - zLines[0],
+      `arena-shell-cap-${wall.id}`,
+      trimMaterial,
+      new Vector3(wall.x, wallHeight + SHELL_CAP_HEIGHT / 2, wall.z),
+      wall.width,
+      SHELL_CAP_HEIGHT,
+      wall.depth,
     );
-  });
+  }
 
-  // --- Indestructible shell (4 walls + accent caps) ----------------------
-
-  createBox(
-    scene,
-    "arena-shell-n",
-    shellMaterial,
-    new Vector3(gx, shellHeight / 2, gz - hz),
-    hx * 2,
-    shellHeight,
-    SHELL_THICKNESS,
-  );
-  createBox(
-    scene,
-    "arena-shell-cap-n",
-    accentGlowMaterial,
-    new Vector3(gx, shellHeight + SHELL_CAP_HEIGHT / 2, gz - hz),
-    hx * 2,
-    SHELL_CAP_HEIGHT,
-    SHELL_THICKNESS,
-  );
+  // --- Enclosed ceiling ---------------------------------------------------
 
   createBox(
     scene,
-    "arena-shell-s",
-    shellMaterial,
-    new Vector3(gx, shellHeight / 2, gz + hz),
+    "arena-ceiling",
+    ceilingMaterial,
+    new Vector3(gx, ceilingY + CEILING_THICKNESS / 2, gz),
     hx * 2,
-    shellHeight,
-    SHELL_THICKNESS,
-  );
-  createBox(
-    scene,
-    "arena-shell-cap-s",
-    accentGlowMaterial,
-    new Vector3(gx, shellHeight + SHELL_CAP_HEIGHT / 2, gz + hz),
-    hx * 2,
-    SHELL_CAP_HEIGHT,
-    SHELL_THICKNESS,
-  );
-
-  createBox(
-    scene,
-    "arena-shell-e",
-    shellMaterial,
-    new Vector3(gx + hx, shellHeight / 2, gz),
-    SHELL_THICKNESS,
-    shellHeight,
+    CEILING_THICKNESS,
     hz * 2,
   );
-  createBox(
-    scene,
-    "arena-shell-cap-e",
-    accentGlowMaterial,
-    new Vector3(gx + hx, shellHeight + SHELL_CAP_HEIGHT / 2, gz),
-    SHELL_THICKNESS,
-    SHELL_CAP_HEIGHT,
-    hz * 2,
-  );
-
-  createBox(
-    scene,
-    "arena-shell-w",
-    shellMaterial,
-    new Vector3(gx - hx, shellHeight / 2, gz),
-    SHELL_THICKNESS,
-    shellHeight,
-    hz * 2,
-  );
-  createBox(
-    scene,
-    "arena-shell-cap-w",
-    accentGlowMaterial,
-    new Vector3(gx - hx, shellHeight + SHELL_CAP_HEIGHT / 2, gz),
-    SHELL_THICKNESS,
-    SHELL_CAP_HEIGHT,
-    hz * 2,
-  );
-
-  // --- Mirrored 1v1 spawn markers ----------------------------------------
-
-  createSpawnMarkers(scene, "arena-spawn-pad", "arena-spawn-bar", gz, {
-    x: PLAYER_SPAWN.x,
-    z: PLAYER_SPAWN.z,
-  });
-
-  // The mirror spawn is the shared spawn reflected across the arena centre.
-  createSpawnMarkers(scene, "arena-spawn-pad-mirror", "arena-spawn-bar-mirror", gz, {
-    x: gx * 2 - PLAYER_SPAWN.x,
-    z: gz * 2 - PLAYER_SPAWN.z,
-  });
 }
 
 /**
- * Creates the flat glowing spawn pad and the low start-line bar for one
- * spawn side, both non-pickable and non-collidable. The bar sits behind the
- * pad, away from the arena centre, so each side reads as a spawn side from
- * across the arena.
+ * Creates the warm dark ceiling material (only when not already present).
  */
-function createSpawnMarkers(
-  scene: Scene,
-  padName: string,
-  barName: string,
-  arenaCz: number,
-  spawn: { x: number; z: number },
-): void {
-  // Flat glowing pad resting on the play-field plate.
-  const pad = MeshBuilder.CreateCylinder(
-    padName,
-    { diameter: PAD_DIAMETER, height: PAD_HEIGHT, tessellation: 24 },
-    scene,
-  );
-  pad.position = new Vector3(
-    spawn.x,
-    PLATE_HEIGHT + PAD_HEIGHT / 2,
-    spawn.z,
-  );
-  pad.material = scene.getMaterialByName("arena-accent-glow-material");
-  pad.isPickable = false;
-  pad.checkCollisions = false;
-
-  // Low start-line bar just behind the pad (away from the arena centre).
-  const awayFromCentre = spawn.z >= arenaCz ? 1 : -1;
-  const bar = MeshBuilder.CreateBox(
-    barName,
-    { width: BAR_WIDTH, height: BAR_HEIGHT, depth: BAR_DEPTH },
-    scene,
-  );
-  bar.position = new Vector3(
-    spawn.x,
-    BAR_HEIGHT / 2,
-    spawn.z + awayFromCentre * BAR_OFFSET,
-  );
-  bar.material = scene.getMaterialByName("arena-accent-glow-material");
-  bar.isPickable = false;
-  bar.checkCollisions = false;
+function createCeilingMaterial(scene: Scene): StandardMaterial {
+  const material = new StandardMaterial("arena-ceiling-material", scene);
+  material.diffuseColor = ARENA_PALETTE.ceilingColor;
+  material.specularColor = new Color3(0.02, 0.02, 0.02);
+  return material;
 }
 
 /**

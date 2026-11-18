@@ -1,90 +1,95 @@
 /**
- * Arena environment V2 — outer containment architecture, floor design and
- * stylized distant backdrop for the BuildShift Box Fight arena.
+ * Arena environment — perimeter architecture and ceiling detail for the
+ * clean BuildShift Box Fight room.
  *
  * Purely presentational: every mesh created here is non-pickable and
  * non-collidable. No authoritative bounds, spawn coordinates, collision
  * bodies, placement rules, or camera behaviour are touched — dimensions are
- * DERIVED from the shared `ARENA_COLLIDERS` ground entry and the shared build
- * grid so the environment always frames the real playable arena.
+ * DERIVED from the shared `ARENA_COLLIDERS` ground entry and the shared
+ * `arenaDecorations` shell so the architecture always frames the real
+ * playable room.
  *
- * What it adds on top of the V1 arena decorations:
- *  - Four boundary pylons (`arena-env-pylon-{n,s,e,w}`) at the four wall
- *    ends, taller than the shell, with accent caps
- *    (`arena-env-pylon-cap-{n,s,e,w}`) — a designed containment silhouette.
- *  - Thin accent inlay bands (`arena-env-inlay-{n,s,e,w}`) just inside each
- *    shell wall so the playable boundary reads on the floor, not just on
- *    the wall caps.
- *  - A square accent floor ring (`arena-env-center-ring-{n,s,e,w}`) framing
- *    the central feature box's footprint — floor design that keeps the
- *    centre open.
- *  - A ring of 8 stylized backdrop monoliths (`arena-env-monolith-{i}`)
- *    well outside the playable bounds; the scene's EXP2 fog fades them
- *    into the horizon haze for depth.
- *  - Four original BuildShift banners (`arena-env-banner-{n,s,e,w}`) —
- *    thin accent-lit panels on the inner face of each boundary pylon.
+ * All decoration lives at the room PERIMETER and CEILING — mounted flush
+ * on the inner face of the shell walls (outside the ±12.8 m buildable
+ * volume) or under the ceiling slab (above every legal build height). The
+ * floor of the playable centre stays completely empty:
+ *  - Burgundy lower wall-section bands (`arena-env-band-{n,s,e,w}`).
+ *  - Burgundy pilasters (`arena-env-pilaster-{side}-{i}`) framing each wall.
+ *  - A brass crown line (`arena-env-crown-{n,s,e,w}`) just below the ceiling.
+ *  - Brass ceiling beams (`arena-env-beam-{i}`) under the ceiling slab.
  *
- * Performance: 28 static meshes, 2 brand-new materials (pylon, backdrop)
- * plus reuse of the shared accent-glow material. No per-frame work, no
- * unbounded allocations, no textures.
+ * What was REMOVED (user requirement — the enclosed clean room replaces the
+ * outdoor playground backdrop): exterior pylons, distant monoliths, floor
+ * inlay bands, the centre floor ring, and the pylon banners. Nothing
+ * decorative remains on or near the floor inside the build volume.
+ *
+ * Performance: 20 static meshes; materials are shared through the
+ * `arenaDecorations` ensure-material helpers. No per-frame work, no textures.
  */
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
-import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { Scene } from "@babylonjs/core/scene";
-import { ARENA_COLLIDERS, BUILD_BOUNDS, BUILD_GRID } from "@buildshift/game-config";
-import { ARENA_PALETTE } from "../arena";
+import { ARENA_COLLIDERS } from "@buildshift/game-config";
+import {
+  ceilingHeight,
+  ensureSectionMaterial,
+  ensureTrimMaterial,
+  shellWallHeight,
+} from "../arenaDecorations";
 
 /** Stable id of the ground collider from which we derive the arena boundary. */
 const GROUND_ID = "foundation-ground";
 
-/** Top of the V1 play-field plate (matches `PLATE_HEIGHT` in arenaDecorations). */
-const PLATE_TOP = 0.02;
+/** Half of the shell wall thickness (`SHELL_THICKNESS / 2` in decorations) —
+ *  the distance from a wall's centre line to its inner face. */
+const WALL_FACE_INSET = 0.15;
 
-// --- Pylons ---------------------------------------------------------------
+// --- Burgundy lower wall bands -----------------------------------------------
 
-const PYLON_SIZE = 2.4;
-/** Pylons clear the shell by a visible margin so the corners read tall. */
-const PYLON_OVER_CLEARANCE = 1.5;
-const PYLON_CAP_HEIGHT = 0.15;
+const BAND_HEIGHT = 3.6;
+/** Thickness (metres) the band stands proud of the wall's inner face. */
+const BAND_PROUD = 0.1;
+/** Corner inset so adjacent walls' bands do not overlap at the corners. */
+const BAND_CORNER_INSET = 0.8;
 
-// --- Boundary inlays --------------------------------------------------------
+// --- Burgundy pilasters --------------------------------------------------------
 
-/** Inset from the ground edge so the band sits on the floor inside the wall. */
-const INLAY_INSET = 0.25;
-const INLAY_WIDTH = 0.3;
-const INLAY_HEIGHT = 0.03;
+const PILASTER_WIDTH = 1.0;
+const PILASTER_PROUD = 0.16;
+/** Pilaster positions along each wall, as a fraction of the wall span. */
+const PILASTER_FRACTIONS = [0.25, 0.75] as const;
 
-// --- Center floor ring ------------------------------------------------------
+// --- Brass crown line -----------------------------------------------------------
 
-/** Gap between the center-box footprint and the ring band. */
-const RING_GAP = 0.6;
-const RING_WIDTH = 0.24;
-const RING_HEIGHT = 0.02;
+const CROWN_HEIGHT = 0.14;
+const CROWN_PROUD = 0.08;
+/** Gap between the crown line and the ceiling underside. */
+const CROWN_BELOW_CEILING = 0.18;
 
-// --- Distant backdrop --------------------------------------------------------
+// --- Brass ceiling beams ----------------------------------------------------------
 
-/** Ring radius for the monoliths — well beyond the 15 m playable half-extent. */
-const MONOLITH_RING_RADIUS = 50;
-/** Half size of a monolith's square footprint. */
-const MONOLITH_HALF = 3.5;
-/** Deterministic silhouette heights (metres) for the 8 monoliths. */
-const MONOLITH_HEIGHTS = [22, 12, 30, 9, 16, 10, 26, 14] as const;
+const BEAM_COUNT = 4;
+const BEAM_HEIGHT = 0.3;
+const BEAM_DEPTH = 0.5;
 
-// --- Banners -----------------------------------------------------------------
-
-const BANNER_WIDTH = 1.5;
-const BANNER_HEIGHT = 4.0;
-const BANNER_DEPTH = 0.06;
-/** Vertical centre of each banner on its pylon (near the top, below the cap). */
-const BANNER_Y = 9.5;
+/** One side of the room, described for perimeter-mounted decoration. */
+interface WallFrame {
+  id: "n" | "s" | "e" | "w";
+  /** True when the wall runs along X (north/south), false when along Z. */
+  alongX: boolean;
+  /** Centre-line coordinate of the wall on its fixed axis. */
+  fixed: number;
+  /** Half span of the wall along its running axis. */
+  span: number;
+  /** +1 when the room interior is at greater coordinates on the fixed axis. */
+  inward: 1 | -1;
+}
 
 /**
- * Adds the arena environment V2 layer to the scene. Safe to call on a scene
- * that already has (or will later get) the V1 decorations; the accent-glow
- * material is created on demand so module order does not matter.
+ * Adds the perimeter-architecture layer to the scene. Safe to call before
+ * or after `setupArenaDecorations` — shared materials are created on demand
+ * with identical parameters, so module order does not matter.
  */
 export function setupArenaEnvironment(scene: Scene): void {
   const ground = ARENA_COLLIDERS.find((c) => c.id === GROUND_ID);
@@ -96,278 +101,115 @@ export function setupArenaEnvironment(scene: Scene): void {
   const [gx, , gz] = ground.position;
   const [hx, , hz] = ground.halfExtents;
 
-  // Same clearance rule the V1 shell uses, so the pylons frame it exactly.
-  const shellHeight =
-    (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
-      BUILD_GRID.layerHeight +
-      1.0;
-  const pylonHeight = shellHeight + PYLON_OVER_CLEARANCE;
+  const wallHeight = shellWallHeight();
+  const ceilingY = ceilingHeight();
 
-  // --- Materials (two new; accent glow reused from V1 when present) ----------
+  const sectionMaterial = ensureSectionMaterial(scene);
+  const trimMaterial = ensureTrimMaterial(scene);
 
-  const pylonMaterial = new StandardMaterial("arena-env-pylon-material", scene);
-  pylonMaterial.diffuseColor = new Color3(0.22, 0.3, 0.42);
-  pylonMaterial.specularColor = new Color3(0.03, 0.04, 0.06);
+  const walls: WallFrame[] = [
+    { id: "n", alongX: true, fixed: gz - hz, span: hx, inward: 1 },
+    { id: "s", alongX: true, fixed: gz + hz, span: hx, inward: -1 },
+    { id: "e", alongX: false, fixed: gx + hx, span: hz, inward: -1 },
+    { id: "w", alongX: false, fixed: gx - hx, span: hz, inward: 1 },
+  ];
 
-  const backdropMaterial = new StandardMaterial(
-    "arena-env-backdrop-material",
-    scene,
-  );
-  backdropMaterial.diffuseColor = new Color3(0.42, 0.53, 0.66);
-  backdropMaterial.specularColor = new Color3(0, 0, 0);
+  for (const wall of walls) {
+    // Coordinate of a decoration centre standing `proud` metres proud of the
+    // wall's inner face, pushed into the room.
+    const faceCentre = (proud: number): number =>
+      wall.fixed + wall.inward * (WALL_FACE_INSET + proud / 2);
 
-  const accentGlow = ensureAccentGlowMaterial(scene);
+    // Burgundy lower band flush on the wall's inner face.
+    const bandLength = wall.span * 2 - BAND_CORNER_INSET * 2;
+    placeOnWall(
+      scene,
+      `arena-env-band-${wall.id}`,
+      sectionMaterial,
+      wall,
+      faceCentre(BAND_PROUD),
+      0,
+      BAND_HEIGHT / 2,
+      bandLength,
+      BAND_HEIGHT,
+      BAND_PROUD,
+    );
 
-  // --- Corner pylons + accent caps --------------------------------------------
+    // Pilasters framing the wall, full wall height.
+    for (const [i, fraction] of PILASTER_FRACTIONS.entries()) {
+      const along = -wall.span + fraction * wall.span * 2;
+      placeOnWall(
+        scene,
+        `arena-env-pilaster-${wall.id}-${i}`,
+        sectionMaterial,
+        wall,
+        faceCentre(PILASTER_PROUD),
+        along,
+        wallHeight / 2,
+        PILASTER_WIDTH,
+        wallHeight,
+        PILASTER_PROUD,
+      );
+    }
 
-  createPyloins(scene, pylonMaterial, accentGlow, gx, gz, hx, hz, pylonHeight);
-  createInlays(scene, accentGlow, gx, gz, hx, hz);
-  createCenterRing(scene, accentGlow, gx, gz);
-  createMonoliths(scene, backdropMaterial, gx, gz);
-  createBanners(scene, accentGlow, gx, gz, hx, hz, pylonHeight);
+    // Brass crown line just below the ceiling.
+    const crownLength = wall.span * 2 - 0.2;
+    placeOnWall(
+      scene,
+      `arena-env-crown-${wall.id}`,
+      trimMaterial,
+      wall,
+      faceCentre(CROWN_PROUD),
+      0,
+      ceilingY - CROWN_BELOW_CEILING - CROWN_HEIGHT / 2,
+      crownLength,
+      CROWN_HEIGHT,
+      CROWN_PROUD,
+    );
+  }
+
+  // Brass ceiling beams spanning the room along X, evenly spaced in Z.
+  for (let i = 0; i < BEAM_COUNT; i += 1) {
+    const z = gz + ((i + 0.5) / BEAM_COUNT - 0.5) * hz * 2;
+    createBox(
+      scene,
+      `arena-env-beam-${i}`,
+      trimMaterial,
+      new Vector3(gx, ceilingY - BEAM_HEIGHT / 2, z),
+      hx * 2,
+      BEAM_HEIGHT,
+      BEAM_DEPTH,
+    );
+  }
 }
 
 // --- Internal builders --------------------------------------------------------
 
-function cornerPosition(
-  id: "n" | "s" | "e" | "w",
-  gx: number,
-  gz: number,
-  hx: number,
-  hz: number,
-): { x: number; z: number } {
-  switch (id) {
-    case "n":
-      return { x: gx, z: gz - hz };
-    case "s":
-      return { x: gx, z: gz + hz };
-    case "e":
-      return { x: gx + hx, z: gz };
-    case "w":
-      return { x: gx - hx, z: gz };
-  }
-}
-
 /**
- * Four pylons with accent caps at the four wall ends (north/south/east/west,
- * matching the V1 shell wall names) — the boundary framing points where a
- * competitive arena reads its entrance axes.
+ * Places a perimeter decoration flush against one wall: `fixedCoord` is the
+ * decoration's centre on the wall's fixed axis, `along` its offset from the
+ * wall centre along the wall, `length` its size running along the wall and
+ * `proud` its thickness standing into the room.
  */
-function createPyloins(
+function placeOnWall(
   scene: Scene,
-  pylonMaterial: StandardMaterial,
-  accentGlow: StandardMaterial,
-  gx: number,
-  gz: number,
-  hx: number,
-  hz: number,
-  pylonHeight: number,
+  name: string,
+  material: StandardMaterial,
+  wall: WallFrame,
+  fixedCoord: number,
+  along: number,
+  y: number,
+  length: number,
+  height: number,
+  proud: number,
 ): void {
-  for (const id of ["n", "s", "e", "w"] as const) {
-    const { x, z } = cornerPosition(id, gx, gz, hx, hz);
-    createBox(
-      scene,
-      `arena-env-pylon-${id}`,
-      pylonMaterial,
-      new Vector3(x, pylonHeight / 2, z),
-      PYLON_SIZE,
-      pylonHeight,
-      PYLON_SIZE,
-    );
-    createBox(
-      scene,
-      `arena-env-pylon-cap-${id}`,
-      accentGlow,
-      new Vector3(x, pylonHeight + PYLON_CAP_HEIGHT / 2, z),
-      PYLON_SIZE,
-      PYLON_CAP_HEIGHT,
-      PYLON_SIZE,
-    );
-  }
-}
-
-/** Thin accent bands just inside each shell wall — floor boundary framing. */
-function createInlays(
-  scene: Scene,
-  accentGlow: StandardMaterial,
-  gx: number,
-  gz: number,
-  hx: number,
-  hz: number,
-): void {
-  const y = PLATE_TOP + INLAY_HEIGHT / 2;
-  const inner = INLAY_INSET;
-  createBox(
-    scene,
-    "arena-env-inlay-n",
-    accentGlow,
-    new Vector3(gx, y, gz - hz + inner),
-    hx * 2 - inner * 2,
-    INLAY_HEIGHT,
-    INLAY_WIDTH,
-  );
-  createBox(
-    scene,
-    "arena-env-inlay-s",
-    accentGlow,
-    new Vector3(gx, y, gz + hz - inner),
-    hx * 2 - inner * 2,
-    INLAY_HEIGHT,
-    INLAY_WIDTH,
-  );
-  createBox(
-    scene,
-    "arena-env-inlay-e",
-    accentGlow,
-    new Vector3(gx + hx - inner, y, gz),
-    INLAY_WIDTH,
-    INLAY_HEIGHT,
-    hz * 2 - inner * 2,
-  );
-  createBox(
-    scene,
-    "arena-env-inlay-w",
-    accentGlow,
-    new Vector3(gx - hx + inner, y, gz),
-    INLAY_WIDTH,
-    INLAY_HEIGHT,
-    hz * 2 - inner * 2,
-  );
-}
-
-/**
- * A square accent ring framing the central feature box's footprint.
- * Center box footprint (from ARENA_COLLIDERS) is 2.5 × 2.5 m centred on the
- * ground centre; the ring sits `RING_GAP` outside it on the floor.
- */
-function createCenterRing(
-  scene: Scene,
-  accentGlow: StandardMaterial,
-  gx: number,
-  gz: number,
-): void {
-  const centerBox = ARENA_COLLIDERS.find((c) => c.id === "center-box");
-  if (!centerBox) {
-    throw new Error(`ARENA_COLLIDERS missing "center-box" — cannot frame it`);
-  }
-  const half = centerBox.halfExtents[0] + RING_GAP;
-  const y = PLATE_TOP + RING_HEIGHT / 2;
-  const span = half * 2;
-  createBox(
-    scene,
-    "arena-env-center-ring-n",
-    accentGlow,
-    new Vector3(gx, y, gz - half),
-    span,
-    RING_HEIGHT,
-    RING_WIDTH,
-  );
-  createBox(
-    scene,
-    "arena-env-center-ring-s",
-    accentGlow,
-    new Vector3(gx, y, gz + half),
-    span,
-    RING_HEIGHT,
-    RING_WIDTH,
-  );
-  createBox(
-    scene,
-    "arena-env-center-ring-e",
-    accentGlow,
-    new Vector3(gx + half, y, gz),
-    RING_WIDTH,
-    RING_HEIGHT,
-    span,
-  );
-  createBox(
-    scene,
-    "arena-env-center-ring-w",
-    accentGlow,
-    new Vector3(gx - half, y, gz),
-    RING_WIDTH,
-    RING_HEIGHT,
-    span,
-  );
-}
-
-/**
- * Eight stylized monoliths on a ring well outside the playable bounds.
- * Deterministic heights give an original skyline silhouette; the scene's
- * EXP2 fog fades them into the horizon haze for depth.
- */
-function createMonoliths(
-  scene: Scene,
-  backdropMaterial: StandardMaterial,
-  gx: number,
-  gz: number,
-): void {
-  for (let i = 0; i < MONOLITH_HEIGHTS.length; i += 1) {
-    const angle = (i / MONOLITH_HEIGHTS.length) * Math.PI * 2;
-    const x = gx + Math.cos(angle) * MONOLITH_RING_RADIUS;
-    const z = gz + Math.sin(angle) * MONOLITH_RING_RADIUS;
-    const h = MONOLITH_HEIGHTS[i];
-    createBox(
-      scene,
-      `arena-env-monolith-${i}`,
-      backdropMaterial,
-      new Vector3(x, h / 2, z),
-      MONOLITH_HALF * 2,
-      h,
-      MONOLITH_HALF * 2,
-    );
-  }
-}
-
-/**
- * Thin accent-lit banner panels on the inner face of each pylon, pointing
- * toward the arena centre. Original BuildShift trim — no external assets.
- */
-function createBanners(
-  scene: Scene,
-  accentGlow: StandardMaterial,
-  gx: number,
-  gz: number,
-  hx: number,
-  hz: number,
-  pylonHeight: number,
-): void {
-  for (const id of ["n", "s", "e", "w"] as const) {
-    const { x, z } = cornerPosition(id, gx, gz, hx, hz);
-    // Shift the banner off the pylon's inner face toward the arena centre.
-    const inward = PYLON_SIZE / 2 - BANNER_DEPTH / 2 + 0.02;
-    const dx = Math.sign(gx - x) || 0;
-    const dz = Math.sign(gz - z) || 0;
-    createBox(
-      scene,
-      `arena-env-banner-${id}`,
-      accentGlow,
-      new Vector3(
-        x + dx * inward,
-        Math.min(BANNER_Y, pylonHeight - 1.0),
-        z + dz * inward,
-      ),
-      BANNER_WIDTH,
-      BANNER_HEIGHT,
-      BANNER_DEPTH,
-    );
-  }
-}
-
-/**
- * Creates (or reuses) the shared accent-glow material so this module works
- * standalone, with identical parameters to the V1 decoration's version.
- */
-export function ensureAccentGlowMaterial(scene: Scene): StandardMaterial {
-  const existing = scene.getMaterialByName("arena-accent-glow-material");
-  if (existing instanceof StandardMaterial) {
-    return existing;
-  }
-  const material = new StandardMaterial("arena-accent-glow-material", scene);
-  material.diffuseColor = ARENA_PALETTE.accentColor;
-  material.emissiveColor = ARENA_PALETTE.accentColor.clone().scale(0.45);
-  material.specularColor = new Color3(0.1, 0.12, 0.15);
-  return material;
+  const position = wall.alongX
+    ? new Vector3(along, y, fixedCoord)
+    : new Vector3(fixedCoord, y, along);
+  const dims: [number, number, number] = wall.alongX
+    ? [length, height, proud]
+    : [proud, height, length];
+  createBox(scene, name, material, position, ...dims);
 }
 
 /** Creates a box mesh marked non-pickable and non-collidable. */
@@ -379,11 +221,10 @@ function createBox(
   width: number,
   height: number,
   depth: number,
-): Mesh {
+): void {
   const mesh = MeshBuilder.CreateBox(name, { width, height, depth }, scene);
   mesh.position = position;
   mesh.material = material;
   mesh.isPickable = false;
   mesh.checkCollisions = false;
-  return mesh;
 }
