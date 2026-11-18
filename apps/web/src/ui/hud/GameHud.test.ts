@@ -80,9 +80,9 @@ describe("GameHud (cohesive container)", () => {
     );
     // The shared container layer:
     expect(html).toContain("game-hud");
-    // Match header with the authoritative round timer (45_000/90_000 → 45%):
+    // Match header: score / round / status, and NO clock (untimed rounds):
     expect(html).toContain("match-hud");
-    expect(html).toContain("match-hud__timer");
+    expect(html).not.toContain("match-hud__timer");
     // Player panels:
     expect(html).toContain("energy-hud");
     expect(html).toContain("weapon-hud");
@@ -90,18 +90,23 @@ describe("GameHud (cohesive container)", () => {
     expect(html).toContain("build-hud");
   });
 
-  it("shows the round timer with remaining seconds when the server timer is live", () => {
+  it("never renders a round clock even when a legacy timer value arrives", () => {
+    // The untimed-round contract: a fight ends on elimination, so a stale
+    // `roundTimer` on the local view must not become a HUD read-out or a
+    // progress bar (and must never be faked as 0:00).
     const html = renderToStaticMarkup(
       createElement(GameHud, {
         match: matchProps(),
-        local: fullLocalView(),
+        local: fullLocalView({ roundTimer: { remainingMs: 45_000, totalMs: 90_000 } }),
       }),
     );
-    // 45_000 ms remaining → "0:45" shown in the timer read-out.
-    expect(html).toMatch(/match-hud__timer-value[^>]*>\s*0:45\s*</);
+    expect(html).not.toContain("match-hud__timer");
+    expect(html).not.toContain("role=\"timer\"");
+    expect(html).not.toContain("0:45");
+    expect(html).not.toMatch(/\d:\d\d/);
   });
 
-  it("hides the round timer when no authoritative timer is present", () => {
+  it("renders no clock when the legacy timer field is absent too", () => {
     const html = renderToStaticMarkup(
       createElement(GameHud, {
         match: matchProps(),
@@ -111,17 +116,18 @@ describe("GameHud (cohesive container)", () => {
     expect(html).not.toContain("match-hud__timer");
   });
 
-  it("does not duplicate the pre-round countdown in the header (overlay owns it)", () => {
+  it("does not duplicate the preparation countdown in the header (banner owns it)", () => {
     const html = renderToStaticMarkup(
       createElement(GameHud, {
         match: matchProps(),
         local: fullLocalView({ countdownSeconds: 3 }),
       }),
     );
-    // The countdown is presented exclusively by the full-screen
-    // CountdownOverlay in the App shell, never by the match header.
+    // The preparation countdown is presented exclusively by the App-level
+    // PreparationBanner, never by the match header.
     expect(html).not.toContain("match-hud__countdown");
     expect(html).not.toContain("countdown-overlay");
+    expect(html).not.toContain("preparation-banner");
   });
 
   it("pulses the score values so an authoritative score change is visible", () => {

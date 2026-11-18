@@ -221,10 +221,18 @@
   .score-bar__pip--won-remote,
   .score-bar__score-display,
   .match-hud__score-value--pulse,
+  .preparation-banner,
+  .preparation-banner__count,
   .match-hud__timer--low .match-hud__timer-value {
     animation: none;
     opacity: 1;
     transform: none;
+  }
+
+  /* The preparation strip keeps its horizontal centering when its
+     slide-in transform is disabled. */
+  .preparation-banner {
+    transform: translateX(-50%);
   }
 
   /* Keep the round banner horizontally/vertically centered when its

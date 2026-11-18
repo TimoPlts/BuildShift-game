@@ -5,9 +5,8 @@
  * Composes the presentation-only HUD panels into one shared, full-viewport
  * layer (`.game-hud`) with a single visual language:
  *
- *  - **MatchHud** (top-center) — round score, authoritative round timer,
- *    round/phase, waiting-for-opponent and pre-round countdown, plus the
- *    round/match outcome banners.
+ *  - **MatchHud** (top-center) — round score, round/phase and the
+ *    waiting-for-opponent indicator, plus the round/match outcome banners.
  *  - **EnergyHud** (bottom-left, upper) — the mirrored authoritative energy.
  *  - **WeaponHUD** (bottom-left, lower) — equipped weapon, magazine rounds,
  *    reload progress and the loadout slot indicator.
@@ -22,9 +21,11 @@
  *    existing authoritative / predicted sources.
  *
  * It performs no networking, no runtime queries, and no side effects beyond
- * rendering. The authoritative round timer (carried on `local`) is folded
- * into the match header here, keeping the timer source and its display in
- * one place.
+ * rendering. This container deliberately drops the round-timer field that
+ * still rides on the local view: a fight is untimed (a round ends on
+ * elimination), so a stale/legacy timer value is never folded into the header.
+ * The only clock in the game — the build-preparation countdown — is presented
+ * by the App-level `PreparationBanner`.
  */
 
 import { MatchHud, type MatchHudProps } from "../MatchHud";
@@ -50,8 +51,9 @@ export interface GameHudProps {
    */
   match: MatchHudProps | null;
   /**
-   * The runtime's flat local HUD view (vitals, energy, weapon, build state,
-   * round timer). `null` before the first snapshot is produced.
+   * The runtime's flat local HUD view (vitals, energy, weapon, build state).
+   * `null` before the first snapshot is produced. Its legacy round-timer
+   * field is ignored by this container.
    */
   local: LocalHudView | null;
 }
@@ -69,20 +71,13 @@ export function GameHud(props: GameHudProps): JSX.Element | null {
     return null;
   }
 
-  // The authoritative round timer travels on the local view; fold it into
-  // the match header so the timer source and its display live in one place.
-  const roundTimer = local?.roundTimer ?? null;
+  // No round timer is folded into the header: an in-progress fight is untimed,
+  // so `local.roundTimer` (a legacy field) is intentionally never displayed.
 
   return (
     <div className="game-hud">
-      {/* ── Match header (top-center) with the authoritative round timer ── */}
-      {match !== null && (
-        <MatchHud
-          {...match}
-          roundTimerRemainingMs={roundTimer?.remainingMs}
-          roundTimerTotalMs={roundTimer?.totalMs}
-        />
-      )}
+      {/* ── Match header (top-center): score, round/phase, no clock ── */}
+      {match !== null && <MatchHud {...match} />}
 
       {/* ── Player panels (only once the first local snapshot exists) ── */}
       {local !== null && (

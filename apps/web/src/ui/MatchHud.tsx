@@ -5,10 +5,17 @@
  * Displays the persistent, non-blocking in-match information:
  *  - A "waiting for opponent" indicator (lobby / not-yet-full state)
  *  - Round score (local vs. remote), with a pulse when a score changes
- *  - The authoritative round timer (remaining time + progress bar)
  *  - Current match phase label
  *
- * The full-attention lifecycle moments (pre-round countdown, round win/loss,
+ * **There is deliberately no round timer.** An in-progress fight is untimed:
+ * a round ends on an authoritative elimination (or the explicit
+ * leaving/forfeit exception), so a remaining-time read-out, a progress bar or
+ * any expiry label would promise a win condition that does not exist. The
+ * only clock in the game is the build-preparation countdown, presented by the
+ * App-level PreparationBanner; a stale timer value arriving from any legacy
+ * event is therefore never rendered here.
+ *
+ * The full-attention lifecycle moments (build preparation, round win/loss,
  * final victory/defeat) are presented exclusively by the App-level lifecycle
  * overlays, so the header never doubles them.
  *
@@ -21,9 +28,9 @@
  * `matchWinnerId`) into the local-perspective booleans
  * (`localWonLastRound`, `localWonMatch`) before passing them here.
  *
- * Every optional prop (`waitingForOpponent`, `roundTimerRemainingMs`,
- * `roundTimerTotalMs`) is optional so that existing callers that only supply
- * the core score/phase props keep compiling and rendering exactly as before.
+ * Every optional prop (`waitingForOpponent`, `preparationActive`) is optional
+ * so that existing callers that only supply the core score/phase props keep
+ * compiling and rendering exactly as before.
  */
 import {
   MatchPhase,
@@ -60,25 +67,25 @@ export interface MatchHudProps {
   localWonMatch: boolean | null;
   /**
    * Whether to show a "waiting for opponent" indicator. Set `true` while a
-   * player has joined a room but the match is not yet full / started.
+   * player has joined a room but the match is not yet full / started. Ignored
+   * (suppressed) while `preparationActive` is `true`, because preparation
+   * already proves both players are present.
    */
   waitingForOpponent?: boolean;
   /**
-   * Authoritative remaining round time in milliseconds (>= 0). When provided
-   * and greater than `0`, the round timer (progress bar + countdown) is
-   * rendered.
+   * Whether the authoritative build-preparation phase is running (the
+   * replicated `preparationActive` room flag). While true the phase label
+   * reads as the build phase instead of a generic "get ready".
    */
-  roundTimerRemainingMs?: number;
-  /**
-   * Total round duration in milliseconds, used to render a progress bar
-   * alongside the remaining time. Ignored when omitted.
-   */
-  roundTimerTotalMs?: number;
+  preparationActive?: boolean;
 }
 
 /**
  * Human-readable label for each {@link MatchPhase} value, used in the
  * phase indicator strip at the top of the HUD.
+ *
+ * `COUNTDOWN` is the build-preparation phase, so its label is refined from
+ * the replicated preparation flag (see {@link phaseLabel}).
  */
 const PHASE_LABELS: Record<MatchPhase, string> = {
   [MatchPhase.COUNTDOWN]: "GET READY",
@@ -87,16 +94,36 @@ const PHASE_LABELS: Record<MatchPhase, string> = {
   [MatchPhase.MATCH_ENDED]: "MATCH OVER",
 };
 
+/** The pre-fight label while the authoritative build preparation is running. */
+export const PREPARATION_HUD_LABEL = "BUILD";
+
+/**
+ * The phase-strip label: the base phase label, refined for the pre-fight
+ * build phase when the authoritative preparation flag is set.
+ */
+export function phaseLabel(
+  phase: MatchPhase,
+  preparationActive?: boolean,
+): string {
+  if (phase === MatchPhase.COUNTDOWN && preparationActive === true) {
+    return PREPARATION_HUD_LABEL;
+  }
+  return PHASE_LABELS[phase] ?? "…";
+}
+
 /**
  * Map an authoritative {@link RoundEndReason} into a human-readable,
  * local-perspective label.
  *
  * The same reason reads differently depending on whether the local player
- * won the round (e.g. `anti_stall_timeout` is "OPPONENT STALLED" when the
- * local player is the winner and "YOU STALLED" when they are the loser).
- * When `localWon` is `null` (perspective unknown), a neutral label is
- * returned. Returns `null` for a missing / unrecognised reason so callers
- * can suppress the tag.
+ * won the round (`disconnect` is "OPPONENT DISCONNECTED" for the winner and
+ * "YOU DISCONNECTED" for the loser). When `localWon` is `null` (perspective
+ * unknown), a neutral label is returned.
+ *
+ * Rounds are untimed, so the retired timed / anti-stall win conditions are no
+ * longer presented: any reason other than elimination or the explicit
+ * leaving/forfeit disconnect yields `null`, which suppresses the tag rather
+ * than showing a stale timed-rule explanation.
  *
  * This helper is shared by the other presentation-only match components
  * (`RoundEndBanner`, `MatchEndScreen`) so the reason vocabulary has a single
@@ -114,11 +141,6 @@ export function roundEndReasonLabel(
     case "elimination":
       if (localWon === null) return "ELIMINATION";
       return localWon ? "OPPONENT ELIMINATED" : "YOU WERE ELIMINATED";
-    case "time_expired":
-      return "TIME UP";
-    case "anti_stall_timeout":
-      if (localWon === null) return "STALL TIMEOUT";
-      return localWon ? "OPPONENT STALLED" : "YOU STALLED";
     case "disconnect":
       if (localWon === null) return "DISCONNECT";
       return localWon ? "OPPONENT DISCONNECTED" : "YOU DISCONNECTED";
@@ -128,22 +150,12 @@ export function roundEndReasonLabel(
 }
 
 /**
- * Format a millisecond duration into a compact `m:ss` string for the round
- * timer (e.g. `90000` → `1:30`, `30000` → `0:30`).
- */
-function formatRoundTimer(ms: number): string {
-  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
-}
-
-/**
  * A presentation-only match HUD overlay.
  *
  * Renders a fixed-position overlay at the top-center of the viewport showing
- * the round score, current phase, a round timer, and contextual banners for
- * round results and match victory/defeat.
+ * the round score, current phase and contextual banners for round results and
+ * match victory/defeat — and never a round clock, because a fight ends on
+ * elimination, not on time.
  *
  * Example usage:
  * ```tsx
@@ -154,8 +166,7 @@ function formatRoundTimer(ms: number): string {
  *   currentRound={3}
  *   localWonLastRound={true}
  *   localWonMatch={null}
- *   roundTimerRemainingMs={45000}
- *   roundTimerTotalMs={90000}
+ *   preparationActive={false}
  * />
  * ```
  */
@@ -166,35 +177,17 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
     phase,
     currentRound,
     waitingForOpponent,
-    roundTimerRemainingMs,
-    roundTimerTotalMs,
+    preparationActive,
   } = props;
 
-  // ── Round timer ──────────────────────────────────────────────────────────
-  const showTimer =
-    typeof roundTimerRemainingMs === "number" &&
-    Number.isFinite(roundTimerRemainingMs) &&
-    roundTimerRemainingMs > 0;
-
-  let timerFraction = 0;
-  if (
-    showTimer &&
-    typeof roundTimerTotalMs === "number" &&
-    Number.isFinite(roundTimerTotalMs) &&
-    roundTimerTotalMs > 0
-  ) {
-    timerFraction = Math.min(
-      1,
-      Math.max(0, (roundTimerRemainingMs as number) / roundTimerTotalMs),
-    );
-  }
-  const timerLow =
-    showTimer && (roundTimerRemainingMs as number) <= 10_000;
+  // Preparation proves both players are present, so the two indicators are
+  // mutually exclusive even if a caller still passes its legacy waiting flag.
+  const showWaiting = waitingForOpponent === true && preparationActive !== true;
 
   return (
     <div className="match-hud">
       {/* ── Waiting-for-opponent indicator ── */}
-      {waitingForOpponent && (
+      {showWaiting && (
         <div className="match-hud__waiting" role="status">
           WAITING FOR OPPONENT…
         </div>
@@ -219,28 +212,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
         </span>
       </div>
 
-      {/* ── Round timer (progress bar + remaining time) ── */}
-      {showTimer && (
-        <div
-          className={`match-hud__timer ${
-            timerLow ? "match-hud__timer--low" : ""
-          }`}
-          role="timer"
-          aria-label={`Round time ${formatRoundTimer(
-            roundTimerRemainingMs as number,
-          )} remaining`}
-        >
-          <div className="match-hud__timer-track">
-            <div
-              className="match-hud__timer-fill"
-              style={{ width: `${Math.round(timerFraction * 100)}%` }}
-            />
-          </div>
-          <span className="match-hud__timer-value">
-            {formatRoundTimer(roundTimerRemainingMs as number)}
-          </span>
-        </div>
-      )}
+      {/* ── No round timer: an in-progress fight is untimed (elimination ends it) ── */}
 
       {/* ── Phase + round indicator ── */}
       <div className="match-hud__phase-row">
@@ -248,7 +220,7 @@ export function MatchHud(props: MatchHudProps): JSX.Element {
           Round {currentRound > 0 ? currentRound : "—"}
         </span>
         <span className="match-hud__phase match-hud__phase--active">
-          {PHASE_LABELS[phase] ?? "…"}
+          {phaseLabel(phase, preparationActive)}
         </span>
       </div>
     </div>
