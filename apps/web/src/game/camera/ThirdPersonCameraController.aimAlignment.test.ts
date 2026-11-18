@@ -8,13 +8,11 @@
  * Contracts pinned here:
  *  - `getAimDirection` produces `{x: sin(yaw)*cos(pitch), y: sin(pitch),
  *    z: -cos(yaw)*cos(pitch)}` for arbitrary yaw/pitch values;
- *  - the transient recoil pitch nudge (`setPitchOffset`) does NOT affect
- *    `getAimDirection` (the reticle represents the authoritative shot,
- *    not the visually-nudged camera);
+ *  - the transient along-line recoil kickback (`setRecoilKickback`) does NOT
+ *    affect `getAimDirection` or the rendered camera forward (recoil moves
+ *    the camera along the shot line; it never rotates the view off it);
  *  - the transient vertical movement offset (`setTransientVerticalOffset`)
  *    does NOT affect `getAimDirection`;
- *  - the shoulder offset does NOT affect `getAimDirection` (it shifts the
- *    orbit pivot but the aim direction is always the pure yaw/pitch);
  *  - `getAimDirection` is a unit vector (normalized) for all valid yaw/pitch.
  */
 import { describe, expect, it } from "vitest";
@@ -81,7 +79,7 @@ describe("ThirdPersonCameraController aim alignment (reticle ↔ server)", () =>
     }
   });
 
-  it("getAimDirection is unaffected by the recoil pitch nudge", () => {
+  it("getAimDirection and the rendered camera forward are unaffected by the recoil kickback", () => {
     const { engine, controller } = build();
     try {
       const yaw = 0.5;
@@ -92,28 +90,34 @@ describe("ThirdPersonCameraController aim alignment (reticle ↔ server)", () =>
       );
 
       // Baseline (no recoil).
-      controller.setPitchOffset(0);
+      controller.setRecoilKickback(0);
       controller.update(FEET);
-      const baseline = controller.getAimDirection();
       const expected = serverAimDirection(yaw, pitch);
+      const baseline = controller.getAimDirection();
       expect(baseline.x).toBeCloseTo(expected.x, 8);
       expect(baseline.y).toBeCloseTo(expected.y, 8);
       expect(baseline.z).toBeCloseTo(expected.z, 8);
 
-      // With recoil active: the camera forward changes, but getAimDirection
-      // must remain the pure yaw/pitch direction.
-      controller.setPitchOffset(0.08);
+      // With recoil active: the camera slides BACK along the shot line, so
+      // both getAimDirection AND the rendered camera forward stay exactly on
+      // the server ray — the centred crosshair never lies during recoil.
+      controller.setRecoilKickback(0.16);
       controller.update(FEET);
       const withRecoil = controller.getAimDirection();
       expect(withRecoil.x).toBeCloseTo(expected.x, 10);
       expect(withRecoil.y).toBeCloseTo(expected.y, 10);
       expect(withRecoil.z).toBeCloseTo(expected.z, 10);
-
-      // The camera forward IS different (visual nudge) — this confirms the
-      // reticle (getAimDirection) and the camera forward diverge during
-      // recoil, and the reticle stays aligned with the server.
       const camForward = controller.getCamera().getForwardRay().direction;
-      expect(camForward.y).not.toBeCloseTo(expected.y, 5);
+      expect(camForward.x).toBeCloseTo(expected.x, 6);
+      expect(camForward.y).toBeCloseTo(expected.y, 6);
+      expect(camForward.z).toBeCloseTo(expected.z, 6);
+      // The kickback did move the camera — straight back along the line.
+      const camPos = controller.getCamera().position;
+      const eye = FEET.add(new Vector3(0, controller.eyeHeight(), 0));
+      const back = camPos.subtract(eye).normalize();
+      expect(back.x).toBeCloseTo(-expected.x, 6);
+      expect(back.y).toBeCloseTo(-expected.y, 6);
+      expect(back.z).toBeCloseTo(-expected.z, 6);
     } finally {
       controller.dispose();
       engine.dispose();

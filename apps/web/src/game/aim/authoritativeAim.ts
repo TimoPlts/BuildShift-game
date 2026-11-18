@@ -5,20 +5,19 @@
  * shooter's eye origin — the server *feet* position raised by the collider half
  * total height (crouch-aware) — along `ad(yaw, pitch)`, against remote players
  * (capsule-centre targets with the standing/crouch target radii) and replicated
- * structures, taking the nearest intersection within the weapon range. The client
- * camera does NOT sit at that origin (it orbits a shoulder-offset pivot several
- * metres behind the player), so the visible camera-forward crosshair and the
- * authoritative ray have different origins: parallel rays with distance-dependent
- * parallax.
+ * structures, taking the nearest intersection within the weapon range. The
+ * client camera SHARES that ray: the line-sharing third-person camera sits
+ * behind the eye origin and looks along the same `ad(yaw, pitch)` direction,
+ * so the CSS-centred crosshair IS the shot ray at every range, and the
+ * endpoints resolved here are exactly what the centre sight marks.
  *
  * This module answers "where does the authoritative shot actually go?" by reusing
  * the **exact shared simulation/config functions the server uses**
  * ({@link hitscan}, {@link rayStructureIntersection}, {@link structureCuboids}) on
  * the client-side predicted/replicated state. It is a *display resolver*: it
  * computes no damage, never gates fire, and changes no authority — the server
- * remains the sole judge of hits. `GameRuntime` feeds the result to the projected
- * reticle and to the local tracer so both agree with the shot ray instead of with
- * a divergent parallel ray.
+ * remains the sole judge of hits. `GameRuntime` feeds the result to the local
+ * converging tracer so the streak ends at the true hit point.
  */
 import {
   hitscan,

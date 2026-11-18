@@ -43,6 +43,7 @@ import {
   PLAYER_PHYSICS,
 } from "@buildshift/game-config";
 import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
+import { AIM_EYE_HEIGHT_STANDING } from "../aim/authoritativeAim";
 import { ARENA_PALETTE } from "./arena";
 
 /** Stable id of the ground collider from which we derive the arena boundary. */
@@ -76,19 +77,20 @@ export function jumpApexHeight(): number {
  * Conservative vertical clearance (metres) needed above the top legal build
  * so the third-person camera stays below the ceiling.
  *
- * Derived from the REAL camera formula in `ThirdPersonCameraController`:
- * cameraY = pivotY − distance·sin(effectivePitch), pivotY = feet +
- * `targetHeight` (minus crouch dip). The orbit can never raise the camera
- * more than the FULL orbit `distance` above the pivot (actual max at the
- * −60° pitch clamp is distance·sin 60° ≈ 6.06 m; using the full 7 m also
- * absorbs the transient recoil pitch nudge). Adding the shared jump apex
- * and a small safety margin bounds the worst case: a player standing on the
- * highest legal build, jumping, looking straight down.
+ * Derived from the REAL camera formula in `ThirdPersonCameraController`
+ * (centred-aim line-sharing camera): cameraY = eyeY − t·sin(pitch) with
+ * eyeY = feet + standing eye height and t ≤ `distance` along the line
+ * (recoil kickback and the floor guard only ever shrink the upward extent).
+ * Looking down at the −60° clamp raises the camera by at most
+ * distance·sin 60° ≈ 4.5 m above the eye; using the FULL `distance` also
+ * absorbs the along-line bob/kickback projection. Adding the shared jump
+ * apex and a small safety margin bounds the worst case: a player standing on
+ * the highest legal build, jumping, looking straight down.
  */
 export function ceilingCameraClearance(): number {
   return (
     THIRD_PERSON_CAMERA.distance +
-    THIRD_PERSON_CAMERA.targetHeight +
+    AIM_EYE_HEIGHT_STANDING +
     jumpApexHeight() +
     CEILING_SAFETY
   );

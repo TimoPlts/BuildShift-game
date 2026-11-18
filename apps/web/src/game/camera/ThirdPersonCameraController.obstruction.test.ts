@@ -1,17 +1,11 @@
 /**
- * Behavioral NullEngine tests for the camera ground-obstruction behavior:
- * when the player looks up steeply, the orbit circle would push the camera
- * below the arena floor (ground top is y = 0). Instead of letting the
- * camera clip under the floor, it dollies in along the aim ray.
+ * Ground obstruction (floor guard) tests for the line-sharing camera.
  *
- * Contracts pinned here:
- *  - the camera never renders below `minimumCameraHeight`;
- *  - the dolly is a pure distance change along the aim ray: the look target
- *    and the aim direction (camera forward) are untouched, so aiming stays
- *    a function of the user's yaw/pitch only (server aim authority boundary);
- *  - level/downward looks are unaffected (full tracking distance);
- *  - the dolly can never bring the camera closer than
- *    `minimumCameraDistance` to the look target.
+ * Looking UP, the shot line trails below the camera floor behind the eye.
+ * The guard dollies IN ALONG THE LINE so the camera height stays at or above
+ * `minimumCameraHeight` — it never moves the camera off the line (the CSS
+ * screen-centre ray stays the shot ray) and never leaves the camera below
+ * the floor, even at max pitch from the low crouched eye.
  */
 import { describe, expect, it } from "vitest";
 import { NullEngine } from "@babylonjs/core/Engines/nullEngine";
@@ -20,7 +14,7 @@ import { Scene } from "@babylonjs/core";
 import { ThirdPersonCameraController } from "./ThirdPersonCameraController";
 import { THIRD_PERSON_CAMERA } from "./cameraConfig";
 
-const FEET = new Vector3(0, 0, 6);
+const FEET = new Vector3(1, 0, 2);
 
 function build() {
   const engine = new NullEngine();
@@ -29,70 +23,33 @@ function build() {
   return { engine, scene, controller };
 }
 
-/** The orbit pivot for the given feet position (shoulder offset applied). */
-function pivot(feet: Vector3, yaw: number): Vector3 {
-  const { targetHeight, shoulderOffset } = THIRD_PERSON_CAMERA;
-  return new Vector3(
-    feet.x - Math.cos(yaw) * shoulderOffset,
-    feet.y + targetHeight,
-    feet.z - Math.sin(yaw) * shoulderOffset,
+/** Apply an absolute yaw/pitch through the only orientation input there is. */
+function aim(controller: ThirdPersonCameraController, yaw: number, pitch: number) {
+  controller.applyLook(
+    -yaw / THIRD_PERSON_CAMERA.mouseSensitivity,
+    -pitch / THIRD_PERSON_CAMERA.mouseSensitivity,
   );
 }
 
-describe("ThirdPersonCameraController ground obstruction dolly", () => {
-  it("dollies in along the aim ray instead of clipping below the floor when looking up", () => {
+/** Cross product magnitude of (camPos - eye) with dir — 0 iff on the line. */
+function offLineMagnitude(controller: ThirdPersonCameraController, feet: Vector3) {
+  const dir = controller.getAimDirection();
+  const eye = new Vector3(feet.x, feet.y + controller.eyeHeight(), feet.z);
+  const toCam = controller.getCamera().position.subtract(eye);
+  return Vector3.Cross(toCam, dir).length();
+}
+
+describe("ThirdPersonCameraController floor guard (on-line dolly)", () => {
+  it("level and downward looks sit at the full tracking distance behind the eye", () => {
     const { engine, controller } = build();
     try {
-      const pitch = Math.PI / 3; // 60° up — orbit circle would sink below y = 0
-      controller.applyLook(
-        0,
-        -pitch / THIRD_PERSON_CAMERA.mouseSensitivity,
-      );
-      controller.update(FEET);
-
-      const camera = controller.getCamera();
-      const forward = camera.getForwardRay().direction;
-      const distanceToPivot = camera.position
-        .subtract(pivot(FEET, 0))
-        .length();
-
-      // The camera stays at or above the configured floor ...
-      expect(camera.position.y).toBeGreaterThanOrEqual(
-        THIRD_PERSON_CAMERA.minimumCameraHeight - 1e-9,
-      );
-      // ... by shrinking the tracking distance instead of moving the target.
-      expect(distanceToPivot).toBeLessThan(THIRD_PERSON_CAMERA.distance);
-      expect(distanceToPivot).toBeCloseTo(
-        (THIRD_PERSON_CAMERA.targetHeight - THIRD_PERSON_CAMERA.minimumCameraHeight) /
-          Math.sin(pitch),
-        5,
-      );
-      // The aim direction is untouched: still the pure yaw/pitch forward.
-      const expectedY = Math.sin(pitch);
-      expect(forward.y).toBeCloseTo(expectedY, 5);
-      expect(forward.x).toBeCloseTo(0, 5);
-      expect(forward.z).toBeCloseTo(-Math.cos(pitch), 5);
-    } finally {
-      controller.dispose();
-      engine.dispose();
-    }
-  });
-
-  it("leaves level and downward looks at the full tracking distance", () => {
-    const { engine, controller } = build();
-    try {
-      for (const pitch of [0, -0.3]) {
-        controller.applyLook(
-          0,
-          -pitch / THIRD_PERSON_CAMERA.mouseSensitivity,
-        );
+      for (const pitch of [0, -0.5, THIRD_PERSON_CAMERA.minimumPitch]) {
+        aim(controller, 0.4, pitch);
         controller.update(FEET);
-
-        const distanceToPivot = controller
-          .getCamera()
-          .position.subtract(pivot(FEET, 0))
-          .length();
-        expect(distanceToPivot).toBeCloseTo(THIRD_PERSON_CAMERA.distance, 5);
+        const pos = controller.getCamera().position;
+        const eye = new Vector3(FEET.x, FEET.y + controller.eyeHeight(), FEET.z);
+        expect(Vector3.Distance(pos, eye)).toBeCloseTo(THIRD_PERSON_CAMERA.distance, 6);
+        expect(offLineMagnitude(controller, FEET)).toBeLessThan(1e-6);
       }
     } finally {
       controller.dispose();
@@ -100,24 +57,60 @@ describe("ThirdPersonCameraController ground obstruction dolly", () => {
     }
   });
 
-  it("never dollies closer than the minimum camera distance", () => {
+  it("looking up dollies in along the line so the camera rests exactly at minimumCameraHeight", () => {
     const { engine, controller } = build();
     try {
-      // Steepest configured look (maximumPitch): the dolly is bounded by the
-      // minimum distance, so the camera can never tunnel into the player.
-      controller.applyLook(
-        0,
-        -THIRD_PERSON_CAMERA.maximumPitch / THIRD_PERSON_CAMERA.mouseSensitivity,
-      );
+      aim(controller, 0, Math.PI / 6); // +30°
       controller.update(FEET);
+      const pos = controller.getCamera().position;
+      expect(pos.y).toBeCloseTo(THIRD_PERSON_CAMERA.minimumCameraHeight, 6);
+      // Still exactly on the shot line (screen centre == shot ray).
+      expect(offLineMagnitude(controller, FEET)).toBeLessThan(1e-6);
+    } finally {
+      controller.dispose();
+      engine.dispose();
+    }
+  });
 
-      const distanceToPivot = controller
-        .getCamera()
-        .position.subtract(pivot(FEET, 0))
-        .length();
-      expect(distanceToPivot).toBeGreaterThanOrEqual(
-        THIRD_PERSON_CAMERA.minimumCameraDistance - 1e-9,
-      );
+  it("at max pitch (standing and crouched) the camera is never below the floor and never off the line", () => {
+    const { engine, controller } = build();
+    try {
+      for (const crouched of [false, true]) {
+        controller.setCrouched(crouched);
+        for (const yaw of [0, Math.PI / 2, Math.PI, -Math.PI / 4]) {
+          aim(controller, yaw, THIRD_PERSON_CAMERA.maximumPitch);
+          controller.update(FEET);
+          const pos = controller.getCamera().position;
+          expect(pos.y).toBeGreaterThanOrEqual(
+            THIRD_PERSON_CAMERA.minimumCameraHeight - 1e-6,
+          );
+          expect(offLineMagnitude(controller, FEET)).toBeLessThan(1e-6);
+          // And the dolly never passed through the eye to the far side.
+          const dir = controller.getAimDirection();
+          const eye = new Vector3(FEET.x, FEET.y + controller.eyeHeight(), FEET.z);
+          const along = pos.subtract(eye).dot(dir);
+          expect(along).toBeLessThanOrEqual(0);
+          expect(-along).toBeGreaterThanOrEqual(
+            THIRD_PERSON_CAMERA.minimumCameraDistance - 1e-6,
+          );
+        }
+      }
+    } finally {
+      controller.dispose();
+      engine.dispose();
+    }
+  });
+
+  it("the guard never rotates the camera: forward stays the raw aim direction", () => {
+    const { engine, controller } = build();
+    try {
+      aim(controller, 0.9, THIRD_PERSON_CAMERA.maximumPitch);
+      controller.update(FEET);
+      const forward = controller.getCamera().getForwardRay().direction;
+      const dir = controller.getAimDirection();
+      expect(forward.x).toBeCloseTo(dir.x, 5);
+      expect(forward.y).toBeCloseTo(dir.y, 5);
+      expect(forward.z).toBeCloseTo(dir.z, 5);
     } finally {
       controller.dispose();
       engine.dispose();

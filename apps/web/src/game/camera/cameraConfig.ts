@@ -5,37 +5,41 @@
  * simulation and must not be moved into `@buildshift/game-config` or
  * `@buildshift/simulation` (see docs/TECHNICAL_ARCHITECTURE.md §7).
  *
- * The tuning targets comfortable building/shooter play at the canonical
- * build scale (2 m cells, see `BUILD_GRID`): the camera sits far enough
- * back that a player next to a 2 m wall does not fill the screen, while the
- * over-the-shoulder offset and FOV keep the crosshair (screen centre) a
- * reliable aim reference.
+ * Centred-aim invariant: the camera sits ON the authoritative shot line
+ * (behind the server eye origin, looking along the raw yaw/pitch direction),
+ * so the CSS-centred crosshair *is* the shot ray at every range. Every value
+ * here either shrinks the along-line tracking distance or changes the FOV —
+ * none of them can move the screen-centre ray off the shot line.
  */
 export const THIRD_PERSON_CAMERA = {
   /**
-   * Distance from the orbit pivot to the camera, in metres. Tuned closer
-   * (was 7.0) so the local humanoid reads at a comfortable over-the-shoulder
-   * size instead of tiny in frame. Presentation only: the orbit distance
+   * Distance from the eye origin (the camera pivot) to the camera, in metres,
+   * measured ALONG the shot line. Presentation only: the tracking distance
    * never rotates the view or moves the aim ray, and `minimumCameraDistance`
    * still bounds how far the guards may dolly in.
    */
   distance: 5.2,
-  /** Height of the orbit pivot above the player's feet, in metres. */
-  targetHeight: 1.6,
   /**
-   * Orbit-pivot height reduction (metres) applied while the local player is
-   * crouched, so the camera lowers smoothly with the crouched body. Applied
-   * as a smoothed dip (the runtime eases it in/out) rather than a hard step.
+   * Along-line recoil kickback (metres of camera pull-back per radian of
+   * {@link CameraRecoil} output). View *rotation* recoil was removed because
+   * it would tilt the rendered view off the server shot ray while the shot
+   * still flew raw pitch — the crosshair would lie. Motion along the line
+   * cannot move the screen-centre ray off the line, so recoil is expressed
+   * as this subtle kickback instead. Larger = a more visible shot "shove".
    */
-  crouchDip: 0.45,
+  recoilKickbackMetersPerRadian: 2.0,
   /**
-   * Over-the-shoulder lateral offset, in metres. The orbit pivot is shifted
-   * this far screen-right of the player, so the player renders slightly
-   * left of screen centre while the crosshair still aims along the camera's
-   * forward vector. Aim accuracy is unaffected (the aim direction is the
-   * camera forward, independent of this offset).
+   * Local-view seam (the Fortnite-style shoulder read): the local VISUAL
+   * body root is shifted this far in root-local +X, which maps to world
+   * screen-left at every yaw (root-local +X = −camera-right under the shared
+   * yaw convention). Only the avatar the local player sees moves — logical
+   * root, physics, server state and spawns are untouched. Applied through the
+   * agreed facade API `presentation.setLocalViewOffset(x, z)` (owned by the
+   * character worker).
    */
-  shoulderOffset: 0.8,
+  localViewOffsetX: 0.8,
+  /** Root-local Z component of the local view offset (0 = no fore/aft shift). */
+  localViewOffsetZ: 0,
   /** Base camera field of view in radians (≈ 80° — comfortable for 2 m build cells). */
   fieldOfView: 1.4,
   /**
@@ -52,18 +56,26 @@ export const THIRD_PERSON_CAMERA = {
   maximumPitch: Math.PI / 2.6, // ≈ +69°
   /**
    * Camera floor (world-Y metres, ground top is y = 0). When the player
-   * looks up steeply, the orbit circle would push the camera below this
-   * height; instead the camera dollies in along the aim ray (shrinking the
-   * tracking distance) so it never clips under the floor. The look target
-   * and the aim direction are untouched by this guard.
+   * looks up steeply, the shot line trails below this height behind the eye;
+   * instead of leaving the line, the camera dollies IN along it (shrinking
+   * the tracking distance) until `camY >= minimumCameraHeight`. The centred
+   * crosshair stays exactly on the shot line throughout.
    */
   minimumCameraHeight: 0.2,
-  /** Closest the dolly-in may bring the camera to the orbit pivot, in metres. */
-  minimumCameraDistance: 1.2,
+  /**
+   * Closest the dolly-in may bring the camera to the eye origin, in metres.
+   * Deliberately small (was 1.2): with the pivot at the eye origin (0.9 m
+   * standing, crouch half-total crouched), a large floor would strand the
+   * camera under `minimumCameraHeight` when looking up steeply; converging
+   * toward the eye (near-first-person) keeps the floor guard satisfiable
+   * ON the line at every pitch and crouch state.
+   */
+  minimumCameraDistance: 0.2,
   /**
    * Gap (metres) maintained between the camera and the nearest build
-   * structure surface when the orbit path is obstructed. Prevents the
-   * camera from rendering exactly on the structure face (Z-fighting).
+   * structure surface when the shot line behind the eye is obstructed.
+   * Prevents the camera from rendering exactly on the structure face
+   * (Z-fighting). Only shrinks the along-line distance — aim is untouched.
    */
   buildObstructionGap: 0.1,
 } as const;

@@ -92,9 +92,9 @@ describe("nothing else writes the camera orientation", () => {
     const calls = new Set([...runtime.matchAll(/this\.cameraController\.([a-zA-Z]+)\(/g)].map((m) => m[1]));
     // Authoritative state / reconciliation / mode transitions never reach the
     // camera's orientation: the only orientation input is applyLook. The
-    // getPitchOffset READ (projected-reticle math) observes the rendered pose,
-    // it never writes orientation.
-    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getPitchOffset", "getYaw", "setBuildMode", "setCrouchDip", "setObstacles", "setPitchOffset", "setTransientVerticalOffset", "update"]);
+    // runtime's per-frame nudges (recoil kickback, vertical bob) are along-line
+    // only — nothing the runtime writes can rotate the view off the shot ray.
+    expect([...calls].sort()).toEqual(["applyLook", "getAimDirection", "getCamera", "getPitch", "getYaw", "setBuildMode", "setCrouched", "setObstacles", "setRecoilKickback", "setTransientVerticalOffset", "update"]);
     expect(runtime).toContain("const ld=this.inputManager.consumeLookDelta();this.cameraController.applyLook(ld.x,ld.y);");
   });
 });

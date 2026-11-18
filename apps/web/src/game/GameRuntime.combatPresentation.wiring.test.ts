@@ -69,31 +69,23 @@ describe("GameRuntime combat presentation wiring", () => {
     expect(runtime).not.toContain("this.combatFeedback.triggerMuzzleFlash");
   });
 
-  it("drives the projected authoritative reticle from the resolved shot point each frame", () => {
-    // Per-frame: after the aim direction refresh in the render loop, the
-    // runtime resolves + projects the authoritative shot point and writes the
-    // crosshair element (no React state churn).
-    expect(runtime).toContain(
-      "this.cameraController.getAimDirection(this.currentAimDirection);this.updateReticlePresentation();",
-    );
-    expect(runtime).toContain(
-      "private updateReticlePresentation():void{",
-    );
-    expect(runtime).toContain("projectPointToScreenOffset(");
+  it("keeps the crosshair a static CSS-centre element (centred-aim invariant)", () => {
+    // The camera shares the authoritative shot line, so the crosshair must
+    // NEVER be moved by the runtime: no projected-reticle plumbing may exist
+    // on either side of the seam.
+    expect(runtime).not.toContain("updateReticlePresentation");
+    expect(runtime).not.toContain("setReticleElement");
+    expect(runtime).not.toContain("projectPointToScreenOffset");
+    expect(runtime).not.toMatch(/reticleElement/);
+    expect(canvas).not.toContain("setReticleElement");
+    expect(canvas).toContain('<div className="crosshair" aria-hidden="true" />');
+    // The server-equivalent resolver stays — for the converging tracer only.
     expect(runtime).toContain("resolveAuthoritativeAimPoint(");
-    // The reticle is suppressed (never clamped) when projection is invalid.
-    const urpStart = runtime.indexOf("private updateReticlePresentation():void{");
-    const urp = runtime.slice(urpStart, runtime.indexOf("private updateBuildPresentation(", urpStart));
-    expect(urp).toContain('el.style.visibility="hidden"');
-    // Build/edit keep the centred reticle: the projection only runs in weapon mode.
-    expect(urp).toContain('this.interactionMode.mode==="weapon"');
-    // And the UI seam is a plain element handoff.
-    expect(canvas).toContain("setReticleElement");
   });
 
-  it("applies the modular recoil to the camera each frame before the camera update", () => {
+  it("applies the modular recoil as an along-line kickback to the camera each frame before the camera update", () => {
     const setIdx = runtime.indexOf(
-      "this.cameraController.setPitchOffset(this.cameraRecoil.update(dt))",
+      "this.cameraController.setRecoilKickback(this.cameraRecoil.update(dt)*THIRD_PERSON_CAMERA.recoilKickbackMetersPerRadian)",
     );
     const updateIdx = runtime.indexOf(
       "this.cameraController.update(this.playerController.getPresentationFeetInto(this._feetPos,this.isConnected))",

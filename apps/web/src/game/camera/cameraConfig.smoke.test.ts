@@ -14,8 +14,9 @@ describe("THIRD_PERSON_CAMERA (config smoke test)", () => {
 
     for (const value of [
       THIRD_PERSON_CAMERA.distance,
-      THIRD_PERSON_CAMERA.targetHeight,
-      THIRD_PERSON_CAMERA.shoulderOffset,
+      THIRD_PERSON_CAMERA.recoilKickbackMetersPerRadian,
+      THIRD_PERSON_CAMERA.localViewOffsetX,
+      THIRD_PERSON_CAMERA.localViewOffsetZ,
       THIRD_PERSON_CAMERA.fieldOfView,
       THIRD_PERSON_CAMERA.buildModeFieldOfViewDelta,
       THIRD_PERSON_CAMERA.mouseSensitivity,
@@ -41,17 +42,24 @@ describe("THIRD_PERSON_CAMERA (config smoke test)", () => {
     expect(THIRD_PERSON_CAMERA.fieldOfView).toBeGreaterThan(0);
     expect(THIRD_PERSON_CAMERA.fieldOfView).toBeLessThan(Math.PI);
     expect(THIRD_PERSON_CAMERA.buildModeFieldOfViewDelta).toBeGreaterThanOrEqual(0);
-    expect(THIRD_PERSON_CAMERA.shoulderOffset).toBeGreaterThanOrEqual(0);
-    // The ground dolly needs headroom: the floor must be below the look
-    // point, and the closest dolly distance must be inside the tracking
-    // distance so the camera can never tunnel through the player.
-    expect(THIRD_PERSON_CAMERA.minimumCameraHeight).toBeGreaterThan(0);
-    expect(THIRD_PERSON_CAMERA.minimumCameraHeight).toBeLessThan(
-      THIRD_PERSON_CAMERA.targetHeight,
-    );
+    // The closest along-line dolly must stay inside the tracking distance so
+    // the floor/structure guards always have room to converge the camera
+    // toward the eye WITHOUT leaving the shot line.
     expect(THIRD_PERSON_CAMERA.minimumCameraDistance).toBeGreaterThan(0);
     expect(THIRD_PERSON_CAMERA.minimumCameraDistance).toBeLessThan(
       THIRD_PERSON_CAMERA.distance,
     );
+    expect(THIRD_PERSON_CAMERA.minimumCameraHeight).toBeGreaterThanOrEqual(0);
+  });
+
+  it("keeps the floor guard satisfiable at max pitch for both eye heights", () => {
+    // The floor guard dollies IN along the line; it is satisfiable iff the
+    // allowed distance stays at or above minimumCameraDistance at the
+    // steepest upward look for the LOWEST eye pivot (crouched eye).
+    const eyeCrouched = 0.55; // PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT scale
+    const maxT =
+      (eyeCrouched - THIRD_PERSON_CAMERA.minimumCameraHeight) /
+      Math.sin(THIRD_PERSON_CAMERA.maximumPitch);
+    expect(maxT).toBeGreaterThanOrEqual(THIRD_PERSON_CAMERA.minimumCameraDistance);
   });
 });
