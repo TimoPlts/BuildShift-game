@@ -8,12 +8,14 @@
  *
  *  - Four pale-blue perimeter wall panels (`arena-shell-n/s/e/w`) forming
  *    the indestructible arena shell, sized from the ground slab footprint
- *    and tall enough to clear every build layer with margin.
+ *    and rising exactly to the ceiling underside so the room encloses.
  *  - Warm brass cap trim along the top of each wall (`arena-shell-cap-*`).
  *  - A single enclosed ceiling slab (`arena-ceiling`) spanning the room at
- *    the derived ceiling height — comfortably ABOVE the maximum legal build
- *    height plus a camera margin, so a third-person camera cannot reach it
- *    under normal movement and building heights are unchanged.
+ *    the derived ceiling height — ABOVE the maximum legal build height by a
+ *    clearance derived from the real third-person orbit camera plus shared
+ *    jump physics, so the camera stays under the ceiling even when a jumping
+ *    player on the highest legal build looks straight down. Building
+ *    heights are unchanged.
  *
  * What was REMOVED (user requirement — the floor must stay clean):
  *  - the raised play-field plate,
@@ -34,7 +36,13 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Scene } from "@babylonjs/core/scene";
-import { ARENA_COLLIDERS, BUILD_BOUNDS, BUILD_GRID } from "@buildshift/game-config";
+import {
+  ARENA_COLLIDERS,
+  BUILD_BOUNDS,
+  BUILD_GRID,
+  PLAYER_PHYSICS,
+} from "@buildshift/game-config";
+import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
 import { ARENA_PALETTE } from "./arena";
 
 /** Stable id of the ground collider from which we derive the arena boundary. */
@@ -43,21 +51,48 @@ const GROUND_ID = "foundation-ground";
 /** Thickness (metres) of each shell wall — solid, not a thin sheet. */
 const SHELL_THICKNESS = 0.3;
 
-/**
- * Vertical clearance (metres) above the top build layer that the walls
- * provide — a full build layer of clearance plus a visible margin.
- */
-const SHELL_CLEARANCE = 1.0;
-
 /** Height (metres) of the brass cap strip sitting on top of each wall. */
 const SHELL_CAP_HEIGHT = 0.1;
 
 /**
- * Extra clearance (metres) between the top build layer and the ceiling —
- * also the third-person camera margin, so the camera cannot intersect the
- * ceiling while the player stands on the highest legal build.
+ * Extra safety (metres) added on top of the derived third-person camera
+ * clearance, covering transient presentation nudges (recoil pitch, camera
+ * motion dips) beyond the conservative orbit bound.
  */
-const CEILING_CAMERA_MARGIN = 4.0;
+const CEILING_SAFETY = 1.0;
+
+/**
+ * Shared jump apex (metres) above the feet: v² / (2|g|) from the shared
+ * `PLAYER_PHYSICS` (jumpSpeed 9, gravity −25 → 1.62 m).
+ */
+export function jumpApexHeight(): number {
+  return (
+    (PLAYER_PHYSICS.jumpSpeed * PLAYER_PHYSICS.jumpSpeed) /
+    (2 * Math.abs(PLAYER_PHYSICS.gravity))
+  );
+}
+
+/**
+ * Conservative vertical clearance (metres) needed above the top legal build
+ * so the third-person camera stays below the ceiling.
+ *
+ * Derived from the REAL camera formula in `ThirdPersonCameraController`:
+ * cameraY = pivotY − distance·sin(effectivePitch), pivotY = feet +
+ * `targetHeight` (minus crouch dip). The orbit can never raise the camera
+ * more than the FULL orbit `distance` above the pivot (actual max at the
+ * −60° pitch clamp is distance·sin 60° ≈ 6.06 m; using the full 7 m also
+ * absorbs the transient recoil pitch nudge). Adding the shared jump apex
+ * and a small safety margin bounds the worst case: a player standing on the
+ * highest legal build, jumping, looking straight down.
+ */
+export function ceilingCameraClearance(): number {
+  return (
+    THIRD_PERSON_CAMERA.distance +
+    THIRD_PERSON_CAMERA.targetHeight +
+    jumpApexHeight() +
+    CEILING_SAFETY
+  );
+}
 
 /** Thickness (metres) of the ceiling slab. */
 const CEILING_THICKNESS = 0.2;
@@ -72,21 +107,24 @@ export function maxBuildHeight(): number {
 }
 
 /**
- * The interior height of the perimeter shell walls. Exported so the
- * environment layer frames the walls at exactly the same height.
+ * The underside height of the enclosed ceiling — the maximum legal build
+ * height plus the derived third-person camera clearance, so even a jumping
+ * player on the highest legal build looking straight down keeps the camera
+ * below the ceiling. Building is NOT capped at this height; the ceiling
+ * simply encloses the room far above anything a player can legally place.
  */
-export function shellWallHeight(): number {
-  return maxBuildHeight() + SHELL_CLEARANCE;
+export function ceilingHeight(): number {
+  return maxBuildHeight() + ceilingCameraClearance();
 }
 
 /**
- * The underside height of the enclosed ceiling — the maximum legal build
- * height plus the camera margin. Well above every build layer; building is
- * NOT capped at this height, the ceiling simply encloses the room far above
- * anything a player can legally place.
+ * The interior height of the perimeter shell walls — equal to the ceiling
+ * underside so the room actually encloses from the inside (no horizontal
+ * gap between wall tops and ceiling). Exported so the environment layer
+ * frames the walls at exactly the same height.
  */
-export function ceilingHeight(): number {
-  return maxBuildHeight() + CEILING_CAMERA_MARGIN;
+export function shellWallHeight(): number {
+  return ceilingHeight();
 }
 
 /**

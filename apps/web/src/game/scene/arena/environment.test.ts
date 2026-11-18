@@ -220,7 +220,14 @@ describe("setupArenaEnvironment — geometry invariants", () => {
       const size = bb.maximum.subtract(bb.minimum);
       const minAbsX = Math.max(0, Math.abs(mesh.position.x) - size.x / 2);
       const minAbsZ = Math.max(0, Math.abs(mesh.position.z) - size.z / 2);
-      if (lowestY(mesh) < shellWallHeight()) {
+      // "Lower volumes" = everything up to the top legal build surface.
+      // (Wall tops now meet the ceiling underside, so the wall height is no
+      // longer the meaningful threshold — ceiling-hugging pieces like the
+      // beams sit just below it but must still pass.)
+      const buildTop =
+        (BUILD_BOUNDS.maxLayer - BUILD_BOUNDS.minLayer + 1) *
+        BUILD_GRID.layerHeight;
+      if (lowestY(mesh) < buildTop) {
         // Anything that reaches down into the room's lower volumes must be
         // fully outside the buildable columns (i.e. at the perimeter).
         const insideColumns = minAbsX < buildHalf && minAbsZ < buildHalf;

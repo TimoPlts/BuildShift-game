@@ -16,10 +16,17 @@ import {
   ARENA_COLLIDERS,
   BUILD_BOUNDS,
   BUILD_GRID,
+  PLAYER_PHYSICS,
 } from "@buildshift/game-config";
+import { THIRD_PERSON_CAMERA } from "../camera/cameraConfig";
 import { createFoundationScene } from "./createFoundationScene";
 import { ARENA_PALETTE } from "./arena";
-import { ceilingHeight, maxBuildHeight } from "./arenaDecorations";
+import {
+  ceilingHeight,
+  jumpApexHeight,
+  maxBuildHeight,
+  shellWallHeight,
+} from "./arenaDecorations";
 
 const EPSILON = 0.01;
 
@@ -110,14 +117,85 @@ describe("setupArenaDecorations — clean room shell", () => {
     expect(size.x).toBeCloseTo(HX * 2, 2);
     expect(size.z).toBeCloseTo(HZ * 2, 2);
 
-    // The underside clears the maximum legal build height with a camera
-    // margin — building is NOT capped, the room is just enclosed.
+    // The underside clears the maximum legal build height with the derived
+    // third-person camera clearance — building is NOT capped, the room is
+    // just enclosed.
     const underside = ceiling.position.y - size.y / 2;
     expect(underside).toBeGreaterThan(MAX_BUILD_HEIGHT + 1);
-    expect(ceilingHeight()).toBe(maxBuildHeight() + 4.0);
+    expect(underside).toBeCloseTo(ceilingHeight(), 3);
+    // The clearance is derived from the real camera + shared jump physics,
+    // not a flat guess: orbit distance + pivot height + jump apex + safety.
+    expect(ceilingHeight() - maxBuildHeight()).toBeGreaterThanOrEqual(
+      THIRD_PERSON_CAMERA.distance +
+        THIRD_PERSON_CAMERA.targetHeight +
+        jumpApexHeight() +
+        0.5,
+    );
 
     scene.dispose();
     engine.dispose();
+  });
+
+  it("room encloses from inside: shell wall tops meet the ceiling underside", () => {
+    const { engine, scene } = buildScene();
+
+    const ceiling = scene.getMeshByName("arena-ceiling")!;
+    const ceilingSize = ceiling
+      .getBoundingInfo()
+      .boundingBox.maximum.subtract(ceiling.getBoundingInfo().boundingBox.minimum);
+    const ceilingUnderside = ceiling.position.y - ceilingSize.y / 2;
+
+    // Walls must rise exactly to the ceiling underside — no horizontal gap.
+    expect(shellWallHeight()).toBeCloseTo(ceilingUnderside, 3);
+    for (const name of [
+      "arena-shell-n",
+      "arena-shell-s",
+      "arena-shell-e",
+      "arena-shell-w",
+    ]) {
+      const wall = scene.getMeshByName(name)!;
+      const size = wall
+        .getBoundingInfo()
+        .boundingBox.maximum.subtract(
+          wall.getBoundingInfo().boundingBox.minimum,
+        );
+      const wallTop = wall.position.y + size.y / 2;
+      expect(wallTop, `${name} top`).toBeCloseTo(ceilingUnderside, 3);
+    }
+
+    scene.dispose();
+    engine.dispose();
+  });
+
+  it("worst-case third-person camera on the highest legal build stays under the ceiling", () => {
+    // Derivation mirrors ThirdPersonCameraController.update():
+    // cameraY = feet + targetHeight - crouchDip + transient + verticalOffset
+    //           - distance * sin(effectivePitch).
+    // Conservative bound: the orbit can never raise the camera more than the
+    // FULL orbit distance above the pivot (max at the -60° pitch clamp is
+    // distance * sin 60° ≈ 6.06 m; the full 7 m absorbs the transient recoil
+    // pitch nudge too). Worst case: standing (not crouched) on the top legal
+    // build layer, at the shared jump apex, looking straight down.
+    const jumpApex =
+      (PLAYER_PHYSICS.jumpSpeed * PLAYER_PHYSICS.jumpSpeed) /
+      (2 * Math.abs(PLAYER_PHYSICS.gravity));
+    // The apex formula must match the shared physics the sim integrates.
+    expect(jumpApexHeight()).toBeCloseTo(jumpApex, 6);
+
+    const worstCaseCameraY =
+      MAX_BUILD_HEIGHT +
+      THIRD_PERSON_CAMERA.targetHeight +
+      THIRD_PERSON_CAMERA.distance +
+      jumpApex;
+
+    expect(ceilingHeight()).toBeGreaterThan(worstCaseCameraY);
+    // And there is a real safety margin left over, not a hair's width.
+    expect(ceilingHeight() - worstCaseCameraY).toBeGreaterThanOrEqual(0.5);
+
+    // The pitch clamp confirms the orbit rise is bounded by `distance`.
+    expect(Math.abs(Math.sin(THIRD_PERSON_CAMERA.minimumPitch))).toBeLessThan(
+      1,
+    );
   });
 
   it("floor is clean — no plate, no grid lines, no spawn pads or bars", () => {
