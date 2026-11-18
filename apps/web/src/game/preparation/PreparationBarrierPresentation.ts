@@ -4,8 +4,9 @@
  *
  * While preparation is active the local player sees translucent blue panels
  * sealing their assigned prep strip: one on the strip's INNER edge (facing
- * the arena centre) and one on the strip's OUTER boundary (the playable
- * arena edge behind the row). Both sides are told by the SAME authoritative
+ * the arena centre) and one on the strip's OUTER edge (the far face of the
+ * single build row, where the movement clamp actually stops the player).
+ * Both sides are told by the SAME authoritative
  * signal (`preparationActive` going false in `MatchPhase.COUNTDOWN` →
  * `IN_PROGRESS`) that the barriers vanish together when the arena opens —
  * there is no client-side timer here.
@@ -17,11 +18,12 @@
  * confinement is enforced by prediction + the server clamp, and after the
  * arena opens nothing here can block the camera or the player.
  *
- * Geometry is DERIVED, never hardcoded: the panel planes/extent come from
- * the shared zone + the authoritative playable arena bounds, and the panel
- * height from the actual build-volume ceiling
- * (`BUILD_BOUNDS.maxLayer × BUILD_GRID.layerHeight`, the top of the highest
- * buildable layer) down to `VERTICAL_MOVEMENT.groundY`.
+ * Geometry is DERIVED, never hardcoded: both panel planes are the shared
+ * zone's own X faces (the exact span the preparation clamp uses), the panel
+ * extent is the zone's Z range, and the panel height reaches the actual room
+ * ceiling underside (`ceilingHeight()` from the arena decorations, which
+ * already includes legal build/jump/camera clearance) down to
+ * `VERTICAL_MOVEMENT.groundY`.
  *
  * Lifecycle (no mesh/material growth):
  *  - `open(side)`  — creates at most two panel meshes + one material for the
@@ -34,11 +36,17 @@
  * team-treatment tint — no floor grid, no props, no external assets.
  */
 import type { Scene } from "@babylonjs/core";
+// Side-effect import REQUIRED before `enableEdgesRendering()` — registers the
+// EdgeRenderer with the smart-store. Narrow submodule only (never the full
+// `@babylonjs/core` barrel); without it, open() throws in production builds
+// where nothing else has pulled the renderer in (browser PAGEERROR).
+import "@babylonjs/core/Rendering/edgesRenderer";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
-import { BUILD_BOUNDS, BUILD_GRID, PLAYABLE_ARENA_BOUNDS, VERTICAL_MOVEMENT } from "@buildshift/game-config";
+import { VERTICAL_MOVEMENT } from "@buildshift/game-config";
+import { ceilingHeight } from "../scene/arenaDecorations";
 import { getPreparationZone, type PreparationSide } from "./preparationContract";
 
 /** Stable name prefix for owned meshes/materials (tests + leak checks). */
@@ -55,20 +63,24 @@ const PANEL_ALPHA = 0.32;
 const PANEL_EDGE = new Color4(0.45, 0.72, 1.0, 0.9);
 
 /**
- * The top of the actual arena build volume (the highest buildable layer's
- * top face) — the height the temporary barriers reach. Derived from the
- * shared build geometry so it matches whatever ceiling the arena really has.
+ * The top the temporary barriers reach: the actual enclosed room ceiling
+ * underside (legal build height + jump/camera clearance), so a panel spans
+ * the same height the room walls do and seals the strip fully.
  */
 export function preparationBarrierTopY(): number {
-  return (BUILD_BOUNDS.maxLayer + 1) * BUILD_GRID.layerHeight;
+  return ceilingHeight();
 }
 
-/** Which panel planes one side needs. */
+/**
+ * Which panel planes one side needs: BOTH are the shared zone's own X faces
+ * — the outer face is where the preparation clamp actually stops movement,
+ * so the panels visually bound the one-row strip, not the arena edge.
+ */
 function panelXPositions(side: PreparationSide): { innerX: number; outerX: number } {
   const zone = getPreparationZone(side);
   return side === "negative"
-    ? { innerX: zone.maxX, outerX: PLAYABLE_ARENA_BOUNDS.minX }
-    : { innerX: zone.minX, outerX: PLAYABLE_ARENA_BOUNDS.maxX };
+    ? { innerX: zone.maxX, outerX: zone.minX }
+    : { innerX: zone.minX, outerX: zone.maxX };
 }
 
 export class PreparationBarrierPresentation {
