@@ -16,6 +16,7 @@ import {
   CHARACTER_ASSET_URL,
   CharacterAsset,
   CharacterAssetLoadError,
+  defaultCharacterAssetOrientationYawOffset,
 } from "./characterAsset";
 import { CharacterModel, type CharacterVariant } from "./CharacterModel";
 
@@ -70,7 +71,15 @@ export async function createCharacterPresentation(
       namePrefix,
       {
         targetHeightMeters: options.targetHeightMeters,
-        orientationYawOffset: options.orientationYawOffset,
+        // Asset-specific orientation metadata: the shipped default rig
+        // carries its measured anatomical-front correction; an explicit
+        // caller override always wins. This is presentation normalisation
+        // only — the shared gameplay yaw convention is untouched.
+        orientationYawOffset:
+          options.orientationYawOffset ??
+          defaultCharacterAssetOrientationYawOffset(
+            options.assetUrl ?? CHARACTER_ASSET_URL,
+          ),
       },
     );
     return { kind: "character", model, asset };

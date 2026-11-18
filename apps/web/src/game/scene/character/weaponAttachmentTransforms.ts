@@ -14,8 +14,10 @@
  * by the character root and affects the weapon automatically because it is
  * parented under the hand joint).
  *
- * On the instantiated base character (Quaternius rigged GLB) the `hand_r`
- * rest-pose local frame measures as:
+ * On the instantiated base character (Quaternius rigged GLB) WITH the
+ * default asset orientation normalization applied (the shipped rig carries a
+ * measured 180° correction so its anatomical front sits on local −Z — see
+ * `characterAsset.ts`), the `hand_r` rest-pose local frame measures as:
  *   - local +X → world UP
  *   - local +Y → world RIGHT (character's outward side; −Y is toward the
  *     body centreline)
@@ -36,23 +38,33 @@
  * ---------------
  * - `position` — weapon root offset from the hand joint. Chosen so the rear
  *   grip box sits under the character's palm in the ready pose.
- * - `rotation` — weapon root Euler rotation (Babylon XYZ order, radians)
- *   relative to the hand joint. These are compound angles (not a small
- *   pitch/yaw on top of a fixed mount roll), because the ready hand frame
- *   itself is already rotated far from the rest-pose frame.
+ * - `rotation` — weapon root Euler rotation (Babylon `TransformNode.rotation`
+ *   order, radians) relative to the hand joint. These are compound angles
+ *   (not a small pitch/yaw on top of a fixed mount roll), because the ready
+ *   hand frame itself is already rotated far from the rest-pose frame.
  * - `scale` — uniform multiplier on the weapon mesh. `1.0` preserves the
  *   authored, gameplay-consistent weapon dimensions.
  *
- * Tuning note: values were derived numerically on 2026-11-07 against the
- * real 65-joint `BuildShiftBaseCharacter.glb` in a NullEngine scene playing
- * the authored idle / crouch clips (breathing-neutral frame 0): the weapon
- * root parented under `hand_r` exactly as `CharacterWeaponAttachment` does,
- * measuring the muzzle world axis (weapon −Z), weapon up (weapon +Y), and
- * rear-grip world position. Result with the table below —
+ * Tuning note: values were derived numerically on 2026-11-18 against the
+ * real 65-joint `BuildShiftBaseCharacter.glb` IN THE CORRECTED PRODUCTION
+ * DEFAULT SETUP (asset orientation normalization applied, anatomical front
+ * on local −Z) in a NullEngine scene playing the authored idle / crouch
+ * clips: the weapon root parented under `hand_r` exactly as
+ * `CharacterWeaponAttachment` does, measuring the muzzle world axis (weapon
+ * −Z), weapon up (weapon +Y), and rear-grip world position, then solving the
+ * hand-local transform directly so the corrected seating reproduces the
+ * previously shipped weapon world exactly: identical muzzle axis and weapon
+ * up, and the rear grip box holding the same mirrored palm offset (≈17 mm)
+ * from the mirrored hand joint (the hand-local position needed re-solving —
+ * a mirrored root offset alone would swing the grip box off the palm
+ * because the weapon world rotation is deliberately preserved).
+ * Result with the table below —
  *   idle:   AR muzzle ≈ [0, −0.12, −0.99] (~7° down), grip 17 mm from the
  *           hand joint; SG muzzle ≈ [0, −0.155, −0.988] (~9° down).
- *   crouch: AR muzzle ≈ [0.018, −0.134, −0.991]; SG ≈ [0.025, −0.168, −0.986].
- *   rest:   AR muzzle ≈ [−0.985, −0.078, −0.156]; SG ≈ [−0.978, −0.098, −0.184].
+ *   crouch: AR muzzle ≈ [−0.025, −0.104, −0.994]; SG ≈ [−0.031, −0.139, −0.990].
+ *   rest:   the weapon stays hugged to the joint; the muzzle points off to
+ *           the side (accepted tradeoff — the ready pose is the production
+ *           hold, exactly as in the previous tuning).
  * Max muzzle-axis swing across a full idle breathing loop is ≈0.15°, so the
  * static table does not need to track the per-frame motion. They are
  * deliberately plain numbers so artists/developers can nudge them.
@@ -89,8 +101,8 @@ export interface WeaponAttachmentTransform {
  */
 const ASSAULT_RIFLE: WeaponAttachmentTransform = Object.freeze({
   weaponType: "assault_rifle",
-  position: Object.freeze({ x: 0.0316, y: 0.0672, z: 0.0344 }),
-  rotation: Object.freeze({ x: -1.746, y: -2.681, z: -0.019 }),
+  position: Object.freeze({ x: 0.04363, y: -0.07076, z: 0.01649 }),
+  rotation: Object.freeze({ x: 1.49499, y: 1.03823, z: 0.21983 }),
   scale: 1.0,
 });
 
@@ -101,8 +113,8 @@ const ASSAULT_RIFLE: WeaponAttachmentTransform = Object.freeze({
  */
 const SHOTGUN: WeaponAttachmentTransform = Object.freeze({
   weaponType: "shotgun",
-  position: Object.freeze({ x: 0.0401, y: 0.0638, z: 0.0408 }),
-  rotation: Object.freeze({ x: -1.781, y: -2.654, z: 0.031 }),
+  position: Object.freeze({ x: 0.04824, y: -0.06829, z: 0.02609 }),
+  rotation: Object.freeze({ x: 1.46152, y: 0.91197, z: 0.17059 }),
   scale: 1.0,
 });
 

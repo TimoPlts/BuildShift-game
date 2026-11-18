@@ -21,9 +21,16 @@
  *  - the model is centred on the root axis in X/Z and offset in Y so the
  *    soles of the feet sit at `visualRoot`-local y = -HALF (i.e. on the
  *    root's feet position);
- *  - the model's forward axis is its local -Z (the glTF forward convention,
- *    which the loader preserves); `orientationYawOffset` rotates it about Y
- *    for assets whose forward is elsewhere. Default 0.
+ *  - the model node's rotation is written through `rotationQuaternion` (the
+ *    glTF importer represents node rotations as quaternions, so a plain
+ *    `rotation.y` write would be silently ignored) and the X/Z centring is
+ *    expressed in the rotated frame, keeping a turned rig on the root axis;
+ *  - the presented forward is the model's local -Z (the shared BuildShift
+ *    convention). Assets whose ANATOMICAL front sits elsewhere carry a
+ *    measured `orientationYawOffset` — the shipped default rig's eyes/front
+ *    land on imported local +Z, so it uses a 180° correction (see
+ *    `CHARACTER_ASSET_ORIENTATION_YAW_OFFSET` in `characterAsset.ts`, applied
+ *    by `createCharacterPresentation`). Default 0 for generic assets.
  *
  * Material assignment: the instance's cloned materials are varied per side
  * via {@link characterMaterialScheme} (Batch 2B, Task D): local instances
@@ -45,6 +52,7 @@
  *    collides.
  */
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import { Quaternion } from "@babylonjs/core/Maths/math.vector";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { InstantiatedEntries } from "@babylonjs/core/assetContainer";
 import type { Material } from "@babylonjs/core/Materials/material";
@@ -83,8 +91,10 @@ export interface CharacterModelOptions {
   readonly targetHeightMeters?: number;
   /**
    * Extra yaw (radians, about Y, applied to the loaded model before the
-   * shared facing) used to bring an asset's own forward axis onto local -Z.
-   * Defaults to 0 (the glTF forward convention).
+   * shared facing) used to bring an asset's own anatomical forward axis onto
+   * local -Z. Defaults to 0 (generic convention); the shipped default
+   * character carries its measured π correction via
+   * {@link defaultCharacterAssetOrientationYawOffset}.
    */
   readonly orientationYawOffset?: number;
   /** Injectable render clock for deterministic presentation tests. */
@@ -176,11 +186,27 @@ export class CharacterModel {
     // are in UNSCALED asset space: centre X/Z on the root axis and offset Y
     // so the scaled feet (asset-space min.y) land at visualRoot-local
     // y = -HALF, i.e. exactly on the root's feet position.
-    modelRoot.rotation.y = options.orientationYawOffset ?? 0;
+    //
+    // The glTF importer represents node rotations as quaternions, so a plain
+    // `rotation.y` write here would be SILENTLY IGNORED — the orientation
+    // must compose into `rotationQuaternion` (import transform first, then
+    // the asset-space yaw correction in the parent's frame). The centring
+    // offset is likewise written in the ROTATED frame so the turned rig
+    // stays exactly on the root axis (matters for assets whose bounds
+    // centre is off-axis, e.g. this rig's cape).
+    const theta = options.orientationYawOffset ?? 0;
+    const importedRotation =
+      modelRoot.rotationQuaternion?.clone() ?? Quaternion.Identity();
+    const orientation = Quaternion.RotationYawPitchRoll(theta, 0, 0);
+    modelRoot.rotationQuaternion = importedRotation.multiply(orientation);
+    const centreX = (min.x + max.x) / 2;
+    const centreZ = (min.z + max.z) / 2;
+    const cosT = Math.cos(theta);
+    const sinT = Math.sin(theta);
     modelRoot.position.set(
-      -(min.x + max.x) / 2 / s,
+      -(centreX * cosT + centreZ * sinT) / s,
       -PLAYER_COLLIDER_HALF_TOTAL_HEIGHT / s - min.y,
-      -(min.z + max.z) / 2 / s,
+      -(-centreX * sinT + centreZ * cosT) / s,
     );
     modelRoot.parent = this._modelScale;
     // Presentation safety: only the owned meshes are de-picked / de-collided.
