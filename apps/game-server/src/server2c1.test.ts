@@ -20,8 +20,9 @@
  *    processed;
  *  - JUMP: a single `jump:true` raises the authoritative Y and is NOT replayed
  *    as a second edge; no double jump;
- *  - COLLISION: the player cannot pass through an arena collider (the central
- *    box), and the player lands on / stays on the ground;
+ *  - COLLISION: the player cannot pass through a fixed collider (a
+ *    test-owned wall injected through the public structure-collider API),
+ *    and the player lands on / stays on the ground;
  *  - LIFECYCLE: `removePlayer` drops the simulation; `dispose` is idempotent
  *    and safe to re-call.
  *
@@ -35,15 +36,17 @@ import {
   describe,
   expect,
   it,
+  vi,
 } from "vitest";
 
-import { PLAYER_SPAWN } from "@buildshift/game-config";
+import { PLAYER_COLLIDER, PLAYER_SPAWN } from "@buildshift/game-config";
 import type { PlayerInputFrame } from "@buildshift/protocol";
 
 import {
   AuthoritativeMovement,
   type TickInput,
 } from "./physics/authoritativeMovement.js";
+import { ServerPhysicsWorld } from "./physics/serverPhysicsWorld.js";
 
 /**
  * One authoritative tick as the room would run it: 30 Hz tick, two 60 Hz
@@ -366,23 +369,83 @@ describe("Stage 2C1 authoritative movement (deterministic)", () => {
   });
 
   describe("collision", () => {
-    it("cannot pass through the central arena collider", () => {
-      movement.createPlayer(ID);
-      // Spawn is at z≈6; the central box's near face is at z≈1.25, so sustained
-      // forward motion is blocked by the capsule radius before z≈1.6.
-      movement.enqueueFrame(ID, frame({ sequence: 0, moveZ: -1 }));
-      let lastZ = movement.getPublishable(ID)!.position.z;
-      let minZ = lastZ;
-      for (let i = 0; i < 200; i++) {
-        movement.runTick(TICK); // held forward persists
-        const z = movement.getPublishable(ID)!.position.z;
-        minZ = Math.min(minZ, z);
-        lastZ = z;
+    it("cannot pass through a fixed collider (test-owned wall)", async () => {
+      // The shared arena is intentionally obstacle-free, so this test owns its
+      // own obstacle: a fixed cuboid injected through the public
+      // `addStructureCollider` API (the same path placed structures use, and
+      // the pattern `buildingFoundation.test.ts` already exercises). The
+      // world built inside `AuthoritativeMovement.create()` is captured via a
+      // spy on `ServerPhysicsWorld.create` — no production API exists or
+      // changes just for the test.
+      const originalCreate = ServerPhysicsWorld.create;
+      const captured: { world: ServerPhysicsWorld | null } = { world: null };
+      const createSpy = vi
+        .spyOn(ServerPhysicsWorld, "create")
+        .mockImplementation(async () => {
+          const world = await originalCreate.call(ServerPhysicsWorld);
+          captured.world = world;
+          return world;
+        });
+
+      try {
+        // Free the beforeEach world before building the instrumented one
+        // (dispose is idempotent; afterEach disposes the replacement).
+        movement.dispose();
+        movement = await AuthoritativeMovement.create();
+        expect(createSpy).toHaveBeenCalled();
+        const pw = captured.world;
+        expect(pw).not.toBeNull();
+
+        // A test-owned wall standing on the ground between the spawn (z = +6)
+        // and the -Z direction: near face at z = 4.0, spanning y 0..4 (well
+        // over the 1.8 m capsule) and wide enough to be un-passable around.
+        const WALL = {
+          center: { x: 0, y: 2, z: 3.5 },
+          halfExtents: { x: 4, y: 2, z: 0.5 },
+        } as const;
+        const NEAR_FACE_Z = WALL.center.z + WALL.halfExtents.z; // 4.0
+        pw!.addStructureCollider("test-wall", WALL.center, WALL.halfExtents);
+
+        movement.createPlayer(ID);
+        const z0 = movement.getPublishable(ID)!.position.z;
+        expect(z0).toBeCloseTo(PLAYER_SPAWN.z, 3); // +6, clear of the wall
+
+        movement.enqueueFrame(ID, frame({ sequence: 0, moveZ: -1 }));
+        let minZ = z0;
+        let lastZ = z0;
+        for (let i = 0; i < 200; i++) {
+          movement.runTick(TICK); // held forward persists
+          lastZ = movement.getPublishable(ID)!.position.z;
+          minZ = Math.min(minZ, lastZ);
+        }
+
+        // Approach happened: the player actually travelled >1.5 m toward the
+        // wall from spawn (not a trivial stop near the start).
+        expect(z0 - minZ).toBeGreaterThan(1.5);
+
+        // Collision face + capsule radius: the capsule centre rests at the
+        // wall's near face offset by exactly the capsule radius (0.35 m,
+        // plus the small contact offset). It never pierced the face, and it
+        // genuinely reached it rather than halting short.
+        const REST_Z = NEAR_FACE_Z + PLAYER_COLLIDER.radius; // 4.35
+        expect(minZ).toBeGreaterThan(NEAR_FACE_Z);
+        expect(minZ).toBeLessThan(REST_Z + 0.1);
+        expect(lastZ).toBeGreaterThanOrEqual(REST_Z - 0.05);
+        expect(lastZ).toBeLessThan(REST_Z + 0.15);
+
+        // Sustained forward input cannot grind through: still stopped here
+        // 20 more ticks (6.7 s) later.
+        for (let i = 0; i < 20; i++) movement.runTick(TICK);
+        const zAfter = movement.getPublishable(ID)!.position.z;
+        expect(Math.abs(zAfter - lastZ)).toBeLessThan(0.02);
+        // No slide off the wall's face either (wall is centred on x = 0 and
+        // the approach was straight on).
+        expect(Math.abs(movement.getPublishable(ID)!.position.x)).toBeLessThan(
+          0.05,
+        );
+      } finally {
+        createSpy.mockRestore();
       }
-      // The player never penetrated the box (its front face is at z≈1.25,
-      // capsule radius 0.35 → centre stops ≈1.6).
-      expect(minZ).toBeGreaterThan(1.2);
-      expect(lastZ).toBeGreaterThan(1.2);
     });
 
     it("lands on and stays on the ground (grounding works)", () => {
