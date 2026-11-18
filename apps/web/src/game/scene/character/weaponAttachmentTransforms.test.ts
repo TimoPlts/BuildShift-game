@@ -141,7 +141,7 @@ describe("WEAPON_ATTACHMENT_TRANSFORMS — immutability", () => {
       }).shotgun = void 0;
     }).toThrow();
     // Nothing was written.
-    expect(rifle.position.x).toBeCloseTo(0.0316, 5);
+    expect(rifle.position.x).toBeCloseTo(0.04363, 5);
     expect(Object.keys(WEAPON_ATTACHMENT_TRANSFORMS)).toHaveLength(2);
   });
 });
@@ -213,12 +213,13 @@ describe("applyWeaponAttachmentTransform", () => {
 
 describe("shipped values — geometric seating in the authored ready poses", () => {
   /**
-   * Full 4×4 WORLD matrices of the real `hand_r` joint (column-major,
-   * row-major Babylon `Matrix.m` layout: 3 rotation/scale rows, translation
-   * in elements 12-14), captured 2026-11-07 in a NullEngine scene playing
-   * the batch-2A authored idle / crouch clips (breathing-neutral frame 0)
-   * against the real 65-joint GLB, character root at the origin and default
-   * target height.
+   * Full 4×4 WORLD matrices of the real `hand_r` joint (row-major Babylon
+   * `Matrix.m` layout: 3 rotation/scale rows, translation in elements
+   * 12-14), captured 2026-11-18 in a NullEngine scene playing the batch-2A
+   * authored idle / crouch clips against the real 65-joint GLB IN THE
+   * CORRECTED PRODUCTION DEFAULT SETUP (asset orientation normalization
+   * applied, anatomical front on local −Z), character root at the origin and
+   * default target height.
    *
    * The matrices carry the character scale (~0.989) and a mirrored
    * (negative-determinant) ancestor transform, so they are NOT expressible
@@ -229,16 +230,16 @@ describe("shipped values — geometric seating in the authored ready poses", () 
    */
   const READY_HAND_WORLD_MATRIX = {
     idle: [
-      0.804180562, 0.576046944, 0.007153422, 0,
-      0.028362349, -0.051857341, 0.987468421, 0,
-      -0.575392783, 0.802538633, 0.058672275, 0,
-      0.220529854, 1.257811904, 0.321143508, 1,
+      -0.794590056, 0.589218438, -0.005991217, 0,
+      -0.029689617, -0.050079174, -0.987521231, 0,
+      0.588500500, 0.793033123, -0.057909448, 0,
+      -0.220567107, 1.262494445, -0.326255828, 1,
     ],
     crouch: [
-      0.681652129, 0.716861725, -0.006873302, 0,
-      0.041758481, -0.030235581, 0.987891555, 0,
-      -0.715677440, 0.681015968, 0.051095217, 0,
-      0.220529854, 0.922504306, 0.393900871, 1,
+      -0.682353675, 0.716194808, 0.006796248, 0,
+      -0.041700341, -0.030355463, -0.987890363, 0,
+      0.715012074, 0.681712031, -0.051129047, 0,
+      -0.220529407, 0.922277629, -0.393590599, 1,
     ],
   } as const;
 
@@ -351,7 +352,10 @@ describe("shipped values — geometric seating in the authored ready poses", () 
     // Rear grip under the palm, very close to the hand joint.
     expect(Vector3.Distance(m.grip, m.handPos)).toBeLessThan(0.03);
     expect(Vector3.Distance(m.rootPos, m.handPos)).toBeLessThan(0.1);
-    // Stock behind the hand at shoulder height.
+    // Stock behind the hand at shoulder height: the muzzle still aims
+    // along -Z (aim), so the stock trails toward +Z back at the body —
+    // unchanged from the previous tuning because the weapon WORLD rotation
+    // is preserved exactly.
     expect(m.stock.z).toBeGreaterThan(m.handPos.z + 0.1);
     expect(m.stock.y).toBeGreaterThan(m.handPos.y - 0.1);
   });

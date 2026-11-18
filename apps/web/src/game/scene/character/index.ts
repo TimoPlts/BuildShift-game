@@ -14,6 +14,8 @@ export {
   CharacterAsset,
   CharacterAssetLoadError,
   CHARACTER_ASSET_URL,
+  CHARACTER_ASSET_ORIENTATION_YAW_OFFSET,
+  defaultCharacterAssetOrientationYawOffset,
   type CharacterAssetBounds,
 } from "./characterAsset";
 export {

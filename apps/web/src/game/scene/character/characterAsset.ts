@@ -27,6 +27,40 @@ import { GLTFFileLoader } from "@babylonjs/loaders/glTF";
 /** URL of the default character asset, relative to the web app's public root. */
 export const CHARACTER_ASSET_URL = "/assets/character/BuildShiftBaseCharacter.glb";
 
+/**
+ * Asset-specific presentation metadata: the Y yaw (radians, asset space,
+ * applied by {@link CharacterModelOptions.orientationYawOffset}) that brings
+ * this rig's ANATOMICAL front onto the model's local -Z — the shared
+ * BuildShift presented forward (yaw 0 faces -Z, positive toward +X).
+ *
+ * Measured 2026-11-18 on the real shipped GLB (NullEngine load of
+ * `BuildShiftBaseCharacter.glb`): the imported bind-space face landmarks —
+ * the “Eyes”/“Eyebrows” meshes, centred at z ≈ +0.066/+0.076 with the body
+ * centred on the axis — sit on the local +Z side. Left uncorrected, the
+ * presented humanoid faces AWAY from its aim (a following third-person
+ * camera sees the character's face instead of its back). One 180° asset
+ * normalization brings the anatomical front onto local -Z; it is applied
+ * once, at this single seam, so animations (which derive their frames from
+ * the rig itself) and weapon seating follow the corrected rig without any
+ * duplicate 180° rotations. This is asset orientation, NOT a change to the
+ * shared gameplay yaw convention. See `characterOrientation.test.ts`.
+ */
+export const CHARACTER_ASSET_ORIENTATION_YAW_OFFSET = Math.PI;
+
+/**
+ * Resolves the default orientation yaw for a character asset URL: the
+ * shipped default asset carries its measured correction; unknown/overridden
+ * assets keep the neutral convention (anatomical front already on -Z) until
+ * measured.
+ */
+export function defaultCharacterAssetOrientationYawOffset(
+  assetUrl: string,
+): number {
+  return assetUrl === CHARACTER_ASSET_URL
+    ? CHARACTER_ASSET_ORIENTATION_YAW_OFFSET
+    : 0;
+}
+
 /** Thrown whenever the GLB asset cannot be loaded or is unusable. */
 export class CharacterAssetLoadError extends Error {
   public constructor(
