@@ -83,19 +83,8 @@ describe("PLAYER_SPAWN (gameplay spawn)", () => {
 });
 
 describe("ARENA_COLLIDERS (shared collision geometry)", () => {
-  it("contains exactly the expected Stage 1E collider ids", () => {
-    expect(ARENA_COLLIDERS.map((c) => c.id).sort()).toEqual(
-      [
-        "center-box",
-        "foundation-ground",
-        "jump-platform",
-        "low-block",
-        "reference-platform",
-        "reference-tower",
-        "slide-corridor-wall-east",
-        "slide-corridor-wall-west",
-      ].sort(),
-    );
+  it("contains exactly the expected collider ids (clean flat arena)", () => {
+    expect(ARENA_COLLIDERS.map((c) => c.id).sort()).toEqual(["foundation-ground"]);
   });
 
   it("has unique collider ids", () => {
@@ -103,7 +92,7 @@ describe("ARENA_COLLIDERS (shared collision geometry)", () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it("stores the exact Stage 1E collider geometry (position + halfExtents)", () => {
+  it("stores the exact collider geometry (position + halfExtents)", () => {
     // A full expected-value table so a silent re-tune of any collider fails.
     const expected: Record<string, {
       position: [number, number, number];
@@ -112,34 +101,6 @@ describe("ARENA_COLLIDERS (shared collision geometry)", () => {
       "foundation-ground": {
         position: [0, -0.25, 0],
         halfExtents: [15, 0.25, 15],
-      },
-      "center-box": {
-        position: [0, 1.25, 0],
-        halfExtents: [1.25, 1.25, 1.25],
-      },
-      "reference-platform": {
-        position: [-5, 0.25, 4],
-        halfExtents: [3.5, 0.25, 2],
-      },
-      "reference-tower": {
-        position: [5, 2.5, -3],
-        halfExtents: [0.75, 2.5, 0.75],
-      },
-      "slide-corridor-wall-west": {
-        position: [-2, 1.5, -5],
-        halfExtents: [0.25, 1.5, 4],
-      },
-      "slide-corridor-wall-east": {
-        position: [2, 1.5, -5],
-        halfExtents: [0.25, 1.5, 4],
-      },
-      "low-block": {
-        position: [-8, 0.5, 0],
-        halfExtents: [1.5, 0.5, 1.5],
-      },
-      "jump-platform": {
-        position: [9, 1, -1],
-        halfExtents: [2, 1, 2],
       },
     };
 
