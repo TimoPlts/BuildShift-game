@@ -2,8 +2,10 @@
  * Authoritative-shot-ray aim resolution **for presentation only**.
  *
  * The server (`TwoPlayerMovementRoom.rf`) resolves every shot as a hitscan from the
- * shooter's eye origin — the server *feet* position raised by the collider half
- * total height (crouch-aware) — along `ad(yaw, pitch)`, against remote players
+ * shooter's canonical shot-eye origin (`SHOT_EYE_HEIGHT_*` from
+ * `@buildshift/game-config` — the client and server share this exact constant;
+ * the old collider-centre origin sat at waist height) — the server *feet*
+ * position raised by that crouch-aware shot-eye height — along `ad(yaw, pitch)`, against remote players
  * (capsule-centre targets with the standing/crouch target radii) and replicated
  * structures, taking the nearest intersection within the weapon range. The
  * client camera SHARES that ray: the line-sharing third-person camera sits
@@ -26,8 +28,8 @@ import {
 import {
   rayStructureIntersection,
   structureCuboids,
-  VERTICAL_MOVEMENT,
-  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+  SHOT_EYE_HEIGHT_STANDING,
+  SHOT_EYE_HEIGHT_CROUCHED,
   PLAYER_CROUCH_COLLIDER,
   type GeometryEditState,
 } from "@buildshift/game-config";
@@ -40,14 +42,17 @@ export interface AimVec3 {
 }
 
 /**
- * Standing eye/capsule-centre height above the server *feet* position — the
- * server `rf` fires from `y + VERTICAL_MOVEMENT.playerHalfHeight` (0.9 m), so
- * this mirrors that exact constant (pinned equal to
- * `PLAYER_COLLIDER_HALF_TOTAL_HEIGHT` by `authoritativeAim.test.ts`).
+ * Standing shot-eye height above the server *feet* position — the canonical
+ * shot origin shared with the server `rf` handler
+ * (`SHOT_EYE_HEIGHT_STANDING` from `@buildshift/game-config`, pinned equal by
+ * `authoritativeAim.test.ts`). This is the point the third-person camera
+ * pivot, the centred reticle ray, and the authoritative shot all share. It
+ * deliberately DIFFERS from the collider-derived capsule centre (0.9): the
+ * reticle met walls at waist height with that origin (see shotOrigin.ts).
  */
-export const AIM_EYE_HEIGHT_STANDING = VERTICAL_MOVEMENT.playerHalfHeight;
-/** Crouched eye height above the feet — same constant the server `rf` uses. */
-export const AIM_EYE_HEIGHT_CROUCHED = PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT;
+export const AIM_EYE_HEIGHT_STANDING = SHOT_EYE_HEIGHT_STANDING;
+/** Crouched shot-eye height above the feet — the same shared crouch origin. */
+export const AIM_EYE_HEIGHT_CROUCHED = SHOT_EYE_HEIGHT_CROUCHED;
 
 /** Standing remote-player target radius used by the server hitscan (`TR`). */
 export const AIM_TARGET_RADIUS_STANDING = 0.4;

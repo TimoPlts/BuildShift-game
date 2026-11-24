@@ -60,7 +60,7 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, getStructureConfig, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -115,6 +115,9 @@ function getFootprintWorldDims(buildType: BuildType): [number, number, number] {
 function getEffectiveHeight(buildType: BuildType): number {
   const [, h] = getFootprintWorldDims(buildType);
   if (buildType === "floor") return 0.15;
+  // The cone is a low roof pyramid, not a full-layer solid — the root, the
+  // construction shell and the composed visuals centre on its real volume.
+  if (buildType === "cone") return CONE_PEAK_HEIGHT;
   return h;
 }
 
@@ -149,8 +152,9 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 //  - ramp  → a single continuous inclined plate that hides the canonical
 //    16 collision steps while spanning exactly the canonical 1×1 tile
 //    footprint (run, rise, width and turn of every variant).
-//  - cone  → a smooth pyramid (one per retained canonical quadrant when
-//    edited) that hides the canonical stepped levels.
+//  - cone  → a smooth low roof pyramid (one quarter of that same pyramid per
+//    retained canonical quadrant when edited — the apex always stays on the
+//    cell-centre axis, exactly where the canonical steps converge) that hides the canonical stepped levels.
 //
 // Collision, hitscan and movement keep using `structureCuboids` untouched;
 // these visuals never add or remove volume the authoritative state lacks.
@@ -163,12 +167,16 @@ interface VisualBox {
   rotation?: { axis: "x" | "z"; angle: number };
 }
 
-/** A square-basis pyramid visual in world space (apex above the base centre). */
+/** A square-basis pyramid visual in world space. `center` is the BASE-CENTRE
+ * bounding position, `height` the base→apex rise; the apex sits above the
+ * base centre plus the optional local (apex) X/Z offset — for cone quadrants
+ * that offset puts the apex back on the full cone's cell-centre axis. */
 interface VisualPyramid {
   center: [number, number, number];
   diameter: number;
   depth: number;
   height: number;
+  apex?: [number, number];
 }
 
 /** The canonical inputs a structure visual derives from (never mutated). */
@@ -354,10 +362,12 @@ function floorVisualBoxes(input: VisualInput): VisualBox[] {
 }
 
 /**
- * Visual pyramids for a cone: one smooth pyramid over the whole tile when
- * unedited, or one per retained canonical quadrant when edited. A quadrant
- * pyramid shrinks linearly toward its apex exactly like the canonical
- * stepped quadrants, so the openings stay where the collision has them.
+ * Visual pyramids for a cone: one smooth low roof pyramid over the whole
+ * tile when unedited, or one per retained canonical quadrant when edited.
+ * A quadrant is exactly ONE QUARTER of the full roof — its apex stays on the
+ * cell-centre axis at the shared peak (the canonical quadrant shrinks toward
+ * the centre at every level), so edited cones never grow off-centre mini-
+ * spires and the openings sit exactly where the collision has them.
  */
 function coneVisualPyramids(input: VisualInput): VisualPyramid[] {
   const cs = BUILD_GRID.cellSize;
@@ -365,23 +375,29 @@ function coneVisualPyramids(input: VisualInput): VisualPyramid[] {
   const x = input.grid.x * cs;
   const yBase = input.grid.y * lh;
   const z = input.grid.z * cs;
+  const peak = CONE_PEAK_HEIGHT;
   const tiles =
     input.editGrid?.kind === "floor_cone" && input.editGrid.tiles.length === 4
       ? input.editGrid.tiles
       : Array<boolean>(4).fill(true);
 
   if (tiles.every(Boolean)) {
-    return [{ center: [x, yBase + lh / 2, z], diameter: cs, depth: cs, height: lh }];
+    return [{ center: [x, yBase + peak / 2, z], diameter: cs, depth: cs, height: peak }];
   }
 
   const pyramids: VisualPyramid[] = [];
   for (let i = 0; i < 4; i++) {
     if (!tiles[i]) continue;
+    // Quadrant centre offset from the cell centre; the shared apex is at the
+    // cell centre, so the local apex offset is its negation.
+    const qx = ((i % 2) - 0.5) * cs / 2;
+    const qz = (Math.floor(i / 2) - 0.5) * cs / 2;
     pyramids.push({
-      center: [x + ((i % 2) - 0.5) * cs / 2, yBase + lh / 2, z + (Math.floor(i / 2) - 0.5) * cs / 2],
+      center: [x + qx, yBase + peak / 2, z + qz],
       diameter: cs / 2,
       depth: cs / 2,
-      height: lh,
+      height: peak,
+      apex: [-qx, -qz],
     });
   }
   return pyramids;
@@ -579,7 +595,10 @@ function buildRampPlateMesh(
 /**
  * Build the smooth pyramid visual (four slanted faces + base) with its base
  * centred on the origin — this Babylon build has no `CreatePyramid`, so the
- * solid is emitted as a flat-shaded closed mesh.
+ * solid is emitted as a flat-shaded closed mesh. The apex may sit off the
+ * base centre (a cone quadrant is one quarter of the full pyramid, apex on
+ * the shared cell-centre axis); face normals are derived from the geometry,
+ * so off-centre apices stay correctly wound and lit.
  */
 function buildPyramidMesh(
   scene: Scene,
@@ -587,6 +606,8 @@ function buildPyramidMesh(
   diameter: number,
   depth: number,
   height: number,
+  apexX = 0,
+  apexZ = 0,
 ): Mesh {
   const d2 = diameter / 2;
   const z2 = depth / 2;
@@ -594,12 +615,31 @@ function buildPyramidMesh(
   const B: [number, number, number] = [d2, 0, -z2];
   const C: [number, number, number] = [d2, 0, z2];
   const D: [number, number, number] = [-d2, 0, z2];
-  const P: [number, number, number] = [0, height, 0];
+  const P: [number, number, number] = [apexX, height, apexZ];
+  const pv = new Vector3(apexX, height, apexZ);
+  const mid = (p: [number, number, number], q: [number, number, number]): Vector3 =>
+    new Vector3((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2);
+  // Interior point of the (possibly off-centre) pyramid: average of vertices.
+  const centroid = new Vector3(
+    (A[0] + B[0] + C[0] + D[0] + P[0]) / 5,
+    (A[1] + B[1] + C[1] + D[1] + P[1]) / 5,
+    (A[2] + B[2] + C[2] + D[2] + P[2]) / 5,
+  );
   const geo = new FlatGeometry();
-  geo.addTriangle([A, B, P], new Vector3(0, 0, -1));
-  geo.addTriangle([B, C, P], new Vector3(1, 0, 0));
-  geo.addTriangle([C, D, P], new Vector3(0, 0, 1));
-  geo.addTriangle([D, A, P], new Vector3(-1, 0, 0));
+  const side = (a: [number, number, number], b: [number, number, number]): void => {
+    const n = Vector3.Cross(
+      new Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]),
+      new Vector3(P[0] - a[0], P[1] - a[1], P[2] - a[2]),
+    );
+    // Orient outward: away from the solid's interior point.
+    const outward = mid(a, b).add(pv).scale(1 / 3).subtract(centroid);
+    if (n.dot(outward) < 0) n.scaleInPlace(-1);
+    geo.addTriangle([a, b, P], n);
+  };
+  side(A, B);
+  side(B, C);
+  side(C, D);
+  side(D, A);
   geo.addQuad([A, B, C, D], new Vector3(0, -1, 0));
   return geo.build(scene, name);
 }
@@ -659,6 +699,8 @@ function fillStructureVisual(
         py.diameter,
         py.depth,
         py.height,
+        py.apex?.[0] ?? 0,
+        py.apex?.[1] ?? 0,
       );
       // The pyramid mesh's local origin is its base centre (not its bounding
       // centre like CreateBox), so offset down by half its height.

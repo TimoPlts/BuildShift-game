@@ -61,7 +61,7 @@ import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { BUILD_GRID, getStructureConfig, structureCuboids, wallEdgeCenter, MAX_STRUCTURE_CUBOIDS } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, getStructureConfig, structureCuboids, wallEdgeCenter, MAX_STRUCTURE_CUBOIDS } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -120,11 +120,10 @@ function gridToWorld(grid: GridPosition): Vector3 {
 function footprintDims(buildType: BuildType): [number, number, number] {
   const config = getStructureConfig(buildType);
   const [fx, fy, fz] = config?.footprint ?? [1, 1, 1];
-  return [
-    fx * BUILD_GRID.cellSize,
-    fy * BUILD_GRID.layerHeight,
-    fz * BUILD_GRID.cellSize,
-  ];
+  // The cone is the canonical low roof pyramid (CONE_PEAK_HEIGHT, half a
+  // layer) — the edit envelope, tile overlays and grid match that volume.
+  const h = buildType === "cone" ? CONE_PEAK_HEIGHT : fy * BUILD_GRID.layerHeight;
+  return [fx * BUILD_GRID.cellSize, h, fz * BUILD_GRID.cellSize];
 }
 
 /** Cardinal rotation → Y-axis radians (same table as the structure renderer). */

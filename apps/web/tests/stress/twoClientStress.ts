@@ -28,7 +28,7 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import {
   ARENA_COLLIDERS, BUILD_GRID, BUILD_BOUNDS, BUILD_RANGE, VERTICAL_MOVEMENT,
-  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, getStructureConfig, structureCuboids, structureSlots, wallEdgeCenter, type GeometryEditState,
+  SHOT_EYE_HEIGHT_STANDING, shotEyeHeight, getStructureConfig, structureCuboids, structureSlots, wallEdgeCenter, type GeometryEditState,
 } from "@buildshift/game-config";
 import { createServer, startServer, shutdownServer } from "../../../game-server/src/server.ts";
 import { TwoPlayerMovementRoom } from "../../../game-server/src/rooms/TwoPlayerMovementRoom.ts";
@@ -67,7 +67,7 @@ const APP_URL = `http://127.0.0.1:${STATIC_PORT}/?devdiag=1&gameServer=ws://127.
 const REPORT_PATH = process.argv[2] ?? path.join(ROOT, "test-results", "stress-report.json");
 const LOOK = 0.0022; // THIRD_PERSON_CAMERA.mouseSensitivity (rad/px)
 const CS = BUILD_GRID.cellSize, LH = BUILD_GRID.layerHeight;
-const EYE = VERTICAL_MOVEMENT.playerHalfHeight;
+const EYE = SHOT_EYE_HEIGHT_STANDING;
 
 const t0 = performance.now();
 const ts = () => ((performance.now() - t0) / 1000).toFixed(1).padStart(6);
@@ -415,7 +415,7 @@ async function setLook(p: Player, yaw: number, pitch: number) {
 }
 async function aimAt(room: AnyRoom, p: Player, target: { x: number; y: number; z: number }) {
   const s = room.state.players.get(p.sid);
-  const eye = s.y + (s.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EYE);
+  const eye = s.y + shotEyeHeight(s.crouch);
   const dx = target.x - s.x, dy = target.y - eye, dz = target.z - s.z;
   await setLook(p, Math.atan2(dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)));
 }
@@ -856,7 +856,7 @@ async function contestedBurst(room: AnyRoom, A: Player, B: Player, reserved: Set
 /** End the round: A fires the AR at B (re-aimed from authoritative poses) until the round ends. */
 async function killPhase(room: AnyRoom, A: Player, B: Player) {
   await equip(room, A, "assault_rifle");
-  const target = () => { const b = room.state.players.get(B.sid); return { x: b.x, y: b.y + (b.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EYE) - 0.2, z: b.z }; };
+  const target = () => { const b = room.state.players.get(B.sid); return { x: b.x, y: b.y + shotEyeHeight(b.crouch) - 0.2, z: b.z }; };
   await aimAt(room, A, target());
   await mouse(A, true);
   const start = performance.now();

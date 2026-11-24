@@ -15,8 +15,8 @@
  *
  * Geometry notes (metres, Y-up, feet on the ground at y=0):
  *   - standing capsule top ≈ 1.8, crouched capsule top ≈ 1.2;
- *   - standing hit sphere: centre y=0.9, r=0.4 → spans [0.5, 1.3];
- *   - crouched hit sphere: centre y=0.6, r=0.35 → spans [0.25, 0.95];
+ *   - standing hit sphere: centre y=1.2 (the canonical shot eye), r=0.4 → spans [0.8, 1.6];
+ *   - crouched hit sphere: centre y=0.9, r=0.35 → spans [0.55, 1.25];
  *   - the ceiling slab bottom sits at y=1.35 (clears crouch, obstructs stand).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +26,10 @@ import {
   MAX_HEALTH,
   MAX_SHIELD,
   PLAYER_MOVEMENT,
+  PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
+  PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+  SHOT_EYE_HEIGHT_STANDING,
+  SHOT_EYE_HEIGHT_CROUCHED,
   structureCuboids, wallEdgeCenter,
 } from "@buildshift/game-config";
 import { BUILD_EVENTS, EVENTS } from "@buildshift/protocol";
@@ -127,6 +131,17 @@ describe("TwoPlayerMovementRoom crouch authority", () => {
   });
 
   it("replicates crouch state: crouching down sets crouch, releasing (unobstructed) clears it", () => {
+    // Shot-eye parity (framing-20261119): the canonical shot origins are the
+    // SHARED constants (1.2/0.9) — NOT the collider-derived 0.9/0.6 capsule
+    // centres this room still uses for physics. The 0.3 gap is preserved
+    // (0.3 ≤ crouch target radius 0.35), so cross-state hit validity is
+    // unchanged; origin and target centre lift together.
+    expect(SHOT_EYE_HEIGHT_STANDING).toBe(1.2);
+    expect(SHOT_EYE_HEIGHT_CROUCHED).toBe(0.9);
+    expect(SHOT_EYE_HEIGHT_STANDING - SHOT_EYE_HEIGHT_CROUCHED).toBeCloseTo(
+      PLAYER_COLLIDER_HALF_TOTAL_HEIGHT - PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+      12,
+    );
     expect(player(A).crouch).toBe(false);
     move(a, 0, { crouch: true });
     expect(player(A).crouch).toBe(true);

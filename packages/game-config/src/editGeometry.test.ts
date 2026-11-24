@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONE_LEVELS, MAX_STRUCTURE_CUBOIDS, RAMP_SLAB_THICKNESS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, wallEdgeCenter, type StructureCuboid } from "./editGeometry.js";
+import { CONE_LEVELS, CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS, RAMP_SLAB_THICKNESS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, wallEdgeCenter, type StructureCuboid } from "./editGeometry.js";
 import { BUILD_GRID } from "./building.js";
 
 const grid = { x: 0, y: 0, z: 0 };
@@ -241,25 +241,63 @@ describe("canonical ramp: one tile, one full layer, thin, width halves", () => {
   });
 });
 
-describe("canonical cone: climbable stepped pyramid", () => {
+describe("canonical cone: climbable low roof pyramid", () => {
   const grid = { x: 0, y: 0, z: 0 };
 
-  it("is a stepped pyramid rising one layer within the step-up", () => {
+  it("peak follows the documented roof pitch: run cs/2 × 3:4 rise = half a layer", () => {
+    // The value is derived (see CONE_PEAK_HEIGHT), not an arbitrary shrink:
+    // a 9:12-style pitch over the half-cell run → exactly half a 3.84 m wall.
+    expect(CONE_PEAK_HEIGHT).toBeCloseTo((cs / 2) * 0.75, 9);
+    expect(CONE_PEAK_HEIGHT).toBeCloseTo(lh / 2, 9);
+    expect(CONE_PEAK_HEIGHT).toBeLessThan(lh);
+    // Every level stays a walkable step, never a spike to jump.
+    expect(CONE_PEAK_HEIGHT / CONE_LEVELS).toBeLessThan(0.34);
+  });
+
+  it("is a stepped pyramid rising to the roof peak within the step-up", () => {
     const cone = structureCuboids({ buildType: "cone", grid, rotation: 0 });
     expect(cone).toHaveLength(CONE_LEVELS);
     for (const [j, c] of cone.entries()) {
-      expect(c.center.y - c.halfExtents.y).toBeCloseTo(j * lh / CONE_LEVELS, 9);
+      expect(c.center.y - c.halfExtents.y).toBeCloseTo(j * CONE_PEAK_HEIGHT / CONE_LEVELS, 9);
       expect(c.halfExtents.y * 2).toBeLessThan(0.34);
       expect(c.halfExtents.x).toBeCloseTo((cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS, 9);
     }
-    expect(Math.max(...cone.map((c) => c.center.y + c.halfExtents.y))).toBeCloseTo(lh, 9);
+    expect(Math.max(...cone.map((c) => c.center.y + c.halfExtents.y))).toBeCloseTo(CONE_PEAK_HEIGHT, 9);
+  });
+
+  it("is rotation-invariant (corners are fixed, rotations never tilt the roof)", () => {
+    const base = structureCuboids({ buildType: "cone", grid, rotation: 0 });
+    for (const rotation of [1, 2, 3]) {
+      expect(structureCuboids({ buildType: "cone", grid, rotation })).toEqual(base);
+    }
+  });
+
+  it("a retained quadrant is exactly one quarter of the full pyramid per level", () => {
+    // Tile 0 (NW): every level occupies [−s, 0] × [−s, 0] — the quadrant
+    // shrinks toward the cell-centre apex, so the edited roof (and its
+    // visual quarter-pyramid) has no off-centre spike and no phantom hole.
+    for (const tile of [0, 1, 2, 3]) {
+      const tiles = [0, 1, 2, 3].map((i) => i === tile);
+      const quarter = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles } });
+      expect(quarter).toHaveLength(CONE_LEVELS);
+      const sx = tile % 2 === 0 ? -1 : 1;
+      const sz = tile < 2 ? -1 : 1;
+      for (const [j, c] of quarter.entries()) {
+        const s = ((cs / 2) * (CONE_LEVELS - j)) / CONE_LEVELS;
+        expect(c.halfExtents.x).toBeCloseTo(s / 2, 9);
+        expect(c.halfExtents.z).toBeCloseTo(s / 2, 9);
+        expect(c.center.x).toBeCloseTo(sx * s / 2, 9);
+        expect(c.center.z).toBeCloseTo(sz * s / 2, 9);
+        expect(c.center.y - c.halfExtents.y).toBeCloseTo(j * CONE_PEAK_HEIGHT / CONE_LEVELS, 9);
+      }
+    }
   });
 
   it("real walking climbs over the apex and down the far side", () => {
     const cone = structureCuboids({ buildType: "cone", grid, rotation: 0 });
     const path = walk({ x: 0, z: cs / 2 + 1 }, { x: 0, z: -1 }, 70, cone);
     const peak = path.reduce((a, b) => (b.y > a.y ? b : a));
-    expect(peak.y).toBeGreaterThan(lh - 0.5);
+    expect(peak.y).toBeGreaterThan(CONE_PEAK_HEIGHT - 0.3);
     expect(Math.abs(peak.z)).toBeLessThan(1);
     const end = path.at(-1)!;
     expect(end.z).toBeLessThan(-cs / 2 - RADIUS);
@@ -274,10 +312,10 @@ describe("canonical cone: climbable stepped pyramid", () => {
     expect(Math.max(...lane.map((p) => p.y))).toBe(0);
     expect(lane.at(-1)!.z).toBeLessThan(-cs / 2 - RADIUS);
     const kept = walk({ x: cs / 4, z: cs / 2 + 1 }, { x: 0, z: -1 }, 70, half);
-    expect(Math.max(...kept.map((p) => p.y))).toBeGreaterThan(lh / 2);
+    expect(Math.max(...kept.map((p) => p.y))).toBeGreaterThan(CONE_PEAK_HEIGHT / 2);
     const reset = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles: [true, true, true, true] } });
     expect(reset).toEqual(structureCuboids({ buildType: "cone", grid, rotation: 0 }));
-    expect(Math.max(...walk({ x: -cs / 4, z: cs / 2 + 1 }, { x: 0, z: -1 }, 70, reset).map((p) => p.y))).toBeGreaterThan(lh / 2);
+    expect(Math.max(...walk({ x: -cs / 4, z: cs / 2 + 1 }, { x: 0, z: -1 }, 70, reset).map((p) => p.y))).toBeGreaterThan(CONE_PEAK_HEIGHT / 2);
   });
 
   it("never exceeds MAX_STRUCTURE_CUBOIDS for any floor_cone edit", () => {

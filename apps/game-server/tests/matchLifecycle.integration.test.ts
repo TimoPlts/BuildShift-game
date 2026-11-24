@@ -249,8 +249,13 @@ describe("Match lifecycle state machine", () => {
     try {
       await waitForPlay(roomA);
 
-      // A places a floor (costs 5 energy → energy becomes 95).
-      sendBuild(roomA, 100, "floor", { x: 0, y: 0, z: 1 });
+      // A places a floor (costs 5 energy → energy becomes 95). The tile is
+      // one grid column toward the arena centre from A's own-row spawn
+      // (x −10.24): anchor distance 5.12 m, well inside the canonical
+      // 2-cell reach (BUILD_RANGE.maxPlacementDistance = 10.24 m). The
+      // lifecycle assertions below are position-independent — what matters
+      // is that a legitimately placed structure is cleared by the reset.
+      sendBuild(roomA, 100, "floor", { x: -1, y: 0, z: 0 });
       await waitForState(roomA, () => placed.length > 0, 5000);
       expect(placed.length).toBeGreaterThan(0);
 

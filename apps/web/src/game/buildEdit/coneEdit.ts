@@ -33,7 +33,7 @@ import {
   FLOOR_CONE_EDIT_TILE_COUNT,
   type FloorConeEditState,
 } from "@buildshift/protocol";
-import { BUILD_GRID } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT } from "@buildshift/game-config";
 
 // ─── 2×2 corner convention ────────────────────────────────────────────────
 //
@@ -49,8 +49,9 @@ import { BUILD_GRID } from "@buildshift/game-config";
 //     │  tile 2  │  tile 3  │
 //     └──────────┴──────────┘
 //
-// The structure's grid anchor sits at the footprint's local origin (0, 0) in
-// X/Z; the 1×1 cell spans local X in [0, cellSize] and local Z in [0, cellSize].
+// The structure's grid anchor sits at the footprint's CENTRE (the canonical
+// convention: tiles are centred on `grid × cellSize`), so the base corners
+// sit at (±cellSize/2, ±cellSize/2) from the anchor.
 
 /** The canonical 2×2 corner count (== the floor/cone edit tile count, 4). */
 export const CONE_CORNER_COUNT = FLOOR_CONE_EDIT_TILE_COUNT;
@@ -288,18 +289,19 @@ export function resetConeEditState(): FloorConeEditState {
 
 /**
  * A single generated base-corner anchor of the cone, in local metres relative
- * to the structure's grid anchor.
+ * to the structure's grid anchor (the footprint CENTRE — tiles are centred on
+ * `grid × cellSize`, matching `structureCuboids`).
  */
 export interface ConeCornerGeometry {
   /** Row-major corner index (0=NW, 1=NE, 2=SW, 3=SE). */
   index: number;
   /** Human-readable corner name (NW/NE/SW/SE). */
   name: (typeof CONE_CORNER_NAMES)[number];
-  /** Local X offset from the grid anchor (metres). */
+  /** Local X offset from the grid anchor (the footprint centre, metres). */
   x: number;
-  /** Local Z offset from the grid anchor (metres). */
+  /** Local Z offset from the grid anchor (the footprint centre, metres). */
   z: number;
-  /** Per-corner base height (metres); `0` when that corner tile is removed. */
+  /** Per-corner roof height (metres, {@link CONE_PEAK_HEIGHT}); `0` when that corner tile is removed. */
   height: number;
 }
 
@@ -324,13 +326,14 @@ export interface ConeGeometry {
   baseCorners: ConeCornerGeometry[];
 }
 
-/** Local X/Z offsets (metres) of the four base corners from the grid anchor. */
+/** Local X/Z offsets (metres) of the four base corners from the grid anchor
+ * (the footprint centre). */
 function coneCornerOffsets(): ReadonlyArray<{ x: number; z: number }> {
-  const c = BUILD_GRID.cellSize;
+  const c = BUILD_GRID.cellSize / 2;
   return [
-    { x: 0, z: 0 }, // NW
-    { x: c, z: 0 }, // NE
-    { x: 0, z: c }, // SW
+    { x: -c, z: -c }, // NW
+    { x: c, z: -c }, // NE
+    { x: -c, z: c }, // SW
     { x: c, z: c }, // SE
   ];
 }
@@ -338,8 +341,9 @@ function coneCornerOffsets(): ReadonlyArray<{ x: number; z: number }> {
 /**
  * Generates the cone geometry for a 2×2 cone edit state.
  *
- * Each solid corner contributes its full base height (`BUILD_GRID.layerHeight`);
- * a removed corner collapses to height `0`. The result is deterministic and
+ * Each solid corner contributes the canonical roof peak height
+ * ({@link CONE_PEAK_HEIGHT} — a low pyramid roof, half a layer); a removed
+ * corner collapses to height `0`. The result is deterministic and
  * serializable.
  *
  * @throws {Error} if `tiles` is not a well-formed 2×2 tile set.
@@ -349,7 +353,7 @@ export function coneGeometryFromTiles(tiles: readonly boolean[]): ConeGeometry {
   if (!v.ok) {
     throw new Error(`coneEdit: malformed cone tiles (${v.errors.join("; ")})`);
   }
-  const layerHeight = BUILD_GRID.layerHeight;
+  const layerHeight = CONE_PEAK_HEIGHT;
   const offsets = coneCornerOffsets();
 
   const cornerHeights: [number, number, number, number] = [

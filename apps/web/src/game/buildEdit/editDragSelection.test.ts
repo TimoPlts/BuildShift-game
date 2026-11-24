@@ -81,6 +81,43 @@ describe("sampleEditSurface agrees with the canonical edit geometry", () => {
     }
   });
 
+  it("cone low roof: eye-level aims at the outer BASE corners select exactly that corner", () => {
+    // The outer base region is where the old half-peak plane (covering only
+    // the middle of the footprint) fell back to the AABB entry and picked
+    // unrelated corners. Sampling the canonical solid must pick the corner
+    // whose roof face the crosshair is actually on — identically from every
+    // cardinal viewing direction (the cone is rotation-invariant).
+    const cases: ReadonlyArray<readonly [number, number, readonly [number, number, number], number]> = [
+      [-4.5, -4.5, [-1.2, 0.3, -1.2], 0], // NW
+      [4.5, -4.5, [1.2, 0.3, -1.2], 1], // NE
+      [-4.5, 4.5, [-1.2, 0.3, 1.2], 2], // SW
+      [4.5, 4.5, [1.2, 0.3, 1.2], 3], // SE
+    ];
+    for (const rotation of [0, 1, 2, 3] as const) {
+      const piece = { buildType: "cone" as const, grid: { x: 0, y: 0, z: 0 }, rotation };
+      for (const [ox, oz, [tx, ty, tz], tile] of cases) {
+        const origin = { x: ox, y: 1.2, z: oz };
+        const dir = { x: tx - origin.x, y: ty - origin.y, z: tz - origin.z };
+        const len = Math.hypot(dir.x, dir.y, dir.z);
+        const sample = sampleEditSurface(piece, origin, { x: dir.x / len, y: dir.y / len, z: dir.z / len }, RANGE) as EditSurfaceSample;
+        expect(sample.inside, `rotation ${rotation} corner tile ${tile}`).toBe(true);
+        expect(sampleTile(sample, { cols: 2, rows: 2 }), `rotation ${rotation} corner tile ${tile}`).toBe(tile);
+      }
+    }
+  });
+
+  it("cone: every aim that hits the solid resolves inside the grid at the hit's quadrant", () => {
+    // Sweep eye-level aims across the full base width from +Z: the sampled
+    // tile must equal the quadrant of the solid hit point (X column by sign,
+    // Z row by sign) — what you aim at is what the edit changes.
+    const piece = { buildType: "cone" as const, grid: { x: 0, y: 0, z: 0 }, rotation: 0 as const };
+    for (let x = -2.2; x <= 2.4; x += 0.4) {
+      const sample = sampleEditSurface(piece, { x, y: 0.6, z: 8 }, { x: 0, y: 0, z: -1 }, RANGE) as EditSurfaceSample;
+      const col = x < 0 ? 0 : 1;
+      expect(sampleTile(sample, { cols: 2, rows: 2 }), `x=${x.toFixed(1)}`).toBe(1 * 2 + col); // near (+Z) row
+    }
+  });
+
   it("wall aimed steeply from above onto its top lands on a top-row tile", () => {
     const piece = { buildType: "wall" as const, grid: { x: 0, y: 0, z: 0 }, rotation: 0 as const };
     // Steeply down onto the top of the −Z-edge panel (z = −2.56), entering

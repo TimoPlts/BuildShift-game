@@ -43,9 +43,32 @@ export function wallEdgeCenter(grid: { x: number; y: number; z: number }, rotati
   return { x: (grid.x + dx) * cs, z: (grid.z + dz) * cs };
 }
 
-/** Stacked levels in a canonical cone: a 16-level stepped pyramid rising one
- * build layer, each level 0.24 m tall and narrower toward the apex. */
+/** Stacked levels in a canonical cone: a 16-level stepped pyramid rising to
+ * {@link CONE_PEAK_HEIGHT}, each level equally tall and narrower toward the
+ * apex. */
 export const CONE_LEVELS = 16;
+
+/**
+ * The canonical cone (roof pyramid) peak height above its layer base, in
+ * metres — a ROOF piece, not a full-layer tower.
+ *
+ * Derivation (documented, not an arbitrary shrink):
+ *  - the roof run is the half-cell from the base edge to the apex axis:
+ *    `cellSize / 2` = 2.56 m;
+ *  - the pitch is the classic residential 3:4 rise:run (a "9:12 pitch",
+ *    ≈ 36.9°) — the steepest pitch that still reads as a roof rather than a
+ *    spike;
+ *  - peak = 2.56 × 3/4 = **1.92 m**, exactly half the 3.84 m layer height,
+ *    so a cone reads as half a wall next to one, and stacking a cone on a
+ *    wall caps the cell without dominating it;
+ *  - with {@link CONE_LEVELS} = 16 levels the per-level rise is 1.92/16 =
+ *    **0.12 m**, well under the 0.34 m auto step-up, so the roof stays
+ *    walkable from every side.
+ *
+ * Visual mesh, edit preview, hitscan and movement colliders all derive from
+ * this one constant (via {@link structureCuboids}).
+ */
+export const CONE_PEAK_HEIGHT: number = (BUILD_GRID.cellSize / 2) * 0.75;
 
 /** Upper bound on {@link structureCuboids} length per build type, for
  * consumers that pool one mesh per solid (e.g. the edit preview). */
@@ -116,12 +139,15 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
   }
 
   if (buildType === "cone") {
-    // Stepped pyramid: level j spans y ∈ [j, j+1]·lh/L with half-size
-    // (cs/2)·(L−j)/L. An edit keeps only the retained quadrants of every
-    // level (tile i: column i%2 along X, row ⌊i/2⌋ along Z, low → high).
+    // Stepped pyramid: level j spans y ∈ [j, j+1]·PEAK/L with half-size
+    // (cs/2)·(L−j)/L, PEAK = CONE_PEAK_HEIGHT (a low roof, not a full-layer
+    // spire). An edit keeps only the retained quadrants of every level —
+    // each retained quadrant is exactly one quarter of the full pyramid,
+    // shrinking toward the cell-centre apex (tile i: column i%2 along X,
+    // row ⌊i/2⌋ along Z, low → high).
     const tiles = editGrid?.kind === "floor_cone" && editGrid.tiles.length === 4
       ? editGrid.tiles : Array<boolean>(4).fill(true);
-    const rise = lh / CONE_LEVELS;
+    const rise = CONE_PEAK_HEIGHT / CONE_LEVELS;
     for (let j = 0; j < CONE_LEVELS; j++) {
       const s = (cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS;
       const cy = y + (j + 0.5) * rise;

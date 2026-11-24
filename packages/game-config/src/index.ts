@@ -6,6 +6,11 @@
  * not scattered across the codebase.
  */
 export { PLAYER_MOVEMENT, VERTICAL_MOVEMENT } from "./movement.js";
+export {
+  SHOT_EYE_HEIGHT_STANDING,
+  SHOT_EYE_HEIGHT_CROUCHED,
+  shotEyeHeight,
+} from "./shotOrigin.js";
 export { JUMP_INPUT_TIMING, PLAYER_PHYSICS } from "./physics.js";
 export {
   PLAYER_COLLIDER,
@@ -19,7 +24,7 @@ export {
 } from "./character.js";
 export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableArena } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
-export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
+export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
 export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
 export { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection, WALL_HIGH_FRACTION } from "./surfacePlacement.js";
 export type { StructureSurfaceHit, SurfacePlacement } from "./surfacePlacement.js";

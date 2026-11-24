@@ -68,12 +68,13 @@ describe("Building foundation — server-authoritative contract", () => {
     // Wait for the preparation countdown to finish so the phase is IN_PROGRESS.
     await wfs(roomA, (s) => (s as Record<string, any>)?.matchPhase === "IN_PROGRESS", 10_000);
     // Re-establish the legacy build geometry: prep-row spawns are 20.48 m
-    // apart, so walk both players to their old x≈∓5 stand spots first.
+    // apart, so walk both players to x≈∓2.56 (half a cell inside), which
+    // keeps every test anchor below the 10.24 m canonical reach with margin.
     const mp = (r: typeof roomA, seq: number, moveX: number) =>
       r.send(TWO_PLAYER_MOVEMENT_INPUT, { sequence: seq, moveX, moveZ: 0, lookYaw: 0, lookPitch: 0, jump: false, sprint: false, crouch: false, primaryFire: false, secondaryFire: false });
     let ms = 5000;
-    while (pfs(roomA.state, roomA.sessionId)?.x < -5.1) { mp(roomA, ms++, -1); await new Promise((r) => setTimeout(r, 40)); }
-    while (pfs(roomB.state, roomB.sessionId)?.x < 5.1) { mp(roomB, ms++, 1); await new Promise((r) => setTimeout(r, 40)); }
+    while (pfs(roomA.state, roomA.sessionId)?.x < -2.56) { mp(roomA, ms++, -1); await new Promise((r) => setTimeout(r, 40)); }
+    while (pfs(roomB.state, roomB.sessionId)?.x < 2.56) { mp(roomB, ms++, 1); await new Promise((r) => setTimeout(r, 40)); }
     mp(roomA, ms++, 0); mp(roomB, ms++, 0);
     await new Promise((r) => setTimeout(r, 200));
   }, 20_000);
@@ -114,8 +115,8 @@ describe("Building foundation — server-authoritative contract", () => {
   }, 15000);
 
   it("rejects out-of-range placement with out_of_range", async () => {
-    // Grid (2,0,2) → anchor ≈ (10.24, 0, 10.24); player A spawns at (-5, 0, 0),
-    // so the distance ≈ 18.4 m > 12 (in-bounds but out of range).
+    // Grid (2,0,2) → anchor ≈ (10.24, 0, 10.24); player A stands at ≈ (−2.56, 0, 0),
+    // so the distance ≈ 16.4 m > 10.24 (in-bounds but out of range).
     roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 104, buildType: "wall", grid: { x: 2, y: 0, z: 2 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 104, 5000, "range");
     expect(ev.reason).toBe("out_of_range");
@@ -125,7 +126,7 @@ describe("Building foundation — server-authoritative contract", () => {
 
   it("rejects rapid successive placement with rate_limited", async () => {
     await wait(RATE_WAIT);
-    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 105, buildType: "wall", grid: { x: 0, y: 0, z: 2 }, rotation: 0 });
+    roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 105, buildType: "wall", grid: { x: 0, y: 0, z: 1 }, rotation: 2 });
     await wfe(pA, (e) => e.structure.createdSequence === 105, 5000, "first");
     roomA.send(BUILD_EVENTS.PLACEMENT_REQUEST, { sequence: 106, buildType: "wall", grid: { x: 0, y: 0, z: 1 }, rotation: 0 });
     const ev = await wfe(rA, (e) => e.sequence === 106 && e.reason === "rate_limited", 5000, "rl");

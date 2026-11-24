@@ -94,9 +94,30 @@ export const BUILD_RANGE = {
   /**
    * Maximum distance, in metres, from the player's position to a placeable
    * grid cell. A placement whose anchor cell is farther than this is rejected
-   * with the `out_of_range` reason.
+   * with the `out_of_range` reason (client ghost AND the authoritative
+   * server share this single value, so they can never disagree).
+   *
+   * Canonical derivation: exactly TWO modular cells
+   * (`2 × BUILD_GRID.cellSize` = 10.24 m, measured to the anchor cell's
+   * base corner — the shared `placementAnchorWorld` origin both sides use).
+   * That reach covers the whole 3×3 neighbourhood of the player's own tile
+   * at the same or an adjacent layer (worst case a diagonal neighbour one
+   * layer up: √(5.12² + 5.12² + 3.84²) ≈ 8.2 m) plus two layers straight
+   * up, while refusing the "far side of the arena" ghosting a 12 m window
+   * allowed at grazing crosshair angles.
+   *
+   * Arena intent, verified against the real dimensions (cellSize 5.12,
+   * 5-column arena, spawns on the outer rows at x = ∓10.24, QA
+   * build-feel-20261123): from an own-row spawn the CENTRE row is directly
+   * reachable in the spawn's own column (distance exactly 10.24 m — the
+   * inclusive limit) and every nearer tile is comfortably inside; only the
+   * centre row's ADJACENT columns (hypot(10.24, 5.12) ≈ 11.45 m) fall
+   * outside, and the fix is the natural one — step one column over first.
+   * The 12 m window this replaced bought those diagonal tiles at the cost
+   * of ghosting the far side of the arena, so the trim is the intended
+   * "reach the nearby cells" feel, not an over-tightening.
    */
-  maxPlacementDistance: 12,
+  maxPlacementDistance: 10.24,
 } as const;
 
 // ─────────────────────────── Rate configuration ──────────────────────────────

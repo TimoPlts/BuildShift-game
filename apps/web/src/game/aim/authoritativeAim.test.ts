@@ -4,7 +4,8 @@
  * These pin the client-side reticle/tracer resolver against the SAME shared
  * primitives the server `TwoPlayerMovementRoom.rf` uses (`hitscan`,
  * `rayStructureIntersection`, `structureCuboids`) and the exact server
- * constants (`VERTICAL_MOVEMENT.playerHalfHeight` eye height, standing target
+ * constants (`SHOT_EYE_HEIGHT_STANDING` shot-eye origin — the canonical
+ * firing eye shared with the server, standing target
  * radius 0.4, crouched eye/radius, ASSAULT_RIFLE/SHOTGUN ranges — NOT the
  * unused legacy/id-table lookups). The point is parity of the *shot ray
  * geometry*, which is what the projected reticle and converged tracer render.
@@ -13,10 +14,11 @@ import { describe, expect, it } from "vitest";
 import {
   ASSAULT_RIFLE,
   SHOTGUN,
-  VERTICAL_MOVEMENT,
   PLAYER_COLLIDER_HALF_TOTAL_HEIGHT,
   PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
   PLAYER_CROUCH_COLLIDER,
+  SHOT_EYE_HEIGHT_STANDING,
+  SHOT_EYE_HEIGHT_CROUCHED,
   BUILD_GRID,
   rayStructureIntersection,
   structureCuboids,
@@ -38,22 +40,34 @@ function ad(yaw: number, pitch: number): AimVec3 {
   return { x: Math.sin(yaw) * c, y: Math.sin(pitch), z: -Math.cos(yaw) * c };
 }
 
-describe("authoritative aim origin (server rf eye origin)", () => {
-  it("stands at VERTICAL_MOVEMENT.playerHalfHeight over the feet (server EH)", () => {
-    // The server fires from `y + playerHalfHeight` with y = feet. Pin the
-    // identity the client mirror relies on (game-config documents it).
-    expect(VERTICAL_MOVEMENT.playerHalfHeight).toBe(0.9);
-    expect(AIM_EYE_HEIGHT_STANDING).toBe(VERTICAL_MOVEMENT.playerHalfHeight);
-    expect(AIM_EYE_HEIGHT_STANDING).toBe(PLAYER_COLLIDER_HALF_TOTAL_HEIGHT);
+describe("authoritative aim origin (canonical shared shot eye, client == server)", () => {
+  it("stands at the shared SHOT_EYE_HEIGHT_STANDING over the feet", () => {
+    // The camera pivot, the centred reticle ray and the server `rf` origin are
+    // the SAME canonical point, sourced from ONE game-config constant. It is
+    // deliberately NOT the collider-derived capsule centre (0.9): with that
+    // origin the level reticle met walls at 23 % of the layer height (waist
+    // line); 1.2 m puts it at the bottom/middle edit-row boundary — sternum
+    // height of the 1.8 m body. See `shotOrigin.ts` for the hit-validity
+    // (gap ≤ crouch target radius) derivation.
+    expect(SHOT_EYE_HEIGHT_STANDING).toBe(1.2);
+    expect(AIM_EYE_HEIGHT_STANDING).toBe(SHOT_EYE_HEIGHT_STANDING);
     const o = authoritativeAimOrigin({ x: 3, y: 0, z: -7 }, false);
-    expect(o).toEqual({ x: 3, y: 0.9, z: -7 });
+    expect(o).toEqual({ x: 3, y: 1.2, z: -7 });
   });
 
-  it("crouches to the crouch collider half-total (server crouch origin)", () => {
-    expect(AIM_EYE_HEIGHT_CROUCHED).toBe(PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT);
+  it("crouches to the shared SHOT_EYE_HEIGHT_CROUCHED (gap-preserving)", () => {
+    // Standing and crouch origins move together so the standing-vs-crouch
+    // centre gap stays 0.3 m — the pre-change gap, which is what keeps
+    // cross-state hit validity (0.3 ≤ crouch target radius 0.35) unchanged.
+    expect(SHOT_EYE_HEIGHT_CROUCHED).toBe(0.9);
+    expect(AIM_EYE_HEIGHT_STANDING - AIM_EYE_HEIGHT_CROUCHED).toBeCloseTo(
+      PLAYER_COLLIDER_HALF_TOTAL_HEIGHT - PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT,
+      12,
+    );
+    expect(AIM_EYE_HEIGHT_CROUCHED).toBe(SHOT_EYE_HEIGHT_CROUCHED);
     expect(AIM_EYE_HEIGHT_CROUCHED).toBeLessThan(AIM_EYE_HEIGHT_STANDING);
     const o = authoritativeAimOrigin({ x: 0, y: 2, z: 0 }, true);
-    expect(o.y).toBe(2 + PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT);
+    expect(o.y).toBe(2 + SHOT_EYE_HEIGHT_CROUCHED);
   });
 
   it("uses the server target radii (0.4 standing, crouch collider radius)", () => {
@@ -83,7 +97,7 @@ describe("resolveAuthoritativeAimPoint — shot-ray endpoint", () => {
       expect(r.kind).toBe("range-end");
       expect(r.distance).toBeCloseTo(60, 6);
       expect(r.point.x).toBeCloseTo(0, 9);
-      expect(r.point.y).toBeCloseTo(0.9 + Math.sin(pitch) * 60, 9);
+      expect(r.point.y).toBeCloseTo(SHOT_EYE_HEIGHT_STANDING + Math.sin(pitch) * 60, 9);
       expect(r.point.z).toBeCloseTo(-Math.cos(pitch) * 60, 9);
     }
   });
@@ -135,8 +149,9 @@ describe("resolveAuthoritativeAimPoint — shot-ray endpoint", () => {
       remotePlayers: [{ id: "p2", feet: { x: 0, y: 0, z: -12 }, crouch: true }],
       structures: [],
     });
-    // eye 0.9 vs crouch centre 0.6 → perpendicular 0.3 < 0.35 → hit; the
-    // shared resolver reports the ray-sphere ENTRY distance:
+    // Standing eye 1.2 vs crouch centre 0.9 → perpendicular 0.3 < 0.35 →
+    // hit (gap-preserving: the same 0.3 gap as before the shot-eye lift);
+    // the shared resolver reports the ray-sphere ENTRY distance:
     // 12 − √(0.35² − 0.3²).
     expect(r.kind).toBe("player");
     expect(r.distance).toBeCloseTo(12 - Math.sqrt(0.35 * 0.35 - 0.3 * 0.3), 6);
@@ -214,7 +229,7 @@ describe("resolveAuthoritativeAimPoint — shot-ray endpoint", () => {
     // The tile layout is server geometry; assert only parity with the shared
     // function itself (same call the room makes), whatever it concludes.
     const expected = rayStructureIntersection(
-      { x: 0, y: 0.9, z: 0 }, ad(0, 0), 60,
+      { x: 0, y: SHOT_EYE_HEIGHT_STANDING, z: 0 }, ad(0, 0), 60,
       structureCuboids({ buildType: "wall", grid: { x: 0, y: 0, z: -3 }, rotation: 0, editGrid: { kind: "wall", tiles } }),
     );
     if (expected) {

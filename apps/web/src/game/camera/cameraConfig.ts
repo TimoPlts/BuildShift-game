@@ -17,8 +17,14 @@ export const THIRD_PERSON_CAMERA = {
    * measured ALONG the shot line. Presentation only: the tracking distance
    * never rotates the view or moves the aim ray, and `minimumCameraDistance`
    * still bounds how far the guards may dolly in.
+   *
+   * Tuned for over-shoulder framing (framing-20261119): at the previous 5.2 m
+   * the visible 1.8 m body occupied only ~20 % of screen height (≈148 px at
+   * 720p) and read as a distant mannequin beside its own builds. 3.7 m puts
+   * the body at a Fortnite-order foreground share while the along-line-only
+   * contract below keeps every aim guarantee exact.
    */
-  distance: 5.2,
+  distance: 3.7,
   /**
    * Along-line recoil kickback (metres of camera pull-back per radian of
    * {@link CameraRecoil} output). View *rotation* recoil was removed because
@@ -78,4 +84,26 @@ export const THIRD_PERSON_CAMERA = {
    * (Z-fighting). Only shrinks the along-line distance — aim is untouched.
    */
   buildObstructionGap: 0.1,
+  /**
+   * Self-surface guard (build-feel-20261123): an obstacle AABB containing
+   * the eye origin (inflated by this margin, metres) is a *self-surface*
+   * hit — the player is standing on/inside that volume, so dollying the
+   * camera toward `t ≈ 0` cannot free it and instead buries the camera at
+   * `minimumCameraDistance` inside the build (the reported "whole world
+   * disappears" zoom). Such boxes are skipped; every box the eye is NOT
+   * inside still obstructs exactly as before, so real wall/ceiling safety
+   * is untouched. Small on purpose (2 cm): only genuine containment (or
+   * surface contact within the margin) counts as self-surface.
+   */
+  obstructionSelfMargin: 0.02,
+  /**
+   * Obstruction dolly recovery speed (metres/second along the shot line).
+   * Hysteresis: the guard dollies IN instantly when a solid appears (never
+   * clips), but RELEASES back toward the nominal distance only at this
+   * rate. Walking past build edges, ramps/cones or over step-ups therefore
+   * eases back out instead of snapping — the "sudden zoom" read is gone
+   * while the along-line-only contract (and so the centred crosshair) is
+   * unchanged: this smooths the scalar `t`, never the ray.
+   */
+  obstructionRecoveryMetersPerSecond: 5,
 } as const;

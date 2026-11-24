@@ -24,6 +24,9 @@ describe("THIRD_PERSON_CAMERA (config smoke test)", () => {
       THIRD_PERSON_CAMERA.maximumPitch,
       THIRD_PERSON_CAMERA.minimumCameraHeight,
       THIRD_PERSON_CAMERA.minimumCameraDistance,
+      THIRD_PERSON_CAMERA.buildObstructionGap,
+      THIRD_PERSON_CAMERA.obstructionSelfMargin,
+      THIRD_PERSON_CAMERA.obstructionRecoveryMetersPerSecond,
     ]) {
       expect(value).toBeTypeOf("number");
       expect(Number.isFinite(value)).toBe(true);
@@ -50,6 +53,14 @@ describe("THIRD_PERSON_CAMERA (config smoke test)", () => {
       THIRD_PERSON_CAMERA.distance,
     );
     expect(THIRD_PERSON_CAMERA.minimumCameraHeight).toBeGreaterThanOrEqual(0);
+    // Obstruction stability (build-feel-20261123): the self-surface margin
+    // is a small surface-contact tolerance, and recovery is a finite,
+    // positive glide speed (instant would be the sudden-zoom regression,
+    // zero would strand the camera dolled in).
+    expect(THIRD_PERSON_CAMERA.obstructionSelfMargin).toBeGreaterThan(0);
+    expect(THIRD_PERSON_CAMERA.obstructionSelfMargin).toBeLessThan(0.5);
+    expect(THIRD_PERSON_CAMERA.obstructionRecoveryMetersPerSecond).toBeGreaterThan(0);
+    expect(THIRD_PERSON_CAMERA.obstructionRecoveryMetersPerSecond).toBeLessThan(20);
   });
 
   it("keeps the floor guard satisfiable at max pitch for both eye heights", () => {

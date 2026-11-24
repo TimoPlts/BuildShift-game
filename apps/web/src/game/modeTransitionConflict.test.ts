@@ -364,7 +364,9 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
       ["Mouse3", "wall", aimCell(-2, 0)],
       ["Mouse4", "ramp", aimCell(0, 0)],
       ["KeyQ", "floor", aimCell(-1, 1)],
-      ["KeyF", "cone", aimCell(2, 1)],
+      // (2, 1) is 11.44 m out — beyond the canonical 10.24 m (two-cell)
+      // reach; aim the last piece at a cell the bounded ghost accepts.
+      ["KeyF", "cone", aimCell(2, 0)],
     ];
     plan.forEach(([code, , aim], i) => {
       fixture.press(code);

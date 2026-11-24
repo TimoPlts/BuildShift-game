@@ -57,7 +57,7 @@ describe("canonical build slots (authoritative)", () => {
     room.onJoin(b);
     internal.br();
     // Stand A at the ramp tile so every test placement is in range.
-    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 0 });
+    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 1 }); // half a cell toward the build stack: every anchor stays inside the 2-cell canonical reach
     Object.assign(internal.state.players.get("b")!, { x: 0, y: 0, z: 2 });
   });
 
@@ -69,7 +69,7 @@ describe("canonical build slots (authoritative)", () => {
 
   /** Re-stand the players at the ramp tile (round resets re-spawn them). */
   const standIn = () => {
-    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 0 });
+    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 1 }); // half a cell toward the build stack: every anchor stays inside the 2-cell canonical reach
     Object.assign(internal.state.players.get("b")!, { x: 0, y: 0, z: 2 });
   };
 

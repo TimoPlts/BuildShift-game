@@ -98,17 +98,17 @@ describe("placement preview rotation (shared canonical rule)", () => {
     }
   });
 
-  it("walls keep the selected (locked) orientation: the aim only picks the nearer parallel edge of the aimed tile", () => {
+  it("walls follow the crosshair: the wall stands on the aimed tile's edge nearest the aim, whatever quarter turn was selected", () => {
     const cs = BUILD_GRID.cellSize;
     const at = (dx: number, dz: number, rotation: GridRotation) => computePlacementPreview({
       aimOrigin: { x: dx, y: 5, z: dz }, aimDirection: { x: 0, y: -1, z: 0 }, playerPosition: { x: 0, y: 0, z: 0 },
       buildType: "wall", rotation, occupied: [],
     });
     const aims: Array<[number, number]> = [[0.3, -cs / 2 + 0.4], [cs / 2 - 0.4, 0.2], [-0.1, cs / 2 - 0.3], [-cs / 2 + 0.2, 0.5]];
-    // Z-edge orientation (selected 2): never an X edge, wherever the aim lands.
-    expect(aims.map(([x, z]) => at(x, z, 2).rotation)).toEqual([0, 2, 2, 2]);
-    // X-edge orientation (selected 1).
-    expect(aims.map(([x, z]) => at(x, z, 1).rotation)).toEqual([1, 1, 3, 3]);
+    // Each aim sits nearest the −Z / +X / +Z / −X edge — and the previously
+    // selected rotation cannot pin the wall to a different axis.
+    expect(aims.map(([x, z]) => at(x, z, 2).rotation)).toEqual([0, 1, 2, 3]);
+    expect(aims.map(([x, z]) => at(x, z, 1).rotation)).toEqual([0, 1, 2, 3]);
     for (const p of [at(0.3, -2, 2), at(2, 0.3, 1)]) expect(p.grid).toEqual({ x: 0, y: 0, z: 0 });
   });
 
@@ -205,9 +205,10 @@ describe("rotation binds, turbo and piece switching", () => {
     f.key("KeyR"); // rotation 1 selected
     const plan: Array<[string, BuildType, number]> = [["Mouse3", "wall", -2], ["KeyQ", "floor", -1], ["Mouse4", "ramp", 0], ["KeyF", "cone", 2]];
     for (const [code, , x] of plan) { f.key(code); f.frame(x, 0, true); }
-    // The wall keeps the selected X-edge orientation (aim at the tile centre →
-    // its −X edge); the ramp keeps the selected rotation; floor / cone normalize to 0.
-    expect(f.sent.map(r => [r.buildType, r.rotation])).toEqual([["wall", 3], ["floor", 0], ["ramp", 1], ["cone", 0]]);
+    // The wall follows the crosshair: aiming at the tile centre (exactly on
+    // the −Z/+X diagonal) deterministically picks the −Z edge (0); the ramp
+    // keeps the selected rotation; floor / cone normalize to 0.
+    expect(f.sent.map(r => [r.buildType, r.rotation])).toEqual([["wall", 0], ["floor", 0], ["ramp", 1], ["cone", 0]]);
     for (const r of f.sent) expect(isValidPlacementRotation(r.buildType as string, r.rotation as number)).toBe(true);
     // The selection itself is preserved for the next rotatable piece.
     expect(f.input.getRotation()).toBe(1);
@@ -339,9 +340,12 @@ describe("aiming up with no structure in the way targets the next layer (the cei
     const p = up("floor", 0);
     expect([p.valid, p.grid]).toEqual([true, { x: 0, y: 1, z: 0 }]);
   });
-  it("from a layer-1 floor: the next roof on layer 2; a wall there keeps the locked orientation", () => {
+  it("from a layer-1 floor: the next roof on layer 2; a wall there follows the crosshair's edge", () => {
     expect(up("floor", BUILD_GRID.layerHeight + 0.15).grid).toEqual({ x: 0, y: 2, z: 0 });
-    expect(up("wall", BUILD_GRID.layerHeight + 0.15).rotation % 2).toBe(0);
+    // The ceiling aim lands at x ≈ 0.3 (+ side), z ≈ 0.2 of tile (0,2,0):
+    // nearest edge is +X (rotation 1), following the crosshair — the selected
+    // rotation 0 no longer locks it to a Z edge.
+    expect(up("wall", BUILD_GRID.layerHeight + 0.15).rotation).toBe(1);
   });
   it("a structure nearer than the ceiling still wins (build from its surface)", () => {
     const p = up("floor", 0, [{ buildType: "floor", grid: { x: 0, y: 1, z: 0 } }]); // the roof already there: hit its underside

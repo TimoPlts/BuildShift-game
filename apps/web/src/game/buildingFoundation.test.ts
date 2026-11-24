@@ -130,13 +130,14 @@ describe("placementPreview", () => {
     }));
     expect(computePlacementPreview(mi({ occupied })).valid).toBe(true);
   });
-  it("a wall keeps its locked orientation: the camera aim only picks the nearer of the two parallel edges", () => {
+  it("a wall follows the crosshair: the aim picks the aimed tile's nearest edge, whatever orientation was selected", () => {
     for (const rotation of [0, 1, 2, 3] as const) {
       // Aim straight down 2 m toward +X (0.1 m toward +Z) from the tile centre.
       const p = computePlacementPreview(mi({ buildType: "wall", rotation, aimOrigin: { x: 2, y: 5, z: 0.1 } }));
       expect(p.valid).toBe(true);
-      // Z-edge orientation (0/2) → the +Z edge; X-edge orientation (1/3) → the +X edge.
-      expect(p.rotation).toBe(rotation % 2 === 0 ? 2 : 1);
+      // The aim is nearest the +X edge — the selected quarter turn no longer
+      // pins the wall to its own axis (aiming around the tile IS the wall aim).
+      expect(p.rotation).toBe(1);
     }
   });
   it("ABSENT_PREVIEW frozen", () => {

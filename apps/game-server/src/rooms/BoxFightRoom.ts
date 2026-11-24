@@ -12,7 +12,7 @@
  */
 import { Room, type Client } from "@colyseus/core";
 import { isWeaponType, isBuildEditType, type Vec3 } from "@buildshift/protocol";
-import { weapons, isBuildEditAllowedForStructure, getStructureConfig, MAX_HEALTH, MAX_SHIELD, PLAYER_MOVEMENT, VERTICAL_MOVEMENT, type ShotgunWeaponConfig } from "@buildshift/game-config";
+import { weapons, isBuildEditAllowedForStructure, getStructureConfig, MAX_HEALTH, MAX_SHIELD, PLAYER_MOVEMENT, VERTICAL_MOVEMENT, SHOT_EYE_HEIGHT_STANDING, type ShotgunWeaponConfig } from "@buildshift/game-config";
 import { stepPlayerMovement, movementInputToWorld, hitscan } from "@buildshift/simulation";
 import { BuildingStateSchema, wc, type BuildingStateSchemaInstance } from "../state/buildingState.js";
 import {
@@ -26,7 +26,7 @@ import {
 
 const THZ = 30;
 const TD = 1 / THZ;
-const PHH = VERTICAL_MOVEMENT.playerHalfHeight;
+const PHH = SHOT_EYE_HEIGHT_STANDING;
 const MC = {
   moveSpeed: PLAYER_MOVEMENT.moveSpeed,
   gravity: VERTICAL_MOVEMENT.gravity,

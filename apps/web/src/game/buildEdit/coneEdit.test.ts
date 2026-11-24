@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILD_GRID,
+  CONE_PEAK_HEIGHT,
 } from "@buildshift/game-config";
 import { FLOOR_CONE_EDIT_TILE_COUNT } from "@buildshift/protocol";
 
@@ -245,7 +246,7 @@ describe("resetConeEditState", () => {
 // ─── Generated geometry ────────────────────────────────────────────────────
 
 describe("coneGeometryFromTiles", () => {
-  it("full cone: four solid corners, full height, isFull true", () => {
+  it("full cone: four solid corners at the roof peak, isFull true", () => {
     const g = coneGeometryFromTiles([true, true, true, true]);
     expect(g.shape).toBe("full");
     expect(g.cornerHeights).toEqual([1, 1, 1, 1]);
@@ -253,7 +254,7 @@ describe("coneGeometryFromTiles", () => {
     expect(g.isFull).toBe(true);
     expect(g.isEmpty).toBe(false);
     for (const corner of g.baseCorners) {
-      expect(corner.height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
+      expect(corner.height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
     }
   });
 
@@ -265,9 +266,9 @@ describe("coneGeometryFromTiles", () => {
     expect(g.isFull).toBe(false);
     expect(g.isEmpty).toBe(false);
     expect(g.baseCorners[0].height).toBe(0);
-    expect(g.baseCorners[1].height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
-    expect(g.baseCorners[2].height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
-    expect(g.baseCorners[3].height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
+    expect(g.baseCorners[1].height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
+    expect(g.baseCorners[2].height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
+    expect(g.baseCorners[3].height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
   });
 
   it("half/directional: two adjacent corners present", () => {
@@ -275,7 +276,7 @@ describe("coneGeometryFromTiles", () => {
     expect(g.shape).toBe("half_north");
     expect(g.solidCount).toBe(2);
     expect(g.cornerHeights).toEqual([1, 1, 0, 0]);
-    expect(g.baseCorners[0].height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
+    expect(g.baseCorners[0].height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
     expect(g.baseCorners[3].height).toBe(0);
   });
 
@@ -297,15 +298,15 @@ describe("coneGeometryFromTiles", () => {
     }
   });
 
-  it("emits four base-corner anchors at the canonical cell corners", () => {
+  it("emits four base-corner anchors at the canonical cell corners (centred on the anchor)", () => {
     const c = BUILD_GRID.cellSize;
     const g = coneGeometryFromTiles([true, true, true, true]);
     expect(g.baseCorners).toHaveLength(4);
-    // NW, NE, SW, SE local X/Z offsets.
-    expect(g.baseCorners[0]).toMatchObject({ index: 0, name: "NW", x: 0, z: 0 });
-    expect(g.baseCorners[1]).toMatchObject({ index: 1, name: "NE", x: c, z: 0 });
-    expect(g.baseCorners[2]).toMatchObject({ index: 2, name: "SW", x: 0, z: c });
-    expect(g.baseCorners[3]).toMatchObject({ index: 3, name: "SE", x: c, z: c });
+    // NW, NE, SW, SE local X/Z offsets from the footprint centre.
+    expect(g.baseCorners[0]).toMatchObject({ index: 0, name: "NW", x: -c / 2, z: -c / 2 });
+    expect(g.baseCorners[1]).toMatchObject({ index: 1, name: "NE", x: c / 2, z: -c / 2 });
+    expect(g.baseCorners[2]).toMatchObject({ index: 2, name: "SW", x: -c / 2, z: c / 2 });
+    expect(g.baseCorners[3]).toMatchObject({ index: 3, name: "SE", x: c / 2, z: c / 2 });
   });
 
   it("is serializable (JSON round-trip preserves the descriptor)", () => {
@@ -319,10 +320,10 @@ describe("coneGeometryFromTiles", () => {
     expect(round.baseCorners).toEqual(g.baseCorners);
   });
 
-  it("agrees with the canonical grid (height = layerHeight, offsets = cellSize)", () => {
+  it("agrees with the canonical roof (height = CONE_PEAK_HEIGHT, corners = ±cellSize/2 about the anchor)", () => {
     const g = coneGeometryFromTiles([true, true, false, false]);
-    expect(g.baseCorners[0].height).toBeCloseTo(BUILD_GRID.layerHeight, 8);
-    expect(g.baseCorners[1].x).toBeCloseTo(BUILD_GRID.cellSize, 8);
+    expect(g.baseCorners[0].height).toBeCloseTo(CONE_PEAK_HEIGHT, 8);
+    expect(g.baseCorners[1].x).toBeCloseTo(BUILD_GRID.cellSize / 2, 8);
   });
 
   it("coneGeometryFromState matches coneGeometryFromTiles for the same tiles", () => {

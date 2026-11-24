@@ -109,6 +109,17 @@ export class ThirdPersonCameraController {
    * Updated each frame by the runtime; empty array = no obstruction.
    */
   private obstacles: ReadonlyArray<ObstacleAABB> = [];
+  /**
+   * Hysteretically-smoothed obstruction limit (metres along the shot line,
+   * Infinity = no limit). The limit snaps DOWN instantly when a solid
+   * appears in front of the dolly (the camera must never clip), but only
+   * releases back toward the nominal tracking distance at
+   * `obstructionRecoveryMetersPerSecond`. This is the stable recovery that
+   * stops walk-past-a-build-edge / step-up / jump / crouch distance changes
+   * from reading as sudden zooms. Purely a scalar on the line — the
+   * rendered centre ray is unaffected.
+   */
+  private smoothedObstructionLimit = Number.POSITIVE_INFINITY;
 
   public constructor(scene: Scene) {
     this.camera = new UniversalCamera(
@@ -280,8 +291,15 @@ export class ThirdPersonCameraController {
    * along-line recoil/bob nudges, and may only be *shrunk* by the floor and
    * structure guards below, never clamped back above the guard's limit in a
    * way that leaves the line (see {@link ThirdPersonCameraController}).
+   *
+   * @param feetPosition - the player's ground anchor (server feet convention
+   * when connected).
+   * @param deltaSeconds - frame delta used for the obstruction dolly's
+   * recovery easing (see {@link smoothedObstructionLimit}); the dolly-in
+   * side of the smoothing is dt-independent (instant). Defaults to a 60 Hz
+   * frame so existing call sites keep working; clamped to \[0, 0.1\] s.
    */
-  public update(feetPosition: Readonly<Vector3>): void {
+  public update(feetPosition: Readonly<Vector3>, deltaSeconds = 1 / 60): void {
     if (this.disposed) {
       return;
     }
@@ -291,6 +309,8 @@ export class ThirdPersonCameraController {
       minimumCameraHeight,
       minimumCameraDistance,
       buildObstructionGap,
+      obstructionSelfMargin,
+      obstructionRecoveryMetersPerSecond,
     } = THIRD_PERSON_CAMERA;
 
     // The authoritative eye origin — the exact point the server `rf` fires
@@ -323,21 +343,65 @@ export class ThirdPersonCameraController {
 
     // Structure guard: if the shot line behind the eye passes through a
     // solid build structure, dolly in to just before the nearest hit.
+    // Two stability rules (build-feel-20261123):
+    //  1. Self-surface skip — a box CONTAINING the eye origin is a volume
+    //     the player is standing on/inside. The backward ray starts inside
+    //     it (t = 0), and dollying to `0 - gap` buries the camera at
+    //     minimum distance inside the build (the "world disappears" zoom).
+    //     Skipping it cannot strand the camera in a wall the player is NOT
+    //     inside — those still obstruct. The obstruction inputs themselves
+    //     are the canonical solids (`structureCuboids` via
+    //     `computeStructureObstacles`), so walkable support only ever
+    //     obstructs as the thin slabs / pyramid levels where they actually
+    //     stand, never as a full-volume phantom column.
+    //  2. Hysteresis — the combined limit snaps down instantly (never clip)
+    //     but releases at `obstructionRecoveryMetersPerSecond`, so walks
+    //     past build edges, steps, jumps and crouches ease back out of a
+    //     dolly instead of snapping.
+    let rawObstructionLimit = Number.POSITIVE_INFINITY;
     if (this.obstacles.length > 0) {
       const ndX = -dir.x;
       const ndY = -dir.y;
       const ndZ = -dir.z;
+      const selfMargin = obstructionSelfMargin;
       for (const obs of this.obstacles) {
+        if (
+          eyeX > obs.min[0] - selfMargin && eyeX < obs.max[0] + selfMargin &&
+          eyeY > obs.min[1] - selfMargin && eyeY < obs.max[1] + selfMargin &&
+          eyeZ > obs.min[2] - selfMargin && eyeZ < obs.max[2] + selfMargin
+        ) {
+          continue; // self-surface: the player is inside this solid volume
+        }
         const t = rayAABBDistance(
           eyeX, eyeY, eyeZ,
           ndX, ndY, ndZ,
           obs.min[0], obs.min[1], obs.min[2],
           obs.max[0], obs.max[1], obs.max[2],
         );
-        if (t !== null && t < trackingDistance) {
-          trackingDistance = t - buildObstructionGap;
+        if (t !== null) {
+          const limit = t - buildObstructionGap;
+          if (limit < rawObstructionLimit) {
+            rawObstructionLimit = limit;
+          }
         }
       }
+    }
+    if (rawObstructionLimit < this.smoothedObstructionLimit) {
+      // Dolly-in: instant, so the camera can never pass through the solid.
+      this.smoothedObstructionLimit = rawObstructionLimit;
+    } else if (Number.isFinite(this.smoothedObstructionLimit)) {
+      // Recovery: finite speed back toward "no limit" (capped at the
+      // nominal distance — any limit beyond it is indistinguishable from
+      // no obstruction).
+      const dt = clamp(deltaSeconds, 0, MAX_SMOOTHING_DELTA);
+      this.smoothedObstructionLimit = Math.min(
+        rawObstructionLimit,
+        distance,
+        this.smoothedObstructionLimit + obstructionRecoveryMetersPerSecond * dt,
+      );
+    }
+    if (this.smoothedObstructionLimit < trackingDistance) {
+      trackingDistance = this.smoothedObstructionLimit;
     }
 
     if (trackingDistance < minimumCameraDistance) {
@@ -379,6 +443,11 @@ export class ThirdPersonCameraController {
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
 }
+
+/** Upper bound on the frame delta fed to the obstruction-dolly recovery
+ * easing: a paused or backgrounded tab must not instantly unwind a dolly
+ * (and recovery must not depend on a huge dt). */
+const MAX_SMOOTHING_DELTA = 0.1;
 
 /** Folds an unbounded angle into [-π, π] so long sessions stay bounded. */
 function normalizeAngle(angle: number): number {

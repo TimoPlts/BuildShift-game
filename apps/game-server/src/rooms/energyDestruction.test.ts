@@ -136,7 +136,7 @@ await W(400);
 const lenB=rej.length;
 ra.send(BE.PLACEMENT_REQUEST,{sequence:210,buildType:"floor",grid:{x:0,y:0,z:1},rotation:0});
 await W(100);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:211,buildType:"wall",grid:{x:1,y:0,z:1},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:211,buildType:"wall",grid:{x:0,y:0,z:1},rotation:0});
 await W(500);
 const rr=rej.slice(lenB).find(r=>r.sequence===211&&r.reason==="rate_limited");
 expect(rr).toBeDefined();
@@ -145,18 +145,21 @@ expect(pl(ra.state,ra.sessionId).energy).toBeGreaterThanOrEqual(95);
 
 it("wall cost 10",async()=>{
 await W(400);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:202,buildType:"wall",grid:{x:1,y:0,z:1},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:202,buildType:"wall",grid:{x:0,y:0,z:1},rotation:2});
 const ev=await wfe(eu,(e)=>e.playerId===ra.sessionId&&e.energy===90,5000,"w");
 expect(ev.energy).toBe(90);
 },15000);
 
 it("damage+destroy+remove",async()=>{
 await W(600);
-ra.send(BE.PLACEMENT_REQUEST,{sequence:203,buildType:"cone",grid:{x:1,y:0,z:0},rotation:0});
+ra.send(BE.PLACEMENT_REQUEST,{sequence:203,buildType:"cone",grid:{x:0,y:0,z:0},rotation:0});
 await wfe(spA,(e)=>e.structure.createdSequence===203,5000,"cone");
 const sid=spA.find(e=>e.structure.createdSequence===203)!.structure.structureId;
+// Aim level (pitch 0): the canonical cone is the low roof pyramid
+// (CONE_PEAK_HEIGHT = 1.92 m) and the shot eye sits at 1.2 m — the legacy
+// +0.1 pitch was tuned to the old full-layer spike and now clears the roof.
 for(const q of[300,310,320,330]){
-ra.send(TMI,{sequence:q,moveX:0,moveZ:0,lookYaw:Math.PI/2,lookPitch:Math.atan2(0.1,1),jump:false,sprint:false,crouch:false,primaryFire:true,secondaryFire:false});
+ra.send(TMI,{sequence:q,moveX:0,moveZ:0,lookYaw:Math.PI/2,lookPitch:0,jump:false,sprint:false,crouch:false,primaryFire:true,secondaryFire:false});
 await W(300);
 }
 const de=await wfe(sd,(e)=>e.structureId===sid,5000,"dm");

@@ -13,8 +13,10 @@
  *    row 0 is the top row;
  *  - floor 2×2 — the slab's mid-plane; column = world X half, row = world Z
  *    half (floors are rotation-invariant);
- *  - cone 2×2 — the horizontal plane at half the pyramid's height, same
- *    column/row convention as floors;
+ *  - cone 2×2 — where the aim ray hits the canonical cone solid itself, so
+ *    the highlighted corner is always the corner of the visible/colliding
+ *    roof under the crosshair; `(u, v)` express the hit's base quadrant,
+ *    same column/row convention as floors;
  *  - fallback (all tile pieces) — when the crosshair is on the piece's
  *    selection volume but the plane point lies off the grid (a cone seen
  *    from the side, a wall aimed at from above), the point where the ray
@@ -33,7 +35,7 @@
  * pressed decides the drag's meaning for the whole drag (select = mark for
  * removal, or deselect = restore), so revisiting a tile never toggles it back.
  */
-import { BUILD_GRID, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, rayStructureIntersection, structureCuboids, wallEdgeCenter } from "@buildshift/game-config";
 import type { BuildType, GridPosition, GridRotation } from "@buildshift/protocol";
 import { rayAabbDistance, structureAabb, type Vec3Like } from "./structureSelection";
 
@@ -118,6 +120,33 @@ export function sampleEditSurface(
     return t > 0 && t <= maxRange ? t : null;
   };
 
+  if (piece.buildType === "cone") {
+    // Cone: sample the canonical stepped solid directly. The roof's base
+    // quadrant under the hit point IS the corner tile, so whatever the
+    // crosshair is on (any face of the shape the camera shows, the
+    // colliders move against and hitscan resolves) selects that corner —
+    // no half-height plane whose cross-section covers only the middle of
+    // the footprint (which made outer-base aims resolve to random corners).
+    const hit = rayStructureIntersection(
+      origin,
+      dir,
+      maxRange,
+      structureCuboids({ buildType: "cone", grid: piece.grid, rotation: piece.rotation }),
+    );
+    if (hit) {
+      const edge = size.cols * (1 - 1e-9);
+      return {
+        kind: "tiles",
+        u: Math.min(edge, Math.max(0, (hit.point.x - ax + cs / 2) / (cs / 2))),
+        v: Math.min(size.rows * (1 - 1e-9), Math.max(0, (hit.point.z - az + cs / 2) / (cs / 2))),
+        inside: true,
+        distance: hit.distance,
+      };
+    }
+    // No solid hit (crosshair on the piece's selection AABB but past the
+    // roof's slopes): fall through to the volume-entry mapping below.
+  }
+
   let u: number;
   let v: number;
   let t: number | null;
@@ -153,8 +182,8 @@ export function sampleEditSurface(
       }
     }
   } else {
-    // Floor: the slab's mid-plane. Cone: half the pyramid's height.
-    const planeY = ay + (piece.buildType === "floor" ? 0.075 : lh / 2);
+    // Floor: the slab's mid-plane. Cone (fallback): half the roof peak.
+    const planeY = ay + (piece.buildType === "floor" ? 0.075 : CONE_PEAK_HEIGHT / 2);
     t = planeT(origin.y, dir.y, planeY);
     const toUv = (tt: number) => [
       (origin.x + dir.x * tt - ax + cs / 2) / (cs / 2),

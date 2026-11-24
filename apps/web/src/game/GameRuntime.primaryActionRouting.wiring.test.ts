@@ -21,8 +21,9 @@
  *    themselves are gated on effective weapon mode + `IN_PROGRESS` +
  *    connected + not eliminated (matching the server's authority gates);
  *  - the building frame receives the routed `buildPlaceHeld` **and**
- *    `buildPlacePressed` plus the `inRound` gate, so placement intents are
- *    only submitted while the server can accept them;
+ *    `buildPlacePressed` plus the `buildPhaseOpen` gate (IN_PROGRESS or
+ *    COUNTDOWN), so placement intents are submitted whenever the server can
+ *    accept them — including own-row pre-builds during preparation;
  *  - the build-edit frame receives the routed `editSelectPressed` /
  *    `editSelectHeld`.
  */
@@ -40,9 +41,12 @@ describe("GameRuntime primary-action routing", () => {
     // connected/disconnected branches). The layer flags come from the shared
     // interaction-mode coordinator (single owner of build/edit state), the
     // fire edge is consumed unconditionally (no stale edge can survive) and
-    // both the edge and the held read are gated on connected + IN_PROGRESS.
+    // both the edge and the held read are gated on connected + the placement
+    // phases (IN_PROGRESS or COUNTDOWN — prep pre-builds share the button),
+    // while the WEAPON legs of the route are additionally re-gated on
+    // IN_PROGRESS so combat stays locked until the gates drop.
     expect(runtime).toContain(
-      "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS;const route=routePrimaryAction(this.interactionMode.isBuildActive(),this.interactionMode.isEditActive(),this.inputManager.consumeFirePressed()&&this.isConnected&&inRound,this.inputManager.isFiring()&&this.isConnected&&inRound);this.frameRoute=route;this.handleWeaponInput(route);",
+      "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS;const buildPhaseOpen=inRound||this.matchState.matchPhase===MatchPhase.COUNTDOWN;const firePressedAvailable=this.inputManager.consumeFirePressed()&&this.isConnected&&(inRound||buildPhaseOpen);const fireHeldAvailable=this.inputManager.isFiring()&&this.isConnected&&(inRound||buildPhaseOpen);const routedAction=routePrimaryAction(this.interactionMode.isBuildActive(),this.interactionMode.isEditActive(),firePressedAvailable,fireHeldAvailable);const route={...routedAction,weaponFirePressed:routedAction.weaponFirePressed&&inRound,weaponFireHeld:routedAction.weaponFireHeld&&inRound};this.frameRoute=route;this.handleWeaponInput(route);",
     );
   });
 
@@ -64,12 +68,13 @@ describe("GameRuntime primary-action routing", () => {
   it("routes the held AND pressed primary into the building frame with the in-round gate", () => {
     // Building frame: routed build-owned hold (turbo building) + press edge,
     // plus the placement-allowed flag so intents are only submitted while the
-    // server can accept them: `IN_PROGRESS` (fight) OR the authoritative
-    // build preparation (`inRound||this.preparationActive` — placement during
-    // prep is restricted to the assigned row by the shared prep rule; the
-    // server rejects anything else with `preparation_zone`).
+    // server can accept them: `IN_PROGRESS` (fight) OR the build preparation
+    // COUNTDOWN (`buildPhaseOpen` — placement during prep is restricted to
+    // the assigned row by the shared prep rule, for the WHOLE countdown
+    // phase including the wait for the second client; the server rejects
+    // anything else with `preparation_zone`).
     expect(runtime).toContain(
-      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,inRound||this.preparationActive,route.buildPlacePressed);",
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,buildPhaseOpen,route.buildPlacePressed);",
     );
     // The fixed sim tick reads the held fire through the stored frame route
     // (same frame's decision — no re-reading of raw input).

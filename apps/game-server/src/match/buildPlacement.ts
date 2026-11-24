@@ -71,7 +71,13 @@ export async function handleBuildPlacement(
     return;
   }
   // Placement is accepted during the fight (IN_PROGRESS) AND during build
-  // preparation (COUNTDOWN); in any other phase it is refused as before.
+  // preparation (COUNTDOWN) — including the WAITING stretch before both
+  // players have connected (the countdown itself stays frozen until then,
+  // see TwoPlayerMovementRoom.tick). In any other phase it is refused as
+  // before. Lifecycle persistence: structures accepted during ANY COUNTDOWN
+  // stretch survive the gates-drop into IN_PROGRESS (the transition clears
+  // prep constraints only; structure cleanup happens once per round
+  // boundary), so early pre-builds carry into the fight.
   const phase = ctx.state.matchPhase as string;
   if (phase !== "IN_PROGRESS" && phase !== "COUNTDOWN") {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "rate_limited" });

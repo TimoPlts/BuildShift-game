@@ -20,9 +20,12 @@
  *  - the old all-input COUNTDOWN freeze is lifted ONLY while authoritative
  *    preparation is active; combat (fire routing, weapon actions) stays
  *    gated on `IN_PROGRESS`;
- *  - placement/edit submission opens for preparation (`inRound||
- *    this.preparationActive`) while the row restriction comes from the
- *    shared rule handed to the building controller;
+ *  - placement/edit submission opens for the WHOLE preparation phase
+ *    (`buildPhaseOpen` = `IN_PROGRESS` or `COUNTDOWN`, so own-row building
+ *    works while waiting for the opponent too); the row restriction comes
+ *    from the shared rule handed to the building controller for every
+ *    COUNTDOWN snapshot (independent of the active-countdown flag), while
+ *    movement prediction and barriers stay on the active-preparation signal;
  *  - barriers open/close strictly with the preparation state and are
  *    disposed on reset/disconnect/leave paths and in `dispose()`;
  *  - the countdown tick maps through `BOX_FIGHT_PREPARATION.durationSeconds`.
@@ -49,9 +52,14 @@ describe("GameRuntime preparation wiring", () => {
     expect(runtime).toContain(
       "const inCd=(this.matchState.matchPhase===MatchPhase.COUNTDOWN&&!this.preparationActive)||this.predictionOrchestrator.getCombatState().isEliminated;",
     );
-    // Fire routing still requires an IN_PROGRESS round (combat blocked while prepping).
+    // The shared fire edge reaches all owners during the placement phases
+    // (IN_PROGRESS or COUNTDOWN — prep pre-builds), but the WEAPON legs of
+    // the route are re-gated on IN_PROGRESS (combat blocked while prepping).
     expect(runtime).toContain(
-      "this.inputManager.consumeFirePressed()&&this.isConnected&&inRound",
+      "const firePressedAvailable=this.inputManager.consumeFirePressed()&&this.isConnected&&(inRound||buildPhaseOpen)",
+    );
+    expect(runtime).toContain(
+      "weaponFirePressed:routedAction.weaponFirePressed&&inRound,weaponFireHeld:routedAction.weaponFireHeld&&inRound",
     );
     expect(runtime).toContain(
       'const active=this.interactionMode.mode==="weapon"&&this.matchState.matchPhase===MatchPhase.IN_PROGRESS&&this.isConnected',
@@ -73,22 +81,33 @@ describe("GameRuntime preparation wiring", () => {
     expect(block).toContain("state.match.preparationActive===true");
     expect(block).toContain('state.players[sid]?.preparationSide??""');
     expect(block).toContain('raw==="negative"||raw==="positive"');
-    // One shared assignment drives prediction AND the build preview.
+    // One shared assignment drives prediction; the BUILD preview gets the
+    // own-row restriction for the WHOLE COUNTDOWN phase (rowSide), so the
+    // ghost already refuses enemy/centre cells while the countdown is still
+    // frozen waiting for the opponent.
     expect(block).toContain("this.predictionOrchestrator.setPreparationSide(assigned)");
-    expect(block).toContain("this.buildingSystem.controller.setPreparationSide(assigned)");
+    expect(block).toContain("this.buildingSystem.controller.setPreparationSide(rowSide)");
+    expect(block).toContain("const rowSide:PreparationSide|null=state.match.matchPhase===MatchPhase.COUNTDOWN&&side!==\"\"?side as PreparationSide:null;");
     // Barriers follow the SAME authoritative signal (both sides open together).
     expect(block).toContain("if(assigned)this.prepBarriers.open(assigned);else this.prepBarriers.close();");
   });
 
-  it("opens placement/edit submission for preparation (row rule enforced via the shared preview + server)", () => {
+  it("opens placement/edit submission for the whole preparation phase (row rule enforced via the shared preview + server)", () => {
+    // Placement rides the phase gate, not the countdown-active flag: own-row
+    // building works while the countdown waits for the second client.
     expect(runtime).toContain(
-      "undefined,inRound||this.preparationActive,route.buildPlacePressed);",
+      "const buildPhaseOpen=inRound||this.matchState.matchPhase===MatchPhase.COUNTDOWN;",
     );
-    // Edit frame: editing owned structures is allowed during prep too.
+    expect(runtime).toContain(
+      "undefined,buildPhaseOpen,route.buildPlacePressed);",
+    );
+    // Combat stays on the fight-only flag (fire routing above).
+    expect(runtime).not.toContain("consumeFirePressed()&&this.isConnected&&buildPhaseOpen");
+    // Edit frame: editing owned structures is allowed during the whole prep phase too.
     const editIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void{");
     expect(
       runtime.slice(editIdx, editIdx + 700).includes(
-        "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS||this.preparationActive;",
+        "const inRound=this.matchState.matchPhase===MatchPhase.IN_PROGRESS||this.matchState.matchPhase===MatchPhase.COUNTDOWN;",
       ),
     ).toBe(true);
   });

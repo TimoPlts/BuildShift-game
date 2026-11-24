@@ -15,7 +15,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { BuildingState, StructureState, StructureDurabilityState, GridRotation } from "@buildshift/protocol";
-import { BUILD_GRID, structureBounds } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, structureBounds } from "@buildshift/game-config";
 import { BuildStructureRenderer } from "./BuildStructureRenderer";
 
 function structure(
@@ -625,8 +625,9 @@ describe("BuildStructureRenderer", () => {
         expect(covers, "a slab must not cover the removed quadrant").toBe(false);
       }
 
-      // Cone: one smooth pyramid per retained quadrant (tile 3 removed →
-      // quadrants 0, 1 and 2 remain), each seated on its quadrant.
+      // Cone: one smooth quarter-pyramid per retained quadrant (tile 3
+      // removed → quadrants 0, 1 and 2 remain), each seated on its quadrant
+      // and rising only to the canonical low roof peak.
       const coneParts = (scene.getMeshByName("structure-cone") as Mesh).getChildMeshes(false) as Mesh[];
       expect(coneParts).toHaveLength(3);
       const centres = coneParts.map((part) => {
@@ -640,7 +641,7 @@ describe("BuildStructureRenderer", () => {
       expect(centres[1]!.z).toBeCloseTo(CS / 4, 3);
       expect(centres[2]!.x).toBeCloseTo(CS / 4, 3);
       expect(centres[2]!.z).toBeCloseTo(-CS / 4, 3);
-      for (const c of centres) expect(c.h).toBeCloseTo(LH, 3);
+      for (const c of centres) expect(c.h).toBeCloseTo(CONE_PEAK_HEIGHT, 3);
     });
 
     it("keeps every decorative mesh non-pickable and non-colliding", () => {
@@ -875,27 +876,45 @@ describe("BuildStructureRenderer", () => {
       // Apex should be at the centre of the base in XZ.
       expect(apexX).toBeCloseTo(cx, 3);
       expect(apexZ).toBeCloseTo(cz, 3);
-      expect(apexY).toBeCloseTo(grid.y * LH + LH, 3);
+      expect(apexY).toBeCloseTo(grid.y * LH + CONE_PEAK_HEIGHT, 3);
 
       renderer.syncStructures({ structures: {} });
       advance(300);
     });
 
-    it("renders one pyramid per retained quadrant when edited", () => {
+    it("renders one quarter-pyramid per retained quadrant when edited, all sharing the cell-centre apex", () => {
       const grid = { x: 0, y: 0, z: 0 };
       renderer.syncStructures({
         structures: { cone: { ...structure("cone", "cone", "", grid), editGrid: { kind: "floor_cone", tiles: [true, false, true, true] } } },
       });
       advance(300);
-      const parts = (scene.getMeshByName("structure-cone") as Mesh).getChildMeshes(false) as Mesh[];
+      const root = scene.getMeshByName("structure-cone") as Mesh;
+      const parts = root.getChildMeshes(false) as Mesh[];
       expect(parts).toHaveLength(3);
-      // Each retained quadrant has its own pyramid.
+      // Each retained quadrant is exactly one quarter of the SAME low roof:
+      // CS/2-wide base on its quadrant, CONE_PEAK_HEIGHT tall, and its apex
+      // on the full cone's cell-centre axis (never an off-centre mini-spike
+      // — the old per-quadrant symmetric pyramid grew spires where the
+      // canonical shape has a smooth shared roofline).
       for (const part of parts) {
         part.computeWorldMatrix(true);
         const bb = part.getBoundingInfo().boundingBox;
-        // Each quadrant pyramid is CS/2 wide and LH tall.
         expect(bb.maximumWorld.x - bb.minimumWorld.x).toBeCloseTo(CS / 2, 3);
-        expect(bb.maximumWorld.y - bb.minimumWorld.y).toBeCloseTo(LH, 3);
+        expect(bb.maximumWorld.y - bb.minimumWorld.y).toBeCloseTo(CONE_PEAK_HEIGHT, 3);
+        const positions = part.getVerticesData("position") as number[];
+        const worldBaseY = root.position.y + part.position.y;
+        let apexX = 0, apexY = -Infinity, apexZ = 0;
+        for (let i = 0; i < positions.length; i += 3) {
+          const wy = worldBaseY + positions[i + 1]!;
+          if (wy > apexY) {
+            apexY = wy;
+            apexX = root.position.x + part.position.x + positions[i]!;
+            apexZ = root.position.z + part.position.z + positions[i + 2]!;
+          }
+        }
+        expect(apexX).toBeCloseTo(grid.x * CS, 3);
+        expect(apexZ).toBeCloseTo(grid.z * CS, 3);
+        expect(apexY).toBeCloseTo(grid.y * LH + CONE_PEAK_HEIGHT, 3);
       }
       renderer.syncStructures({ structures: {} });
       advance(300);

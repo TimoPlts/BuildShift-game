@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUILD_BOUNDS,
+  BUILD_GRID,
   BUILD_RANGE,
   STRUCTURES,
   isWithinPlacementRange,
@@ -131,6 +132,16 @@ describe("canonical build slots", () => {
 
 describe("canonical placement range (full 3D distance)", () => {
   const max = BUILD_RANGE.maxPlacementDistance;
+  it("reach is exactly two modular cells, derived from the canonical lattice", () => {
+    // The single value shared by the client ghost and the server validator:
+    // nearby cells (all 8 neighbours ± one layer) always reach; the far side
+    // of the arena never does. "At least two cells" remains the floor from
+    // buildGeometry.contract.test.ts.
+    expect(max).toBe(2 * BUILD_GRID.cellSize);
+    expect(Math.hypot(BUILD_GRID.cellSize, BUILD_GRID.cellSize, BUILD_GRID.layerHeight)).toBeLessThan(max); // worst diagonal neighbour, one layer up
+    expect(Math.hypot(0, 0, 2 * BUILD_GRID.layerHeight)).toBeLessThan(max); // two layers straight up
+    expect(Math.hypot(2 * BUILD_GRID.cellSize, BUILD_GRID.layerHeight)).toBeGreaterThan(max); // two cells out AND a layer up is beyond reach
+  });
   it("measures to the anchor cell's base corner", () => {
     expect(placementAnchorWorld({ x: 2, y: 1, z: -1 })).toEqual({ x: 10.24, y: 3.84, z: -5.12 });
   });
@@ -144,5 +155,16 @@ describe("canonical placement range (full 3D distance)", () => {
     expect(isWithinPlacementRange({ x: 0, y: 7, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(false);
     expect(isWithinPlacementRange({ x: 0, y: 0, z: 0 }, { x: 2, y: 2, z: 0 })).toBe(false); // 12.83 m
     expect(isWithinPlacementRange({ x: 10.24 - max - 0.01, y: 0, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(false);
+  });
+  it("reaches the arena centre from an own-row spawn exactly at the limit (canonical 2-cell decision)", () => {
+    // Spawns sit on the outer rows at x = ∓10.24 (getPreparationZone.spawn).
+    // QA build-feel-20261123 reach audit, established here against the real
+    // dimensions: the centre column in the spawn's own line is EXACTLY the
+    // inclusive limit; the centre row's adjacent column (≈ 11.45 m) is not,
+    // and stepping one column over is the intended play.
+    expect(isWithinPlacementRange({ x: -10.24, y: 0, z: 0 }, { x: 0, y: 0, z: 0 })).toBe(true); // 10.24 m — own-row spawn → centre anchor, just inside
+    expect(isWithinPlacementRange({ x: -10.24, y: 0, z: 0 }, { x: -1, y: 0, z: 0 })).toBe(true); // 5.12 m — the lifecycle fixture's near tile
+    expect(isWithinPlacementRange({ x: -10.24, y: 0, z: 0 }, { x: 0, y: 0, z: 1 })).toBe(false); // 11.45 m — centre adjacent column, just outside
+    expect(isWithinPlacementRange({ x: -10.24, y: 0, z: 0 }, { x: 2, y: 0, z: 0 })).toBe(false); // 20.48 m — far side of the arena
   });
 });

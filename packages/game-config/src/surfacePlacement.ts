@@ -39,11 +39,12 @@
  *                    low half: above the ramp's tile.
  *     side faces / underside → the side tile / the ramp's own tile, same layer.
  *  CONE hit
- *       wall → the edge nearest the hit; upper half of the top → the layer
- *       above the cone; otherwise the neighbouring tile across the nearest edge.
+ *       wall → the edge nearest the hit; upper half of the (low) roof top →
+ *       the layer above the cone; otherwise the neighbouring tile across the
+ *       nearest edge.
  */
 import { BUILD_GRID, normalizePlacementRotation, wallEdgeRotation } from "./building.js";
-import { rayStructureIntersection, structureCuboids, wallEdgeCenter, type StructureCuboid, type StructureGeometryInput } from "./editGeometry.js";
+import { rayStructureIntersection, structureCuboids, wallEdgeCenter, CONE_PEAK_HEIGHT, type StructureCuboid, type StructureGeometryInput } from "./editGeometry.js";
 
 type Vec3 = { x: number; y: number; z: number };
 type Cell = { x: number; y: number; z: number };
@@ -177,8 +178,8 @@ export function resolveSurfacePlacement(
     return own(along >= 0.5 ? past : step(g, 0, 0, 1));
   }
 
-  // Cone.
+  // Cone (a low roof: peak CONE_PEAK_HEIGHT, half a layer).
   if (buildType === "wall") return nearestWall(g);
-  if (top && localY >= lh / 2) return own(step(g, 0, 0, 1));
+  if (top && localY >= CONE_PEAK_HEIGHT / 2) return own(step(g, 0, 0, 1));
   return own(side ? step(g, n.x, n.z) : acrossNearestEdge(g, p));
 }

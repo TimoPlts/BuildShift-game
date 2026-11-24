@@ -15,7 +15,8 @@
  *        floor beside a floor, floor/ramp past a ramp's high end, …)
  *      → otherwise the build plane of the player's layer (aiming down) or
  *        of the layer above it (aiming up: the "ceiling") → the tile
- *        containing the hit (walls: the locked orientation's nearer edge)
+ *        containing the hit (walls: the aimed tile's edge nearest the aim —
+ *        walls follow the crosshair)
  *      → normalize the selected rotation
  *      → validate rotation / build bounds / range / slot occupancy
  *
@@ -32,7 +33,7 @@ import {
   resolveSurfacePlacement,
   structureCuboids,
   structureSlots,
-  wallEdgeForOrientation,
+  wallEdgeRotation,
   isValidPlacementRotation,
   isWithinPlacementRange,
   isWithinBuildBounds,
@@ -271,10 +272,13 @@ export function computePlacementPreview(
     // The tile whose canonical geometry contains the hit point.
     grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
     if (buildType === "wall") {
-      // Walls are edge pieces with a LOCKED orientation (set on equip from
-      // the facing, changed only by rotate): of the aimed tile's two edges
-      // with that orientation, the one nearer the hit.
-      rotation = wallEdgeForOrientation(grid, hitX, hitZ, rotation) as GridRotation;
+      // Walls are edge pieces and FOLLOW THE CROSSHAIR: the wall stands on
+      // the aimed tile's edge nearest the aim point (shared wallEdgeRotation
+      // — the same rule surface hits already use via `nearestWall`). The
+      // selected quarter turn does not lock a wall's axis: aiming around the
+      // tile is the wall-aiming mechanic; R/X rotation carries no meaning
+      // for wall plane-placement (surfaces keep their line/stack semantics).
+      rotation = wallEdgeRotation(grid, hitX, hitZ) as GridRotation;
     }
   } else {
     return {

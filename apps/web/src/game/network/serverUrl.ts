@@ -35,6 +35,9 @@ export interface ServerUrlEnv {
 export interface BrowserLocationLike {
   readonly protocol: string;
   readonly hostname: string;
+  /** Browser host, including an explicit port (and IPv6 brackets). */
+  readonly host?: string;
+  readonly port?: string;
   /** The URL's query string, including the leading `?` (when present). */
   readonly search?: string;
 }
@@ -52,7 +55,8 @@ function formatHost(hostname: string): string {
  *
  * Precedence: a non-empty `?gameServer=` query parameter on the page URL
  * wins (per-page runtime override); then a non-empty, trimmed
- * `VITE_GAME_SERVER_URL`; then a browser run targets its current host on
+ * `VITE_GAME_SERVER_URL` (`same-origin` uses the page host and port); then
+ * a browser run targets its current host on
  * port 2567, using `wss` from HTTPS. Non-browser callers retain
  * {@link DEFAULT_GAME_SERVER_URL}.
  *
@@ -73,6 +77,15 @@ export function resolveGameServerUrl(
     return queryOverride;
   }
   const raw = environment.VITE_GAME_SERVER_URL?.trim();
+  if (raw === "same-origin") {
+    if (!browserLocation) {
+      throw new Error("same-origin game routing requires a browser location");
+    }
+    const protocol = browserLocation.protocol === "https:" ? "wss:" : "ws:";
+    const host = browserLocation.host ??
+      `${formatHost(browserLocation.hostname)}${browserLocation.port ? `:${browserLocation.port}` : ""}`;
+    return `${protocol}//${host}`;
+  }
   if (raw) {
     return raw;
   }

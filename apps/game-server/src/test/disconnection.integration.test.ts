@@ -97,7 +97,7 @@ describe("Disconnection integration", () => {
       await wfs(a, () => pl.length >= 1, 5000);
       expect(pl[0].structure.ownerId).toBe(sidA);
       await wait(500);
-      sb(a, 200, "floor", { x: 0, y: 0, z: 1 });
+      sb(a, 200, "floor", { x: -1, y: 0, z: 1 });
       await wfs(a, () => pl.length >= 2, 5000);
       expect(pl[1].structure.ownerId).toBe(sidA);
       // Wait for the state patch to reflect the reduced energy before asserting.

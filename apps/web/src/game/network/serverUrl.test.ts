@@ -6,6 +6,32 @@ import {
 } from "./serverUrl";
 
 describe("production game server URL resolution", () => {
+  it("uses the page port for the Docker single-origin deployment", () => {
+    expect(resolveGameServerUrl(
+      { VITE_GAME_SERVER_URL: "same-origin" },
+      { protocol: "http:", hostname: "100.117.176.125", host: "100.117.176.125:8080" },
+    )).toBe("ws://100.117.176.125:8080");
+  });
+
+  it("uses secure WebSockets on the school HTTPS origin", () => {
+    expect(resolveGameServerUrl(
+      { VITE_GAME_SERVER_URL: "same-origin" },
+      { protocol: "https:", hostname: "ai-operations-14.devbitapp.be", host: "ai-operations-14.devbitapp.be" },
+    )).toBe("wss://ai-operations-14.devbitapp.be");
+  });
+
+  it("preserves an IPv6 host and port", () => {
+    expect(resolveGameServerUrl(
+      { VITE_GAME_SERVER_URL: "same-origin" },
+      { protocol: "http:", hostname: "::1", port: "8080" },
+    )).toBe("ws://[::1]:8080");
+  });
+
+  it("requires a browser location for single-origin routing", () => {
+    expect(() => resolveGameServerUrl({ VITE_GAME_SERVER_URL: "same-origin" }, undefined))
+      .toThrow("requires a browser location");
+  });
+
   it("uses an explicit deployment endpoint when configured", () => {
     expect(
       resolveGameServerUrl(

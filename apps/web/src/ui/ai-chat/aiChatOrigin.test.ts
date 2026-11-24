@@ -2,6 +2,20 @@ import { describe, expect, it } from "vitest";
 import { aiChatEndpoint, resolveAiChatOrigin } from "./aiChatOrigin";
 
 describe("resolveAiChatOrigin — derived from the game-server URL config", () => {
+  it("keeps chat on the same host and port as the containerized page", () => {
+    expect(aiChatEndpoint(
+      { VITE_GAME_SERVER_URL: "same-origin" },
+      { protocol: "http:", hostname: "game.example.test", host: "game.example.test:8080" },
+    )).toBe("http://game.example.test:8080/api/ai-chat");
+  });
+
+  it("keeps chat on the school HTTPS origin without an internal port", () => {
+    expect(aiChatEndpoint(
+      { VITE_GAME_SERVER_URL: "same-origin" },
+      { protocol: "https:", hostname: "ai-operations-14.devbitapp.be", host: "ai-operations-14.devbitapp.be" },
+    )).toBe("https://ai-operations-14.devbitapp.be/api/ai-chat");
+  });
+
   it("uses the runtime game-server override ahead of the build-time URL", () => {
     expect(aiChatEndpoint(
       { VITE_GAME_SERVER_URL: "ws://unused.example.test:2567" },

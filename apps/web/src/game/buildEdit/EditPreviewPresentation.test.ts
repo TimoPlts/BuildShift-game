@@ -20,7 +20,7 @@ import { UniversalCamera } from "@babylonjs/core/Cameras/universalCamera";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { StructureEditState } from "@buildshift/protocol";
-import { MAX_STRUCTURE_CUBOIDS, structureCuboids } from "@buildshift/game-config";
+import { CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS, structureCuboids } from "@buildshift/game-config";
 
 import {
   EditPreviewPresentation,
@@ -553,11 +553,14 @@ describe("editTileLayout / editRampLayout", () => {
     expect(se.center[2]).toBeCloseTo(CELL / 4, 4);
   });
 
-  it("lays out cone tiles as full-height corner blocks", () => {
+  it("lays out cone tiles as roof-peak-height corner blocks", () => {
     const ne = editTileLayout("cone", 1);
     expect(ne.center[0]).toBeCloseTo(CELL / 4, 4);
     expect(ne.center[2]).toBeCloseTo(-CELL / 4, 4);
-    expect(ne.size[1]).toBeCloseTo(LAYER, 4);
+    // The cone is the canonical low roof: the edit overlay matches
+    // CONE_PEAK_HEIGHT (half a layer), not the full wall height.
+    expect(ne.size[1]).toBeCloseTo(CONE_PEAK_HEIGHT, 4);
+    expect(CONE_PEAK_HEIGHT).toBeCloseTo(LAYER / 2, 6);
   });
 
   it("rejects non-tile build types and unknown ramp variants", () => {

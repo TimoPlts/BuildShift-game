@@ -4,7 +4,7 @@
  * Vite build-time environment variables exposed to the web app.
  *
  * `VITE_GAME_SERVER_URL` (optional) points the browser client at the game
- * server's WebSocket endpoint. When unset, the production network layer uses
+ * server's WebSocket endpoint. Use `same-origin` behind the Docker proxy. When unset, the production network layer uses
  * the current frontend host on port 2567 (see
  * `apps/web/src/game/network/serverUrl.ts`).
  *

@@ -9,8 +9,9 @@
  *      camera/grid target);
  *   2. drives held-primary rapid placement ("turbo building"): when the
  *      routed build-owned primary is held (or just pressed) and the player is
- *      connected **and in an active round**, submits a placement intent for
- *      the (valid) preview, rate-limited to one request per
+ *      connected **and in a placement-open phase** (active round OR build
+ *      preparation), submits a placement intent for the (valid) preview,
+ *      rate-limited to one request per
  *      `PLACEMENT_REQUEST_INTERVAL_MS`. The press edge rides the same
  *      rate-limited path, so a quick click places exactly once and can
  *      never double the held stream.
@@ -19,10 +20,12 @@
  * `InputManager`; the runtime hands over the *routed* build values
  * (from `routePrimaryAction`), so the weapon path and the building path
  * never see the same press/hold as theirs. Placement requests are only
- * *sent* when connected and the round is `IN_PROGRESS`: while disconnected
- * or outside the round there is no authoritative server to accept them
- * (the server rejects placement outside `IN_PROGRESS`), and the server's
- * validation (overlap / rate / energy) remains the final authority on
+ * *sent* when connected and the match phase can accept them — `IN_PROGRESS`
+ * (the fight) or `COUNTDOWN` (build preparation, both while waiting for the
+ * opponent and while the countdown runs; the server confines preparation
+ * placements to the player's own row) — because outside those phases there
+ * is no authoritative server acceptance to aim for. The server's validation
+ * (own-row / overlap / rate / range / energy) remains the final authority on
  * acceptance.
  */
 import type { Camera } from "@babylonjs/core/Cameras/camera";
@@ -64,10 +67,11 @@ const _frameContext = {
  *        `routePrimaryAction` over the centralized `InputManager` state).
  * @param nowMs the monotonic frame clock in ms (defaults to
  *        `performance.now()`); injectable for deterministic tests.
- * @param inRound whether the match phase is `IN_PROGRESS` (default `true`):
- *        placement intents are only submitted while the server can accept
- *        them. The preview/ghost keeps updating regardless, so the HUD stays
- *        live outside the round.
+ * @param inRound whether the current match phase can accept placements
+ *        (`IN_PROGRESS` or the `COUNTDOWN` preparation phase; default
+ *        `true`): placement intents are only submitted while the server can
+ *        accept them. The preview/ghost keeps updating regardless, so the
+ *        HUD stays live outside the round.
  * @param primaryPressed the routed build-owned primary press edge (from
  *        `routePrimaryAction`); it joins the same rate-limited submission
  *        path as the hold, so single-click placement is reliable.

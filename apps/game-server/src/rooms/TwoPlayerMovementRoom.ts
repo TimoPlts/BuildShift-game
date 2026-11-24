@@ -2,7 +2,7 @@ import { Room, type Client } from "@colyseus/core";
 import { t } from "@colyseus/schema";
 import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, validateEditActionRequest, applyEditAction, createDefaultEditState, getEditTileCount, serializeEditState } from "@buildshift/protocol";
 import { stepPlayerMovement, movementInputToWorld, fireGate, hitscan, computeShotgunSpread, type HitscanHit, type HitscanTarget } from "@buildshift/simulation";
-import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_RESET_DELAY_SECONDS as RRS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CHARACTER_CONTROLLER, structureCuboids, rayStructureIntersection, resolveStructureMovement, clampToPlayableArena, BOX_FIGHT_PREPARATION, getPreparationZone, clampToPreparationZone, type PreparationSide, type GeometryEditState } from "@buildshift/game-config";
+import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_RESET_DELAY_SECONDS as RRS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CHARACTER_CONTROLLER, shotEyeHeight, structureCuboids, rayStructureIntersection, resolveStructureMovement, clampToPlayableArena, BOX_FIGHT_PREPARATION, getPreparationZone, clampToPreparationZone, type PreparationSide, type GeometryEditState } from "@buildshift/game-config";
 import { BuildingStateSchema, StructureStateSchema, oc } from "../state/buildingState.js";
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
@@ -21,7 +21,11 @@ const MC = { moveSpeed: PLAYER_MOVEMENT.moveSpeed, gravity: VERTICAL_MOVEMENT.gr
 // Derived from the SAME shared `PLAYER_MOVEMENT` base as `MC` so the client
 // prediction and the authoritative server derive an identical crouch speed.
 const MC_CROUCH = { ...MC, moveSpeed: PLAYER_MOVEMENT.moveSpeed * PLAYER_MOVEMENT.crouchSpeedFactor };
-const EH = VERTICAL_MOVEMENT.playerHalfHeight, TR = 0.4;
+// All shot/target-centre sites call `shotEyeHeight(crouch)` — the canonical
+// shot origin shared with the client camera/reticle (see
+// @buildshift/game-config shotOrigin.ts). The collider-derived 0.9 stays the
+// physics/ground-check value — it is no longer the firing eye.
+const TR = 0.4;
 const RT = Math.max(1, Math.round(RRS * THZ));
 const REMATCH_REQUEST = "match:rematch_request";
 // Round-preparation spawns: the centres of the two outermost build-grid rows
@@ -566,9 +570,9 @@ export class TwoPlayerMovementRoom extends Room<{
         this.broadcast(EVENTS.FIRE_REJECTED, { shooterId: sid, reason: gate.reason });
         return;
     } this.nextFireTick.set(sid, this.tc + cfg.fireIntervalTicks); slot.magazineAmmo--; this.clients.find(c => c.sessionId === sid)?.send(WSE, tws(ws)); sh.ammo = slot.magazineAmmo; sh.lastFireSequence = seq; const se = sh.weapons.get(wid); if (se)
-        se.magazineAmmo = slot.magazineAmmo; const shH = sh.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EH, o = { x: sh.x, y: sh.y + shH, z: sh.z }, d = ad(yaw, pitch), tStand: HitscanTarget[] = [], tCrouch: HitscanTarget[] = []; for (const [id, tp] of this.state.players) {
+        se.magazineAmmo = slot.magazineAmmo; const shH = shotEyeHeight(sh.crouch), o = { x: sh.x, y: sh.y + shH, z: sh.z }, d = ad(yaw, pitch), tStand: HitscanTarget[] = [], tCrouch: HitscanTarget[] = []; for (const [id, tp] of this.state.players) {
         if (id !== sid && !tp.isEliminated)
-            (tp.crouch ? tCrouch : tStand).push({ id, position: { x: tp.x, y: tp.y + (tp.crouch ? PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT : EH), z: tp.z } });
+            (tp.crouch ? tCrouch : tStand).push({ id, position: { x: tp.x, y: tp.y + shotEyeHeight(tp.crouch), z: tp.z } });
     } const rays = wid === "shotgun" ? computeShotgunSpread(o, d, SHOTGUN_WEAPON.spreadDegrees * Math.PI / 180, SHOTGUN_WEAPON.pellets) : [{ origin: o, direction: d }]; const damage = wid === "shotgun" ? SHOTGUN_WEAPON.perPelletDamage : cfg.damage; for (const ray of rays) {
         if (this.state.matchPhase !== MatchPhase.IN_PROGRESS)
             break;
