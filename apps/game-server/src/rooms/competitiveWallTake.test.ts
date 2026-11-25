@@ -360,7 +360,10 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
       expect.objectContaining({ structureId: newId, success: false, reason: "not_owned" }),
     );
 
-    // A (the owner) CAN edit the replacement wall.
+    // A (the owner) CAN edit the replacement wall — standing at it (the
+    // canonical edit range is 10.24 m and needs a facing line of sight, the
+    // same reach the client targeting lane enforces before it sends).
+    { const pa = internal.state.players.get("a")!; pa.x = -4; pa.y = 0; pa.z = 0; }
     replacement.editKind = "wall";
     replacement.editTiles.length = 0;
     for (let i = 0; i < 9; i++) replacement.editTiles.push(true);
@@ -393,7 +396,8 @@ describe("competitive wall-take and replacement (canonical authoritative path)",
     )!;
     expect(replacement.ownerId).toBe("b");
 
-    // B can edit it (owner).
+    // B can edit it (owner) — from a facing position inside edit range.
+    { const pb = internal.state.players.get("b")!; pb.x = -4; pb.y = 0; pb.z = 0; }
     replacement.editKind = "wall";
     replacement.editTiles.length = 0;
     for (let i = 0; i < 9; i++) replacement.editTiles.push(true);

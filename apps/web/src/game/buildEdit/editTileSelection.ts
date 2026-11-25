@@ -3,8 +3,8 @@
  * piece-edit interaction.
  *
  * Given the structure the aim ray already selected ({@link
- * selectTargetStructure}'s AABB / range convention) and the same aim ray,
- * this pure function maps the crosshair to the *canonical* tile (or ramp
+ * selectTargetStructure}'s exact-solid / range convention) and the same aim
+ * ray, this pure function maps the crosshair to the *canonical* tile (or ramp
  * width half) under it, using the canonical edit-surface sampling of
  * `editDragSelection` (wall 3×3 on the panel plane, floor/cone 2×2, ramp
  * `half_left` / `half_right` by the canonical half geometry).
@@ -27,7 +27,8 @@ export type EditTileAimResult =
 
 /** Everything the tile hit-test needs for one frame. */
 export interface EditTileAimInput {
-  /** The selected structure's pose (the aim ray already hit its AABB). */
+  /** The selected structure's pose (the aim ray already hit its exact
+   * solid surface at/within `maxRange`). */
   structure: Pick<
     StructurePick,
     "buildType" | "grid" | "rotation"

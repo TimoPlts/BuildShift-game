@@ -38,6 +38,8 @@ import {
   isWithinPlacementRange,
   isWithinBuildBounds,
   normalizePlacementRotation,
+  placementEyePoint,
+  placementIsVisible,
 } from "@buildshift/game-config";
 import type { StructureCuboid } from "@buildshift/game-config";
 import type {
@@ -79,7 +81,15 @@ export type PlacementInvalidReason =
    * rule — the same check the authoritative server applies with the NEW
    * `preparation_zone` rejection reason, CONTRACT.md §6).
    */
-  | "outside_preparation";
+  | "outside_preparation"
+  /**
+   * The candidate is not visible from the authoritative-equivalent eye
+   * (shared `placementIsVisible` segment policy against the canonical
+   * edited solids): it sits behind a closed wall/solid. The server applies
+   * the SAME shared rule with the same `"occluded"` reason, so the ghost
+   * and the authoritative answer agree (occlusion mission edit-system-20261124).
+   */
+  | "occluded";
 
 /** A plain 3-vector (avoids a Babylon dependency in pure preview math). */
 export interface Vec3Like {
@@ -123,6 +133,13 @@ export interface PlacementPreviewInput {
    * validation so the ghost previews the rejection the server would give.
    */
   preparationSide?: PreparationSide | "" | null;
+  /**
+   * Local player crouch state (shared eye constants: standing 1.2 / crouch
+   * 0.9 above the feet). The authoritative server always uses its own
+   * replicated crouch flag; the preview matches when the caller supplies it.
+   * Default `false` (standing eye).
+   */
+  crouched?: boolean;
 }
 
 /** The result of one frame's placement-preview calculation. */
@@ -214,8 +231,8 @@ function candidateOverlapsOccupied(
  * Pure function: reads the shared `BUILD_GRID` / `BUILD_RANGE` values and the
  * structure footprints, never mutates its inputs, never touches the network.
  * The validation order is fixed (candidate → rotation → bounds → range →
- * occupancy)
- * so the same inputs always produce the same `reason`.
+ * occupancy → line-of-sight) so the same inputs always produce the same
+ * `reason`.
  */
 export function computePlacementPreview(
   input: PlacementPreviewInput,
@@ -227,6 +244,7 @@ export function computePlacementPreview(
     buildType,
     occupied,
     preparationSide = null,
+    crouched = false,
   } = input;
   // Canonical rotation for this piece (shared with the server): rotatable
   // kinds keep the selected quarter turn, rotation-invariant kinds use 0.
@@ -349,6 +367,29 @@ export function computePlacementPreview(
         present: true,
       valid: false,
       reason: "overlap",
+      grid,
+      rotation,
+      anchorWorld,
+    };
+  }
+
+  // ── Line of sight: the SAME shared segment policy the authoritative
+  //    server enforces with the same `"occluded"` reason (see game-config
+  //    `placementVisibility`). The eye is the canonical shared shot origin
+  //    (standing 1.2 / crouch 0.9 above the feet position), NOT the camera
+  //    position, and blockers are the exact edit-aware solids (+ pending
+  //    intents — the same conservative stance as the `overlap` check), so a
+  //    far-side-of-a-closed-wall candidate goes red and a candidate seen
+  //    through a real edited hole stays green. ──
+  if (!placementIsVisible({
+    eye: placementEyePoint(playerPosition.x, playerPosition.y, playerPosition.z, crouched),
+    candidate: { buildType, grid, rotation },
+    structures: surfaceGeometry(occupied),
+  }).visible) {
+    return {
+      present: true,
+      valid: false,
+      reason: "occluded",
       grid,
       rotation,
       anchorWorld,

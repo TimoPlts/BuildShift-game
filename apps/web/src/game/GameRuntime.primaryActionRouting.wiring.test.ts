@@ -74,7 +74,7 @@ describe("GameRuntime primary-action routing", () => {
     // phase including the wait for the second client; the server rejects
     // anything else with `preparation_zone`).
     expect(runtime).toContain(
-      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,buildPhaseOpen,route.buildPlacePressed);",
+      "updateBuildingFrame(this.buildingSystem,this.cameraController.getCamera(),this.currentAimDirection,this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,buildPhaseOpen,route.buildPlacePressed,this.predictionOrchestrator.getCrouched());",
     );
     // The fixed sim tick reads the held fire through the stored frame route
     // (same frame's decision — no re-reading of raw input).

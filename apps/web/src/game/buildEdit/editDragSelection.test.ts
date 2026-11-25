@@ -141,6 +141,60 @@ describe("sampleEditSurface agrees with the canonical edit geometry", () => {
     expect(sampleEditSurface(piece, { x: 0, y: 1, z: 5 }, { x: 0, y: 0, z: 1 }, RANGE)).toBeNull(); // pointing away
     expect(sampleEditSurface(piece, { x: 0, y: 1, z: 50 }, { x: 0, y: 0, z: -1 }, 12)).toBeNull(); // out of range
   });
+
+  it("wall at the very edge of edit range: the crosshair tile stays truthful (browser drag-repair geometry)", () => {
+    // Frozen from the failing production browser case (competitive input 3,
+    // edit-system-20261124): wall on grid (1, 0, 0) rotation 0, camera eye
+    // at (13.68, 0.83, 1.31) aiming at the centre of tile 3 (3.413, 1.92,
+    // −2.56). The panel mid-plane sits at 10.95 m — just beyond the 10.24 m
+    // edit range — while the wall's near volume face is at ~9.9 m, inside
+    // it (lock-time selection therefore succeeds). The old sampler rejected
+    // the mid-plane point on range alone and re-mapped the sample onto the
+    // AABB entry point, which slides ~1 m along the panel and reported tile
+    // 4 — the drag then opened {4,5} and never opened the aimed tile 3.
+    const piece = { buildType: "wall" as const, grid: { x: 1, y: 0, z: 0 }, rotation: 0 as const };
+    const origin = { x: 13.68, y: 0.83, z: 1.31 };
+    const EDIT_RANGE = 10.24;
+    for (const [tile, tx] of [[3, 3.4133], [4, 5.12], [5, 6.8267]] as const) {
+      const target = { x: tx, y: 1.92, z: -2.56 };
+      const dir = { x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z };
+      const len = Math.hypot(dir.x, dir.y, dir.z);
+      const sample = sampleEditSurface(piece, origin, { x: dir.x / len, y: dir.y / len, z: dir.z / len }, EDIT_RANGE) as EditSurfaceSample;
+      expect(sample, `tile ${tile}`).not.toBeNull();
+      expect(sample.inside, `tile ${tile}`).toBe(true);
+      expect(sampleTile(sample, { cols: 3, rows: 3 }), `crosshair on tile ${tile} (mid-plane ${len.toFixed(2)} m)`).toBe(tile);
+    }
+    // The piece genuinely out of reach still samples null (no marking).
+    expect(sampleEditSurface(piece, { x: 30, y: 0.83, z: 8 }, { x: -1, y: 0, z: 0 }, EDIT_RANGE)).toBeNull();
+  });
+
+  it("drag from the range-edge tile opens the whole aimed row (3 → 5 crosses 4)", () => {
+    // Same frozen geometry: press on tile 3, one look jump landing the
+    // crosshair on tile 5. The supercover walk plus the truthful range-edge
+    // samples must open exactly {3, 4, 5}.
+    const piece = { buildType: "wall" as const, grid: { x: 1, y: 0, z: 0 }, rotation: 0 as const };
+    const origin = { x: 13.68, y: 0.83, z: 1.31 };
+    const EDIT_RANGE = 10.24;
+    const aim = (tx: number) => {
+      const target = { x: tx, y: 1.92, z: -2.56 };
+      const dir = { x: target.x - origin.x, y: target.y - origin.y, z: target.z - origin.z };
+      const len = Math.hypot(dir.x, dir.y, dir.z);
+      return sampleEditSurface(piece, origin, { x: dir.x / len, y: dir.y / len, z: dir.z / len }, EDIT_RANGE) as EditSurfaceSample;
+    };
+    const tiles = Array<boolean>(9).fill(true);
+    const drag = new TileDragSelection();
+    expect(drag.press(aim(3.4133), { cols: 3, rows: 3 }, tiles)).toEqual([3]);
+    // The look jump renders through an intermediate frame on tile 4 and a
+    // final frame on tile 5 — and even a single frame that teleports the
+    // crosshair from 3 to 5 must open the whole row.
+    drag.move(aim(5.12), { cols: 3, rows: 3 }, tiles);
+    expect(drag.move(aim(6.8267), { cols: 3, rows: 3 }, tiles)).toEqual([5]);
+    drag.release();
+    expect(tiles.filter((t) => !t)).toHaveLength(3);
+    expect(tiles[3]).toBe(false);
+    expect(tiles[4]).toBe(false);
+    expect(tiles[5]).toBe(false);
+  });
 });
 
 describe("cellsAlongSegment", () => {

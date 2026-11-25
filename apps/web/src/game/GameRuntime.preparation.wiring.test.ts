@@ -99,7 +99,7 @@ describe("GameRuntime preparation wiring", () => {
       "const buildPhaseOpen=inRound||this.matchState.matchPhase===MatchPhase.COUNTDOWN;",
     );
     expect(runtime).toContain(
-      "undefined,buildPhaseOpen,route.buildPlacePressed);",
+      "undefined,buildPhaseOpen,route.buildPlacePressed,this.predictionOrchestrator.getCrouched());",
     );
     // Combat stays on the fight-only flag (fire routing above).
     expect(runtime).not.toContain("consumeFirePressed()&&this.isConnected&&buildPhaseOpen");

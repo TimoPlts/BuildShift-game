@@ -13,9 +13,9 @@
  *    (`StructureState` / `BuildingState`) as solid meshes in the scene.
  *    Permanent structures use presentation visuals (outer frame + inset
  *    panels on walls, a thin framed platform for floors, a continuous
- *    inclined plate for ramps, and a smooth pyramid for cones) that hide
- *    the canonical collision steps while staying exactly aligned with the
- *    authoritative `structureCuboids` footprint and openings.
+ *    inclined plate for ramps, and the exact canonical roof-shell boxes for
+ *    cones) that stay exactly aligned with the authoritative
+ *    `structureCuboids` volumes and openings.
  *  - Play the original BuildShift construction presentation when a
  *    structure is authoritatively accepted: a short, transparent,
  *    lightweight build-up (semi-transparent shell solidifying to full
@@ -115,8 +115,9 @@ function getFootprintWorldDims(buildType: BuildType): [number, number, number] {
 function getEffectiveHeight(buildType: BuildType): number {
   const [, h] = getFootprintWorldDims(buildType);
   if (buildType === "floor") return 0.15;
-  // The cone is a low roof pyramid, not a full-layer solid — the root, the
-  // construction shell and the composed visuals centre on its real volume.
+  // The cone is a thin stepped roof shell up to a low peak, not a
+  // full-layer solid — the root, the construction shell and the composed
+  // visuals centre on its real volume.
   if (buildType === "cone") return CONE_PEAK_HEIGHT;
   return h;
 }
@@ -152,9 +153,11 @@ function lerpColor(a: Color3, b: Color3, t: number): Color3 {
 //  - ramp  → a single continuous inclined plate that hides the canonical
 //    16 collision steps while spanning exactly the canonical 1×1 tile
 //    footprint (run, rise, width and turn of every variant).
-//  - cone  → a smooth low roof pyramid (one quarter of that same pyramid per
-//    retained canonical quadrant when edited — the apex always stays on the
-//    cell-centre axis, exactly where the canonical steps converge) that hides the canonical stepped levels.
+//  - cone  → the canonical roof shell ITSELF: one box per canonical cuboid
+//    from `structureCuboids` (thin stepped skirt bands around a hollow roof),
+//    rendered exactly as collision has them — no smooth-pyramid skin lying
+//    about the volume. Retained quadrants keep their shell, removed
+//    quadrants are true see-through openings at every level.
 //
 // Collision, hitscan and movement keep using `structureCuboids` untouched;
 // these visuals never add or remove volume the authoritative state lacks.
@@ -165,18 +168,6 @@ interface VisualBox {
   center: [number, number, number];
   size: [number, number, number];
   rotation?: { axis: "x" | "z"; angle: number };
-}
-
-/** A square-basis pyramid visual in world space. `center` is the BASE-CENTRE
- * bounding position, `height` the base→apex rise; the apex sits above the
- * base centre plus the optional local (apex) X/Z offset — for cone quadrants
- * that offset puts the apex back on the full cone's cell-centre axis. */
-interface VisualPyramid {
-  center: [number, number, number];
-  diameter: number;
-  depth: number;
-  height: number;
-  apex?: [number, number];
 }
 
 /** The canonical inputs a structure visual derives from (never mutated). */
@@ -362,45 +353,23 @@ function floorVisualBoxes(input: VisualInput): VisualBox[] {
 }
 
 /**
- * Visual pyramids for a cone: one smooth low roof pyramid over the whole
- * tile when unedited, or one per retained canonical quadrant when edited.
- * A quadrant is exactly ONE QUARTER of the full roof — its apex stays on the
- * cell-centre axis at the shared peak (the canonical quadrant shrinks toward
- * the centre at every level), so edited cones never grow off-centre mini-
- * spires and the openings sit exactly where the collision has them.
+ * Visual boxes for a cone: the canonical roof shell ITSELF, one box per
+ * canonical cuboid from `structureCuboids` (thin stepped bands around a
+ * hollow interior, exactly the collision/picking solids — the roof reads
+ * thin from outside and you can see the opening under it). A removed
+ * quadrant is a true full-height opening because its bands simply are not
+ * there; nothing is drawn to pretend otherwise.
  */
-function coneVisualPyramids(input: VisualInput): VisualPyramid[] {
-  const cs = BUILD_GRID.cellSize;
-  const lh = BUILD_GRID.layerHeight;
-  const x = input.grid.x * cs;
-  const yBase = input.grid.y * lh;
-  const z = input.grid.z * cs;
-  const peak = CONE_PEAK_HEIGHT;
-  const tiles =
-    input.editGrid?.kind === "floor_cone" && input.editGrid.tiles.length === 4
-      ? input.editGrid.tiles
-      : Array<boolean>(4).fill(true);
-
-  if (tiles.every(Boolean)) {
-    return [{ center: [x, yBase + peak / 2, z], diameter: cs, depth: cs, height: peak }];
-  }
-
-  const pyramids: VisualPyramid[] = [];
-  for (let i = 0; i < 4; i++) {
-    if (!tiles[i]) continue;
-    // Quadrant centre offset from the cell centre; the shared apex is at the
-    // cell centre, so the local apex offset is its negation.
-    const qx = ((i % 2) - 0.5) * cs / 2;
-    const qz = (Math.floor(i / 2) - 0.5) * cs / 2;
-    pyramids.push({
-      center: [x + qx, yBase + peak / 2, z + qz],
-      diameter: cs / 2,
-      depth: cs / 2,
-      height: peak,
-      apex: [-qx, -qz],
-    });
-  }
-  return pyramids;
+function coneVisualBoxes(input: VisualInput): VisualBox[] {
+  return structureCuboids({
+    buildType: "cone",
+    grid: input.grid,
+    rotation: input.rotation,
+    editGrid: input.editGrid,
+  }).map((c) => ({
+    center: [c.center.x, c.center.y, c.center.z],
+    size: [c.halfExtents.x * 2, c.halfExtents.y * 2, c.halfExtents.z * 2],
+  }));
 }
 
 /** Plate thickness of the ramp visual top surface (thin walking surface). */
@@ -593,58 +562,6 @@ function buildRampPlateMesh(
 }
 
 /**
- * Build the smooth pyramid visual (four slanted faces + base) with its base
- * centred on the origin — this Babylon build has no `CreatePyramid`, so the
- * solid is emitted as a flat-shaded closed mesh. The apex may sit off the
- * base centre (a cone quadrant is one quarter of the full pyramid, apex on
- * the shared cell-centre axis); face normals are derived from the geometry,
- * so off-centre apices stay correctly wound and lit.
- */
-function buildPyramidMesh(
-  scene: Scene,
-  name: string,
-  diameter: number,
-  depth: number,
-  height: number,
-  apexX = 0,
-  apexZ = 0,
-): Mesh {
-  const d2 = diameter / 2;
-  const z2 = depth / 2;
-  const A: [number, number, number] = [-d2, 0, -z2];
-  const B: [number, number, number] = [d2, 0, -z2];
-  const C: [number, number, number] = [d2, 0, z2];
-  const D: [number, number, number] = [-d2, 0, z2];
-  const P: [number, number, number] = [apexX, height, apexZ];
-  const pv = new Vector3(apexX, height, apexZ);
-  const mid = (p: [number, number, number], q: [number, number, number]): Vector3 =>
-    new Vector3((p[0] + q[0]) / 2, (p[1] + q[1]) / 2, (p[2] + q[2]) / 2);
-  // Interior point of the (possibly off-centre) pyramid: average of vertices.
-  const centroid = new Vector3(
-    (A[0] + B[0] + C[0] + D[0] + P[0]) / 5,
-    (A[1] + B[1] + C[1] + D[1] + P[1]) / 5,
-    (A[2] + B[2] + C[2] + D[2] + P[2]) / 5,
-  );
-  const geo = new FlatGeometry();
-  const side = (a: [number, number, number], b: [number, number, number]): void => {
-    const n = Vector3.Cross(
-      new Vector3(b[0] - a[0], b[1] - a[1], b[2] - a[2]),
-      new Vector3(P[0] - a[0], P[1] - a[1], P[2] - a[2]),
-    );
-    // Orient outward: away from the solid's interior point.
-    const outward = mid(a, b).add(pv).scale(1 / 3).subtract(centroid);
-    if (n.dot(outward) < 0) n.scaleInPlace(-1);
-    geo.addTriangle([a, b, P], n);
-  };
-  side(A, B);
-  side(B, C);
-  side(C, D);
-  side(D, A);
-  geo.addQuad([A, B, C, D], new Vector3(0, -1, 0));
-  return geo.build(scene, name);
-}
-
-/**
  * Populate a structure root with its presentation visuals, relative to the
  * root pose (anchor + half the effective height). Rebuilding disposes any
  * existing children, so this is safe to call on every geometry change.
@@ -691,20 +608,17 @@ function fillStructureVisual(
   }
 
   if (input.buildType === "cone") {
+    // The cone visual IS the canonical roof shell — one box per cuboid of
+    // `structureCuboids`, so the thin roof, the hollow interior and every
+    // edit opening are exactly what collision, hitscan and picking see.
     let index = 0;
-    for (const py of coneVisualPyramids(input)) {
-      const mesh = buildPyramidMesh(
-        scene,
-        `visual-${id}-${index}`,
-        py.diameter,
-        py.depth,
-        py.height,
-        py.apex?.[0] ?? 0,
-        py.apex?.[1] ?? 0,
-      );
-      // The pyramid mesh's local origin is its base centre (not its bounding
-      // centre like CreateBox), so offset down by half its height.
-      finish(mesh, index, py.center[0], py.center[1] - py.height / 2, py.center[2]);
+    for (const part of coneVisualBoxes(input)) {
+      const mesh = MeshBuilder.CreateBox(`visual-${id}-${index}`, {
+        width: part.size[0],
+        height: part.size[1],
+        depth: part.size[2],
+      }, scene);
+      finish(mesh, index, part.center[0], part.center[1], part.center[2]);
       index += 1;
     }
     return;

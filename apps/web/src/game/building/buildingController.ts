@@ -78,6 +78,12 @@ export interface BuildingFrameContext {
   aimDirection: Vec3Like;
   /** The local player's feet position (for the placement range check). */
   playerPosition: Vec3Like;
+  /**
+   * Local player crouch state for the shared-eye occlusion check (standing
+   * 1.2 / crouch 0.9 eye). The server always uses its authoritative flag;
+   * omitting this keeps the preview on the standing eye.
+   */
+  crouched?: boolean;
 }
 
 /** The authoritative simulation tick period (the shared 30 Hz tick cadence). */
@@ -228,6 +234,7 @@ export class BuildingController {
       rotation: this.input.getRotation(),
       occupied: this.store.getOccupiedStructures(),
       preparationSide: this.preparationSide,
+      crouched: context.crouched === true,
     });
     this.resolvePendingMeshes();
     return this.preview;

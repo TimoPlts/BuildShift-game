@@ -2,6 +2,8 @@ name: buildshift
 services:
   game:
     image: buildshift12-game:local
+    mem_limit: 512m
+    memswap_limit: 512m
     build:
       context: .
       target: game
@@ -24,6 +26,8 @@ services:
         max-file: "3"
   web:
     image: buildshift12-web:local
+    mem_limit: 128m
+    memswap_limit: 128m
     build:
       context: .
       target: web

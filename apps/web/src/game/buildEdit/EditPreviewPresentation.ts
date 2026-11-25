@@ -120,7 +120,7 @@ function gridToWorld(grid: GridPosition): Vector3 {
 function footprintDims(buildType: BuildType): [number, number, number] {
   const config = getStructureConfig(buildType);
   const [fx, fy, fz] = config?.footprint ?? [1, 1, 1];
-  // The cone is the canonical low roof pyramid (CONE_PEAK_HEIGHT, half a
+  // The cone is the canonical low roof shell (CONE_PEAK_HEIGHT, half a
   // layer) — the edit envelope, tile overlays and grid match that volume.
   const h = buildType === "cone" ? CONE_PEAK_HEIGHT : fy * BUILD_GRID.layerHeight;
   return [fx * BUILD_GRID.cellSize, h, fz * BUILD_GRID.cellSize];
@@ -512,8 +512,9 @@ export class EditPreviewPresentation {
       );
       this.pool = { base, grid, tiles, selection, rampResult: null, rampSelection: null, rampMarker: null, rampTurn: null };
     } else if (buildType === "cone") {
-      // Square-pyramid envelope matching the canonical stepped-pyramid cone
-      // (a 4-sided cylinder with its corners on the footprint corners).
+      // Square-pyramid GHOST envelope matching the canonical stepped roof
+      // shell's outer envelope (a 4-sided cylinder with its corners on the
+      // footprint corners) — translucent targeting aid, not a solid claim.
       base = MeshBuilder.CreateCylinder(
         `${NAME_PREFIX}base-piece`,
         { height: h, diameterTop: 0, diameterBottom: w * Math.SQRT2, tessellation: 4 },

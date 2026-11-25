@@ -18,14 +18,16 @@
  * cannot be edited to nothing, so the authoritative server rejects the edit
  * that would remove the last remaining tile instead of applying it.
  *
- * `generateFloorEditGeometry` derives the structure's collision cuboids
- * directly from the canonical tile state (one quarter-cell cuboid per solid
- * tile), so the physics world always matches the authoritative edit state.
+ * `generateFloorEditGeometry` derives the structure's collision cuboids by
+ * delegating to the shared canonical `structureCuboids` (thin 0.15 m slabs:
+ * one full-cell slab unedited, one quarter-cell slab per solid tile when
+ * edited), so the physics world always matches the authoritative edit state
+ * AND what the client renders, picks and shoots.
  * Floors are rotation-invariant (`rotationCount === 1`, enforced at
  * placement), so no rotation parameter is needed.
  */
 
-import { BUILD_GRID } from "@buildshift/game-config";
+import { structureCuboids } from "@buildshift/game-config";
 import { FLOOR_CONE_EDIT_COLS, FLOOR_CONE_EDIT_TILE_COUNT } from "@buildshift/protocol";
 
 /** The canonical named forms a 2×2 floor edit may produce. */
@@ -109,35 +111,25 @@ export function isValidFloorForm(tiles: readonly boolean[] | null | undefined): 
 
 /**
  * Generates the floor's collision geometry from the canonical 2×2 edit
- * state: one quarter-cell cuboid per remaining (solid) tile.
- *
- * The four quarter tiles of a full floor tile exactly the anchored build
- * cell, so a `full`-form floor has the identical collision volume as the
- * plain placement collider; edited floors lose exactly the volume of their
- * removed tiles. Returns an empty list for the invalid empty form (the
- * server rejects that state before any geometry is generated).
+ * state by DELEGATING to the single source of truth, `structureCuboids`
+ * (thin 0.15 m slab: one quarter-cell slab per solid tile, one full-cell
+ * slab when unedited) — the SAME solids the client renders, picks and
+ * shoots. The floor is rotation-invariant (`rotationCount === 1`, enforced
+ * at placement), so no rotation parameter is needed. Returns an empty list
+ * for the invalid empty form (the server rejects that state before any
+ * geometry is generated).
  */
 export function generateFloorEditGeometry(grid: FloorGridCell, tiles: readonly boolean[]): FloorEditCuboid[] {
-  const out: FloorEditCuboid[] = [];
-  if (tiles.length !== FLOOR_CONE_EDIT_TILE_COUNT) {
-    return out;
+  if (tiles.length !== FLOOR_CONE_EDIT_TILE_COUNT || !tiles.some(Boolean)) {
+    return [];
   }
-  const cs = BUILD_GRID.cellSize;
-  const lh = BUILD_GRID.layerHeight;
-  for (let i = 0; i < tiles.length; i++) {
-    if (!tiles[i]) {
-      continue;
-    }
-    const row = Math.floor(i / FLOOR_CONE_EDIT_COLS); // Z half-index
-    const col = i % FLOOR_CONE_EDIT_COLS; // X half-index
-    out.push({
-      center: {
-        x: grid.x * cs + (col - 0.5) * (cs / 2),
-        y: grid.y * lh + lh / 2,
-        z: grid.z * cs + (row - 0.5) * (cs / 2),
-      },
-      halfExtents: { x: cs / 4, y: lh / 2, z: cs / 4 },
-    });
-  }
-  return out;
+  return structureCuboids({
+    buildType: "floor",
+    grid: { x: grid.x, y: grid.y, z: grid.z },
+    rotation: 0,
+    editGrid: { kind: "floor_cone", tiles: [...tiles] },
+  }).map((c) => ({
+    center: { x: c.center.x, y: c.center.y, z: c.center.z },
+    halfExtents: { x: c.halfExtents.x, y: c.halfExtents.y, z: c.halfExtents.z },
+  }));
 }

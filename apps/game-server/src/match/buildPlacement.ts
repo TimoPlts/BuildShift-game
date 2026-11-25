@@ -17,7 +17,11 @@ import {
   getStructureDurability,
   structureCuboids,
   isGridAllowedDuringPreparation,
+  placementEyePoint,
+  placementIsVisible,
+  type GeometryEditState,
   type PreparationSide,
+  type StructureGeometryInput,
 } from "@buildshift/game-config";
 import {
   StructureStateSchema,
@@ -27,6 +31,46 @@ import {
 } from "../state/buildingState.js";
 import type { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import type { BuildingStateSchemaInstance } from "../state/buildingState.js";
+
+/**
+ * Replicated schema structure → the canonical `GeometryEditState` (mirrors
+ * the room's own mapping — edit holes must be real holes for the shared
+ * occlusion solids, exactly as for hitscan/collision).
+ */
+function editStateOf(s: InstanceType<typeof StructureStateSchema>): GeometryEditState | undefined {
+  if (s.editKind === "wall" && s.editTiles.length === 9) return { kind: "wall", tiles: [...s.editTiles] };
+  if (s.editKind === "floor_cone" && s.editTiles.length === 4) return { kind: "floor_cone", tiles: [...s.editTiles] };
+  if (s.editKind === "ramp" && ["full", "flipped", "half_left", "half_right", "turn_left", "turn_right"].includes(s.editRampVariant)) {
+    return { kind: "ramp", variant: s.editRampVariant as Extract<GeometryEditState, { kind: "ramp" }>["variant"] };
+  }
+  return undefined;
+}
+
+/**
+ * The shared placement line-of-sight gate (see game-config
+ * `placementVisibility.ts`). Built ONLY from authoritative server data: the
+ * player's replicated pose + crouch (canonical shared eye: standing 1.2 /
+ * crouch 0.9 via `placementEyePoint`) and the canonical, edit-aware solids
+ * of every existing structure plus the arena shell. A client-sent
+ * visibility claim or eye position is never consulted.
+ */
+function placementHasLineOfSight(ctx: BuildCtx, sid: string, it: { buildType: string; grid: { x: number; y: number; z: number }; rotation: number }): boolean {
+  const pl = ctx.state.players.get(sid)!;
+  const structures: StructureGeometryInput[] = [];
+  for (const s of ctx.bld.structures.values()) {
+    structures.push({
+      buildType: s.buildType as StructureGeometryInput["buildType"],
+      grid: { x: s.grid.x, y: s.grid.y, z: s.grid.z },
+      rotation: s.rotation,
+      editGrid: editStateOf(s),
+    });
+  }
+  return placementIsVisible({
+    eye: placementEyePoint(pl.x, pl.y, pl.z, pl.crouch === true),
+    candidate: { buildType: it.buildType as StructureGeometryInput["buildType"], grid: it.grid, rotation: it.rotation },
+    structures,
+  }).visible;
+}
 
 export interface BuildCtx {
   state: RoomStateSchemaInstance;
@@ -108,6 +152,16 @@ export async function handleBuildPlacement(
   const lt = ctx.lpt.get(sid);
   if (lt !== undefined && ctx.tc - lt < BUILD_RATE.minTicksBetweenPlacements) {
     ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "rate_limited" });
+    return;
+  }
+  // Line-of-sight gate (occlusion mission): the candidate must be visible
+  // from the authoritative eye against the canonical edited solids. A forged
+  // in-range packet for a far-side-of-a-closed-wall slot is refused HERE —
+  // before any Energy spend, structure creation, physics write or broadcast
+  // — while a candidate seen through a real edited hole passes on the usual
+  // rules alone. Ownership is irrelevant to obstruction.
+  if (!placementHasLineOfSight(ctx, sid, it)) {
+    ctx.sendTo(c, BUILD_EVENTS.STRUCTURE_REJECTED, { sequence: it.sequence, reason: "occluded" });
     return;
   }
   if (!canAffordBuild(pl.energy, cfg.cost)) {

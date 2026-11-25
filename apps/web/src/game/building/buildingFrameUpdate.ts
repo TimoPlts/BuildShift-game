@@ -53,6 +53,7 @@ const _frameContext = {
   aimOrigin: { x: 0, y: 0, z: 0 },
   aimDirection: { x: 0, y: 0, z: 0 },
   playerPosition: { x: 0, y: 0, z: 0 },
+  crouched: false,
 };
 
 /**
@@ -75,6 +76,9 @@ const _frameContext = {
  * @param primaryPressed the routed build-owned primary press edge (from
  *        `routePrimaryAction`); it joins the same rate-limited submission
  *        path as the hold, so single-click placement is reliable.
+ * @param crouched the local player's crouch state for the shared-eye
+ *        occlusion preview (standing 1.2 / crouch 0.9); default `false`
+ *        (standing eye — the server always uses its authoritative flag).
  */
 export function updateBuildingFrame(
   building: BuildingFrameDriver,
@@ -86,6 +90,7 @@ export function updateBuildingFrame(
   nowMs?: number,
   inRound = true,
   primaryPressed = false,
+  crouched = false,
 ): void {
   const camPos = camera.position;
   const aimOrigin = _frameContext.aimOrigin;
@@ -102,6 +107,7 @@ export function updateBuildingFrame(
   pos.x = playerFeet.x;
   pos.y = playerFeet.y;
   pos.z = playerFeet.z;
+  _frameContext.crouched = crouched;
 
   building.controller.updateFrame(_frameContext);
 

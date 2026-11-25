@@ -113,11 +113,25 @@ export function sampleEditSurface(
   const size = editGridSize(piece.buildType);
   if (size === null) return null;
 
-  /** Ray parameter where the ray meets `coord(t) = value`, within range. */
+  /** Ray parameter where the ray meets `coord(t) = value`, in front of the ray. */
   const planeT = (o: number, d: number, value: number): number | null => {
     if (Math.abs(d) < 1e-9) return null;
     const t = (value - o) / d;
-    return t > 0 && t <= maxRange ? t : null;
+    return t > 0 ? t : null;
+  };
+  /**
+   * Whether the aim ray actually reaches the piece's (loose) volume within
+   * `maxRange`. The mid-plane hit distance is NOT the right reach test for
+   * a thick piece seen at a shallow angle: selection accepts a surface hit
+   * within `maxRange`, and the panel/cone mid-plane can sit slightly BEYOND
+   * that while the visible face the crosshair rides on is inside it. The
+   * AABB entry is the (never-tighter) superset of the exact solid entry
+   * used at lock time, so a locked piece keeps a truthful tile sample near
+   * its range limit instead of collapsing onto the volume-entry clamp.
+   */
+  const volumeReachable = (buildType: BuildType): boolean => {
+    const { ctr, he } = structureAabb(buildType, piece.grid, piece.rotation);
+    return rayAabbDistance(origin, dir, ctr, he, maxRange) !== null;
   };
 
   if (piece.buildType === "cone") {
@@ -127,6 +141,12 @@ export function sampleEditSurface(
     // colliders move against and hitscan resolves) selects that corner —
     // no half-height plane whose cross-section covers only the middle of
     // the footprint (which made outer-base aims resolve to random corners).
+    //
+    // Deliberately the UNEDITED full solid here (selection is the edit-
+    // aware exact raycast in structureSelection; this sampler answers the
+    // different question "which canonical tile is the crosshair over" for
+    // the ALREADY-LOCKED piece, so a crosshair on an edited-out cone hole
+    // still maps to the tile it would restore).
     const hit = rayStructureIntersection(
       origin,
       dir,
@@ -165,17 +185,26 @@ export function sampleEditSurface(
       return [forward ? worldCol : 3 - worldCol, (lh - height) / (lh / 3)] as const;
     };
     [u, v] = t === null ? [NaN, NaN] : toUv(t);
-    if (!(u >= 0 && u < size.cols && v >= 0 && v < size.rows)) {
-      // The crosshair is on the wall's (whole-cell) selection volume but the
-      // panel-plane point is off the panel (e.g. aiming down onto the cell
-      // from above): use where the ray enters the volume.
+    if (t !== null && u >= 0 && u < size.cols && v >= 0 && v < size.rows) {
+      // The crosshair rides a real panel tile. Accept the TRUE point even
+      // when the mid-plane sits slightly beyond `maxRange` (see
+      // {@link volumeReachable}): lock-time selection measured the actual
+      // surface, so a locked piece keeps truthful tile samples near its
+      // range limit instead of sliding onto the volume-entry clamp.
+      if (t > maxRange && !volumeReachable(piece.buildType)) return null;
+      return { kind: "tiles", u, v, inside: true, distance: t };
+    }
+    // The crosshair is on the wall's (whole-cell) selection volume but the
+    // panel-plane point is off the panel (e.g. aiming down onto the cell
+    // from above): use where the ray enters the volume.
+    {
       const { ctr, he } = structureAabb(piece.buildType, piece.grid, piece.rotation);
       const entry = rayAabbDistance(origin, dir, ctr, he, maxRange);
       if (entry !== null) {
-        const edge = 1 - 1e-9;
+        const edge2 = 1 - 1e-9;
         const [eu, ev] = toUv(entry);
-        u = Math.min(size.cols * edge, Math.max(0, eu));
-        v = Math.min(size.rows * edge, Math.max(0, ev));
+        u = Math.min(size.cols * edge2, Math.max(0, eu));
+        v = Math.min(size.rows * edge2, Math.max(0, ev));
         t = entry;
       } else if (t === null) {
         return null;
@@ -190,11 +219,18 @@ export function sampleEditSurface(
       (origin.z + dir.z * tt - az + cs / 2) / (cs / 2),
     ] as const;
     [u, v] = t === null ? [NaN, NaN] : toUv(t);
-    if (!(u >= 0 && u < size.cols && v >= 0 && v < size.rows)) {
-      // The crosshair is on the piece but its plane point falls outside the
-      // footprint, or the ray is level (e.g. a cone seen from the side): use
-      // where the ray enters the piece's volume, so every aim that selects
-      // the piece hits a tile.
+    if (t !== null && u >= 0 && u < size.cols && v >= 0 && v < size.rows) {
+      // Same rule as the wall branch: a crosshair over a real footprint
+      // tile keeps its TRUE tile while the piece is reachable, even if the
+      // mid-plane itself sits slightly beyond `maxRange`.
+      if (t > maxRange && !volumeReachable(piece.buildType)) return null;
+      return { kind: "tiles", u, v, inside: true, distance: t };
+    }
+    // The crosshair is on the piece but its plane point falls outside the
+    // footprint, or the ray is level (e.g. a cone seen from the side): use
+    // where the ray enters the piece's volume, so every aim that selects
+    // the piece hits a tile.
+    {
       const { ctr, he } = structureAabb(piece.buildType, piece.grid, piece.rotation);
       const entry = rayAabbDistance(origin, dir, ctr, he, maxRange);
       if (entry !== null) {

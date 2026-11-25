@@ -4,8 +4,10 @@
  * Verifies that collision geometry is derived from exactly the same canonical
  * edit geometry as rendering:
  *  - Walls: per-tile thin-panel cuboids from the 9-tile edit state
- *  - Floors: quarter-cell cuboids from the 2×2 tile state
- *  - Cones: quarter-cell cuboids from the 2×2 tile state (same as floors)
+ *  - Floors: thin quarter-cell slabs from the 2×2 tile state (delegating to
+ *    the shared canonical `structureCuboids`)
+ *  - Cones: the thin stepped ROOF SHELL from `structureCuboids` — thin skirt
+ *    bands around a hollow interior; removed quadrants are true openings
  *  - Ramps: single cuboid from the directional variant
  *  - Reset: restores the full solid collider (no openings)
  *
@@ -13,7 +15,7 @@
  * cover the edited-state collision.
  */
 import { describe, expect, it } from "vitest";
-import { BUILD_GRID, RAMP_STEPS, structureCuboids } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, CONE_SHELL_THICKNESS, RAMP_STEPS, rayStructureIntersection, structureCuboids } from "@buildshift/game-config";
 import { wallCollisionCuboids, WALL_EDIT_PATTERNS, WALL_PANEL_THICKNESS } from "../state/wallEditPatterns.js";
 import { generateFloorEditGeometry } from "./floorEditGeometry.js";
 import { rampCollisionCuboids } from "./rampCollisionGeometry.js";
@@ -98,57 +100,71 @@ describe("wallCollisionCuboids (collision from canonical wall edit state)", () =
 describe("generateFloorEditGeometry (collision from canonical floor edit state)", () => {
   const grid = { x: 0, y: 0, z: 0 };
 
-  it("generates 4 quarter-cell cuboids for a full floor (reset state)", () => {
+  it("generates the canonical thin full-cell slab for a full floor (reset state)", () => {
     const geo = generateFloorEditGeometry(grid, [true, true, true, true]);
-    expect(geo).toHaveLength(4);
-    for (const c of geo) {
-      expect(c.halfExtents.x).toBeCloseTo(cs / 4);
-      expect(c.halfExtents.y).toBeCloseTo(lh / 2);
-      expect(c.halfExtents.z).toBeCloseTo(cs / 4);
-    }
+    // Delegates to `structureCuboids`: ONE thin slab, not four full-height
+    // columns — server colliders match what the client renders and shoots.
+    expect(geo).toHaveLength(1);
+    expect(geo[0]!.halfExtents.x).toBeCloseTo(cs / 2);
+    expect(geo[0]!.halfExtents.y).toBeCloseTo(0.15 / 2);
+    expect(geo[0]!.halfExtents.z).toBeCloseTo(cs / 2);
   });
 
-  it("generates fewer cuboids when tiles are opened (floor holes drop)", () => {
-    // Open the top-left tile → 3 cuboids.
+  it("generates thin quarter slabs when tiles are opened (floor holes drop)", () => {
+    // Open the top-left tile → 3 quarter slabs, each 0.15 m thick.
     const geo = generateFloorEditGeometry(grid, [false, true, true, true]);
     expect(geo).toHaveLength(3);
+    for (const c of geo) expect(c.halfExtents.y).toBeCloseTo(0.15 / 2);
   });
 
-  it("cuboids span the full cell (center-convention)", () => {
+  it("cuboids span the full cell (center-convention) and stay a thin slab", () => {
     const geo = generateFloorEditGeometry(grid, [true, true, true, true]);
     const minX = Math.min(...geo.map((c) => c.center.x - c.halfExtents.x));
     const maxX = Math.max(...geo.map((c) => c.center.x + c.halfExtents.x));
+    const maxY = Math.max(...geo.map((c) => c.center.y + c.halfExtents.y));
     expect(minX).toBeCloseTo(-cs / 2);
     expect(maxX).toBeCloseTo(cs / 2);
+    expect(maxY).toBeCloseTo(0.15);
+  });
+
+  it("the invalid empty form generates no geometry at all", () => {
+    expect(generateFloorEditGeometry(grid, [false, false, false, false])).toEqual([]);
   });
 });
 
 // ─── Cone collision ────────────────────────────────────────────────────────
 
-describe("cone collision (reuses floor edit geometry)", () => {
+describe("cone collision (thin roof shell from the canonical 2×2 tile state)", () => {
   const grid = { x: 0, y: 0, z: 0 };
 
-  it("generates quarter-cell cuboids from the 2×2 tile state", () => {
-    const geo = generateFloorEditGeometry(grid, [true, true, true, false]);
-    expect(geo).toHaveLength(3);
-    for (const c of geo) {
-      expect(c.halfExtents.x).toBeCloseTo(cs / 4);
-      expect(c.halfExtents.y).toBeCloseTo(lh / 2);
-      expect(c.halfExtents.z).toBeCloseTo(cs / 4);
-    }
-  });
-
-  it("reset (all 4 tiles solid) generates 4 cuboids covering the full cell", () => {
-    const geo = generateFloorEditGeometry(grid, [true, true, true, true]);
-    expect(geo).toHaveLength(4);
+  it("full cone is a thin stepped shell within the documented bounds", () => {
+    const geo = structureCuboids({ buildType: "cone", grid, rotation: 0 });
+    expect(geo.length).toBeGreaterThan(0);
     const minX = Math.min(...geo.map((c) => c.center.x - c.halfExtents.x));
     const maxX = Math.max(...geo.map((c) => c.center.x + c.halfExtents.x));
     const minZ = Math.min(...geo.map((c) => c.center.z - c.halfExtents.z));
     const maxZ = Math.max(...geo.map((c) => c.center.z + c.halfExtents.z));
+    const minY = Math.min(...geo.map((c) => c.center.y - c.halfExtents.y));
+    const maxY = Math.max(...geo.map((c) => c.center.y + c.halfExtents.y));
     expect(minX).toBeCloseTo(-cs / 2);
     expect(maxX).toBeCloseTo(cs / 2);
     expect(minZ).toBeCloseTo(-cs / 2);
     expect(maxZ).toBeCloseTo(cs / 2);
+    expect(minY).toBeCloseTo(0);
+    expect(maxY).toBeCloseTo(CONE_PEAK_HEIGHT);
+    for (const c of geo) expect(c.halfExtents.y * 2).toBeLessThanOrEqual(CONE_SHELL_THICKNESS + 1e-9);
+  });
+
+  it("a removed quadrant is a true full-height opening; retained quadrants still block", () => {
+    const geo = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles: [true, true, true, false] } });
+    // Tile 3 (SE: +x, +z) removed → a vertical ray through that quadrant hits nothing.
+    expect(rayStructureIntersection({ x: cs / 4, y: 6, z: cs / 4 }, { x: 0, y: -1, z: 0 }, 10, geo)).toBeNull();
+    expect(rayStructureIntersection({ x: -cs / 4, y: 6, z: cs / 4 }, { x: 0, y: -1, z: 0 }, 10, geo)).not.toBeNull();
+  });
+
+  it("reset (all 4 tiles solid) restores the exact default shell", () => {
+    const reset = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles: [true, true, true, true] } });
+    expect(reset).toEqual(structureCuboids({ buildType: "cone", grid, rotation: 0 }));
   });
 });
 
@@ -214,8 +230,11 @@ describe("reset restores full collider (no openings)", () => {
     expect(maxY).toBeCloseTo(lh);
   });
 
-  it("floor reset (all 4 tiles solid) generates 4 cuboids covering the full cell", () => {
+  it("floor reset (all 4 tiles solid) generates the full-cell thin slab", () => {
     const geo = generateFloorEditGeometry({ x: 0, y: 0, z: 0 }, [true, true, true, true]);
-    expect(geo).toHaveLength(4);
+    expect(geo).toHaveLength(1);
+    expect(geo[0]!.halfExtents.x).toBeCloseTo(cs / 2);
+    expect(geo[0]!.halfExtents.z).toBeCloseTo(cs / 2);
+    expect(geo[0]!.halfExtents.y).toBeCloseTo(0.15 / 2);
   });
 });

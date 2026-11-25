@@ -26,8 +26,12 @@
  * game state, never sends network messages, and never performs authority
  * checks. Collision and gameplay rules are owned by the authoritative server
  * and are *not* touched here — the generated geometry is a presentation
- * parameter for the renderer, not a collider. The full-footprint collider is
- * unchanged.
+ * parameter for the renderer, not a collider. The canonical cone solid itself
+ * is the thin stepped ROOF SHELL emitted by `structureCuboids`
+ * (`@buildshift/game-config`): every band of every level is a thin skirt, the
+ * interior is real air, and a removed quadrant is a true full-height opening
+ * in both the shell solids and the rendered boxes — no full-footprint solid
+ * exists any more.
  */
 import {
   FLOOR_CONE_EDIT_TILE_COUNT,

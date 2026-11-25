@@ -24,10 +24,12 @@ export {
 } from "./character.js";
 export { ARENA_COLLIDERS, PLAYER_SPAWN, PLAYABLE_ARENA_BOUNDS, clampToPlayableArena } from "./arena.js";
 export type { ArenaCollider } from "./arena.js";
-export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
+export { structureCuboids, rayStructureIntersection, resolveStructureMovement, RAMP_STEPS, RAMP_SLAB_THICKNESS, wallEdgeCenter, structureBounds, CONE_LEVELS, CONE_RISE, CONE_SHELL_THICKNESS, CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS } from "./editGeometry.js";
 export type { StructureCuboid, GeometryEditState, StructureGeometryInput, StructureMovementPose } from "./editGeometry.js";
 export { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection, WALL_HIGH_FRACTION } from "./surfacePlacement.js";
 export type { StructureSurfaceHit, SurfacePlacement } from "./surfacePlacement.js";
+export { PLACEMENT_VISIBILITY, placementEyePoint, placementVisibilitySamples, placementIsVisible, ARENA_VISIBILITY_BLOCKERS } from "./placementVisibility.js";
+export type { PlacementVisibilityVec, PlacementVisibilityInput, PlacementVisibilityResult } from "./placementVisibility.js";
 
 export {
   SHOTGUN,

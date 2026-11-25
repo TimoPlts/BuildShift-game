@@ -14,6 +14,7 @@ COPY apps/ ./apps/
 COPY packages/ ./packages/
 # Public routing choice only. API credentials are supplied at container runtime.
 ENV VITE_GAME_SERVER_URL=same-origin
+ENV NODE_OPTIONS=--max-old-space-size=1536
 RUN pnpm build
 RUN pnpm --filter @buildshift/game-server deploy --prod /runtime/game
 

@@ -75,22 +75,20 @@ describe("generateFloorEditGeometry (canonical edit state → geometry)", () => 
   const cs = BUILD_GRID.cellSize;
   const lh = BUILD_GRID.layerHeight;
 
-  it("generates one quarter-cell cuboid per remaining tile for a full floor", () => {
+  it("generates the canonical thin slab for a full floor (one slab, not full-height columns)", () => {
     const geo = generateFloorEditGeometry(grid, [T, T, T, T]);
-    expect(geo).toHaveLength(4);
-    for (const c of geo) {
-      expect(c.halfExtents.x).toBeCloseTo(cs / 4);
-      expect(c.halfExtents.y).toBeCloseTo(lh / 2);
-      expect(c.halfExtents.z).toBeCloseTo(cs / 4);
-      expect(c.center.y).toBeCloseTo(grid.y * lh + lh / 2);
-    }
-    // The four quarter tiles span exactly the anchored build cell.
-    const xs = geo.map((c) => c.center.x);
-    const zs = geo.map((c) => c.center.z);
-    expect(Math.min(...xs) - cs / 4).toBeCloseTo(grid.x * cs - cs / 2);
-    expect(Math.max(...xs) + cs / 4).toBeCloseTo(grid.x * cs + cs / 2);
-    expect(Math.min(...zs) - cs / 4).toBeCloseTo(grid.z * cs - cs / 2);
-    expect(Math.max(...zs) + cs / 4).toBeCloseTo(grid.z * cs + cs / 2);
+    // Delegates to the shared canonical `structureCuboids`: the server
+    // collider is the SAME thin 0.15 m slab the client renders and shoots.
+    expect(geo).toHaveLength(1);
+    expect(geo[0]!.halfExtents.x).toBeCloseTo(cs / 2);
+    expect(geo[0]!.halfExtents.y).toBeCloseTo(0.15 / 2);
+    expect(geo[0]!.halfExtents.z).toBeCloseTo(cs / 2);
+    expect(geo[0]!.center.y).toBeCloseTo(grid.y * lh + 0.15 / 2);
+    // The slab spans exactly the anchored build cell.
+    expect(geo[0]!.center.x - geo[0]!.halfExtents.x).toBeCloseTo(grid.x * cs - cs / 2);
+    expect(geo[0]!.center.x + geo[0]!.halfExtents.x).toBeCloseTo(grid.x * cs + cs / 2);
+    expect(geo[0]!.center.z - geo[0]!.halfExtents.z).toBeCloseTo(grid.z * cs - cs / 2);
+    expect(geo[0]!.center.z + geo[0]!.halfExtents.z).toBeCloseTo(grid.z * cs + cs / 2);
   });
 
   it("omits removed tiles (three-quarter floor keeps three cuboids)", () => {

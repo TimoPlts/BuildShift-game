@@ -38,10 +38,13 @@
  *       floor/cone → high half: the tile past the high end, one layer up;
  *                    low half: above the ramp's tile.
  *     side faces / underside → the side tile / the ramp's own tile, same layer.
- *  CONE hit
+ *  CONE hit (a thin roof shell: real solids = stepped bands, hollow inside)
  *       wall → the edge nearest the hit; upper half of the (low) roof top →
- *       the layer above the cone; otherwise the neighbouring tile across the
- *       nearest edge.
+ *       the layer above the cone; band side faces → the neighbouring tile
+ *       across that side; the shell UNDERSIDE (bottom hit, standing under
+ *       the roof) → one layer DOWN from the cone — the space beneath the
+ *       roof — mirroring the floor convention, so a ground-layer cone's
+ *       underside resolves below ground and is invalid by the usual bounds.
  */
 import { BUILD_GRID, normalizePlacementRotation, wallEdgeRotation } from "./building.js";
 import { rayStructureIntersection, structureCuboids, wallEdgeCenter, CONE_PEAK_HEIGHT, type StructureCuboid, type StructureGeometryInput } from "./editGeometry.js";
@@ -178,8 +181,11 @@ export function resolveSurfacePlacement(
     return own(along >= 0.5 ? past : step(g, 0, 0, 1));
   }
 
-  // Cone (a low roof: peak CONE_PEAK_HEIGHT, half a layer).
-  if (buildType === "wall") return nearestWall(g);
+  // Cone (a thin roof shell over a low pyramid surface: peak
+  // CONE_PEAK_HEIGHT, half a layer; the underside is real air).
+  if (buildType === "wall") return nearestWall(bottom ? step(g, 0, 0, -1) : g);
   if (top && localY >= CONE_PEAK_HEIGHT / 2) return own(step(g, 0, 0, 1));
+  // Underside hit (from inside/below the roof): the space under the cone.
+  if (bottom) return own(step(g, 0, 0, -1));
   return own(side ? step(g, n.x, n.z) : acrossNearestEdge(g, p));
 }

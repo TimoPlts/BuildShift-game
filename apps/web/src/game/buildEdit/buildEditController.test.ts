@@ -378,7 +378,7 @@ describe("BuildEditController — confirm sends only the canonical difference", 
     t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
     expect(t.controller.getFeedback()).toMatchObject({ kind: "rejected", message: "Not your structure" });
     t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // the removed tile 4 is now a real aim-through hole
     expect(t.removed()).toEqual([]); // back to the authoritative full wall
   });
 
@@ -398,7 +398,11 @@ describe("BuildEditController — confirm sends only the canonical difference", 
 describe("BuildEditController — reset", () => {
   it("reset previews the default form immediately; confirm sends one reset", () => {
     const t = setup([wall("w1", undefined, { editGrid: { kind: "wall", tiles: [true, true, true, true, false, true, true, false, true] } })]);
-    t.enterEdit();
+    // Lock on tile 3 (solid): tiles 4/7 are edited-out holes, and an aim
+    // dead-centre in a hole is real air — it selects nothing (shots pass
+    // there too). Once locked, the target stays locked even while the
+    // crosshair sits on the hole.
+    t.enterEdit(wallAim(3));
     expect(t.removed()).toEqual([4, 7]);
     t.press("KeyT");
     t.frame(wallAim(4));
@@ -434,7 +438,7 @@ describe("BuildEditController — right mouse button reset (E → RMB → E)", (
 
   it("RMB resets the local draft to the default form at once and sends nothing; E confirms the reset", () => {
     const t = setup([edited()]);
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // lock on a solid tile (4/7 are real holes)
     expect(t.removed()).toEqual([4, 7]);
     rmb(t);
     t.frame(wallAim(4));
@@ -464,7 +468,7 @@ describe("BuildEditController — right mouse button reset (E → RMB → E)", (
 
   it("RMB twice and on an already-default draft is safe (idempotent)", () => {
     const t = setup([edited()]);
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // lock on a solid tile (4/7 are real holes)
     rmb(t);
     t.frame(wallAim(4));
     rmb(t);
@@ -477,7 +481,7 @@ describe("BuildEditController — right mouse button reset (E → RMB → E)", (
 
   it("a rejected reset rolls back to the authoritative edited form", () => {
     const t = setup([edited()]);
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // lock on a solid tile (4/7 are real holes)
     rmb(t);
     t.frame(wallAim(4));
     t.press("KeyE");
@@ -485,7 +489,7 @@ describe("BuildEditController — right mouse button reset (E → RMB → E)", (
     t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
     t.network.emitResult({ structureId: "w1", success: false, reason: "not_owned" });
     expect(t.controller.getFeedback()).toMatchObject({ kind: "rejected" });
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // re-lock on a solid tile (4/7 are holes)
     expect(t.removed()).toEqual([4, 7]);
   });
 
@@ -493,7 +497,7 @@ describe("BuildEditController — right mouse button reset (E → RMB → E)", (
     const t = setup([edited()]);
     rmb(t);
     t.frame(wallAim(4));
-    t.enterEdit();
+    t.enterEdit(wallAim(3)); // lock on a solid tile (4/7 are real holes)
     expect(t.removed()).toEqual([4, 7]);
     expect(t.sent()).toEqual([]);
   });

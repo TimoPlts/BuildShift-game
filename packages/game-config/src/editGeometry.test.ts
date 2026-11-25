@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { CONE_LEVELS, CONE_PEAK_HEIGHT, MAX_STRUCTURE_CUBOIDS, RAMP_SLAB_THICKNESS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, wallEdgeCenter, type StructureCuboid } from "./editGeometry.js";
+import { CONE_LEVELS, CONE_PEAK_HEIGHT, CONE_RISE, CONE_SHELL_THICKNESS, MAX_STRUCTURE_CUBOIDS, RAMP_SLAB_THICKNESS, RAMP_STEPS, rayStructureIntersection, resolveStructureMovement, structureCuboids, wallEdgeCenter, type StructureCuboid } from "./editGeometry.js";
 import { BUILD_GRID } from "./building.js";
 
 const grid = { x: 0, y: 0, z: 0 };
@@ -254,15 +254,40 @@ describe("canonical cone: climbable low roof pyramid", () => {
     expect(CONE_PEAK_HEIGHT / CONE_LEVELS).toBeLessThan(0.34);
   });
 
-  it("is a stepped pyramid rising to the roof peak within the step-up", () => {
+  it("is a stepped roof SHELL rising to the peak, thin and hollow at every level", () => {
     const cone = structureCuboids({ buildType: "cone", grid, rotation: 0 });
-    expect(cone).toHaveLength(CONE_LEVELS);
-    for (const [j, c] of cone.entries()) {
-      expect(c.center.y - c.halfExtents.y).toBeCloseTo(j * CONE_PEAK_HEIGHT / CONE_LEVELS, 9);
-      expect(c.halfExtents.y * 2).toBeLessThan(0.34);
-      expect(c.halfExtents.x).toBeCloseTo((cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS, 9);
+    // Four merged band boxes for levels 0..14, one cap box for the apex level.
+    expect(cone).toHaveLength((CONE_LEVELS - 1) * 4 + 1);
+    const topOf = (c: StructureCuboid) => c.center.y + c.halfExtents.y;
+    const bottomOf = (c: StructureCuboid) => c.center.y - c.halfExtents.y;
+    // Every level's TOP is exactly the old stepped pyramid's tread top: the
+    // walkable surface, peak and step-up behaviour are unchanged.
+    const byLevel = new Map<number, StructureCuboid[]>();
+    for (const c of cone) {
+      const j = Math.round(topOf(c) / CONE_RISE - 1);
+      byLevel.set(j, [...(byLevel.get(j) ?? []), c]);
     }
-    expect(Math.max(...cone.map((c) => c.center.y + c.halfExtents.y))).toBeCloseTo(CONE_PEAK_HEIGHT, 9);
+    expect([...byLevel.keys()].sort((a, b) => a - b)).toEqual(Array.from({ length: CONE_LEVELS }, (_, j) => j));
+    for (const [j, boxes] of byLevel) {
+      for (const c of boxes) {
+        expect(topOf(c)).toBeCloseTo((j + 1) * CONE_RISE, 9);
+        // Thin: the band is the documented shell thickness, clamped to the layer base.
+        expect(bottomOf(c)).toBeCloseTo(Math.max(0, (j + 1) * CONE_RISE - CONE_SHELL_THICKNESS), 9);
+        expect(c.halfExtents.y * 2).toBeLessThanOrEqual(CONE_SHELL_THICKNESS + 1e-9);
+        expect(c.halfExtents.y * 2).toBeLessThan(0.34); // never a wall-scale slab
+      }
+      // Consecutive bands overlap vertically by one full rise: no crease crack.
+      if (j > 1) expect((j + 1) * CONE_RISE - CONE_SHELL_THICKNESS).toBeLessThanOrEqual(j * CONE_RISE + 1e-9);
+    }
+    expect(Math.max(...cone.map(topOf))).toBeCloseTo(CONE_PEAK_HEIGHT, 9);
+    // Hollow: the apex column and the air under the surface are real air.
+    const inside = (p: { x: number; y: number; z: number }) => cone.some((c) =>
+      Math.abs(p.x - c.center.x) <= c.halfExtents.x - 1e-9
+      && Math.abs(p.y - c.center.y) <= c.halfExtents.y - 1e-9
+      && Math.abs(p.z - c.center.z) <= c.halfExtents.z - 1e-9);
+    for (const y of [0.05, 0.5, 1.0, 1.5, 1.66]) expect(inside({ x: 0, y, z: 0 })).toBe(false);
+    expect(inside({ x: 0, y: 1.0, z: 0 })).toBe(false); // under the cap: air
+    expect(inside({ x: 1.0, y: 1.0, z: 0 })).toBe(true); // the band j=9 is material
   });
 
   it("is rotation-invariant (corners are fixed, rotations never tilt the roof)", () => {
@@ -272,24 +297,38 @@ describe("canonical cone: climbable low roof pyramid", () => {
     }
   });
 
-  it("a retained quadrant is exactly one quarter of the full pyramid per level", () => {
-    // Tile 0 (NW): every level occupies [−s, 0] × [−s, 0] — the quadrant
-    // shrinks toward the cell-centre apex, so the edited roof (and its
-    // visual quarter-pyramid) has no off-centre spike and no phantom hole.
+  it("a retained quadrant is exactly that quadrant's quarter shell at every level", () => {
+    // Tile 0 (NW) example: every band sits inside x ≤ 0, z ≤ 0 and covers
+    // exactly the quarter annulus between s_j and s_{j+1} — the shell
+    // converges on the cell-centre apex, so an edited roof keeps a full-
+    // height opening in the removed quadrants and no phantom material.
+    const inset = (cs / 2) / CONE_LEVELS;
     for (const tile of [0, 1, 2, 3]) {
       const tiles = [0, 1, 2, 3].map((i) => i === tile);
       const quarter = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles } });
-      expect(quarter).toHaveLength(CONE_LEVELS);
       const sx = tile % 2 === 0 ? -1 : 1;
       const sz = tile < 2 ? -1 : 1;
-      for (const [j, c] of quarter.entries()) {
-        const s = ((cs / 2) * (CONE_LEVELS - j)) / CONE_LEVELS;
-        expect(c.halfExtents.x).toBeCloseTo(s / 2, 9);
-        expect(c.halfExtents.z).toBeCloseTo(s / 2, 9);
-        expect(c.center.x).toBeCloseTo(sx * s / 2, 9);
-        expect(c.center.z).toBeCloseTo(sz * s / 2, 9);
-        expect(c.center.y - c.halfExtents.y).toBeCloseTo(j * CONE_PEAK_HEIGHT / CONE_LEVELS, 9);
+      // Volume: quarter-annulus area × band height, summed over all levels.
+      let expected = 0;
+      for (let j = 0; j < CONE_LEVELS; j++) {
+        const s = (cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS;
+        const si = s - inset;
+        expected += (s * s - si * si) * Math.min(CONE_SHELL_THICKNESS, (j + 1) * CONE_RISE);
       }
+      const volume = quarter.reduce((v, c) => v + 8 * c.halfExtents.x * c.halfExtents.y * c.halfExtents.z, 0);
+      expect(volume).toBeCloseTo(expected, 9);
+      // Everything sits strictly in the retained quadrant.
+      for (const c of quarter) {
+        expect(sx * (c.center.x - c.halfExtents.x)).toBeGreaterThanOrEqual(-1e-9);
+        expect(sx * (c.center.x + c.halfExtents.x)).toBeLessThanOrEqual(cs / 2 + 1e-9);
+        expect(sz * (c.center.z - c.halfExtents.z)).toBeGreaterThanOrEqual(-1e-9);
+        expect(sz * (c.center.z + c.halfExtents.z)).toBeLessThanOrEqual(cs / 2 + 1e-9);
+      }
+      // The opposite quadrant is a true void: a full-height ray through it
+      // hits nothing, while the retained quadrant blocks.
+      const ox = -sx * cs / 4, oz = -sz * cs / 4;
+      expect(rayStructureIntersection({ x: ox, y: 6, z: oz }, { x: 0, y: -1, z: 0 }, 10, quarter)).toBeNull();
+      expect(rayStructureIntersection({ x: sx * cs / 4, y: 6, z: sz * cs / 4 }, { x: 0, y: -1, z: 0 }, 10, quarter)).not.toBeNull();
     }
   });
 
@@ -306,8 +345,9 @@ describe("canonical cone: climbable low roof pyramid", () => {
 
   it("a canonical half edit opens a ground-level lane through the cone; reset restores the climb", () => {
     const half = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles: [false, true, false, true] } });
-    expect(half).toHaveLength(CONE_LEVELS);
-    for (const c of half) expect(c.center.x - c.halfExtents.x).toBeCloseTo(0, 9);
+    // Retained right column: three merged boxes per band + one apex cap.
+    expect(half).toHaveLength((CONE_LEVELS - 1) * 3 + 1);
+    for (const c of half) expect(c.center.x - c.halfExtents.x).toBeGreaterThanOrEqual(-1e-9);
     const lane = walk({ x: -cs / 4, z: cs / 2 + 1 }, { x: 0, z: -1 }, 60, half);
     expect(Math.max(...lane.map((p) => p.y))).toBe(0);
     expect(lane.at(-1)!.z).toBeLessThan(-cs / 2 - RADIUS);
@@ -319,11 +359,109 @@ describe("canonical cone: climbable low roof pyramid", () => {
   });
 
   it("never exceeds MAX_STRUCTURE_CUBOIDS for any floor_cone edit", () => {
-    for (let mask = 1; mask < 16; mask++) {
+    for (let mask = 0; mask < 16; mask++) {
       const tiles = [0, 1, 2, 3].map((i) => Boolean(mask & (1 << i)));
       expect(structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles } }).length)
         .toBeLessThanOrEqual(MAX_STRUCTURE_CUBOIDS.cone);
     }
+  });
+});
+
+describe("cone roof shell: hollow, watertight, honest headroom", () => {
+  const grid = { x: 0, y: 0, z: 0 };
+  const cone = structureCuboids({ buildType: "cone", grid, rotation: 0 });
+  const shellVolume = (cuboids: StructureCuboid[]) =>
+    cuboids.reduce((v, c) => v + 8 * c.halfExtents.x * c.halfExtents.y * c.halfExtents.z, 0);
+
+  it("is a thin shell, not a filled pyramid (< 40% of the stepped-pyramid volume)", () => {
+    let filled = 0;
+    for (let j = 0; j < CONE_LEVELS; j++) {
+      const s = (cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS;
+      filled += (2 * s) ** 2 * CONE_RISE;
+    }
+    expect(shellVolume(cone)).toBeLessThan(0.4 * filled);
+  });
+
+  it("blocks horizontal sightlines at EVERY height under the peak — no leaks through step creases", () => {
+    // The band windows [top−T, top] tile the full column [0, PEAK] because
+    // T ≥ rise, so a horizontal ray at any height hits the outer band face.
+    for (const y of [0.01, 0.06, 0.13, 0.25, 0.5, 0.9, 1.0, 1.2, 1.43, 1.56, 1.67, 1.81, 1.91]) {
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const from = { x: -dx * (cs / 2 + 1.5), y, z: -dz * (cs / 2 + 1.5) };
+        // Near the peak the silhouette face is close to the axis — give the
+        // ray enough reach to traverse the whole cell.
+        expect(rayStructureIntersection(from, { x: dx, y: 0, z: dz }, cs + 2, cone)).not.toBeNull();
+      }
+    }
+    // Above the peak (and below the ground plane) there is nothing to hit.
+    expect(rayStructureIntersection({ x: -cs, y: CONE_PEAK_HEIGHT + 0.01, z: 0 }, { x: 1, y: 0, z: 0 }, cs * 2, cone)).toBeNull();
+  });
+
+  it("encloses the roof interior: no upward ray escapes the hollow cavity", () => {
+    // Every direction with a non-negative vertical component started inside
+    // the cavity must cross shell material (the only opening is the bottom,
+    // deliberately open to the ground the cone sits on).
+    const from = { x: 0, y: 1.0, z: 0 };
+    const dirs: { x: number; y: number; z: number }[] = [];
+    for (let a = -1; a <= 1; a++) for (let b = 0; b <= 1; b++) for (let c = -1; c <= 1; c++) {
+      if (a === 0 && b === 0 && c === 0) continue;
+      const n = Math.hypot(a, b, c);
+      dirs.push({ x: a / n, y: b / n, z: c / n });
+    }
+    // Plus deterministic pseudo-random directions (LCG) to probe off-lattice escapes.
+    let seed = 42;
+    for (let k = 0; k < 500; k++) {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const u = seed / 2147483648;
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      const v = seed / 2147483648;
+      const phi = u * Math.PI * 2, cosT = v; // v ∈ [0,1): upper hemisphere and horizon
+      dirs.push({ x: Math.cos(phi) * Math.sqrt(1 - cosT * cosT), y: cosT, z: Math.sin(phi) * Math.sqrt(1 - cosT * cosT) });
+    }
+    for (const d of dirs) {
+      expect(rayStructureIntersection(from, d, 30, cone)).not.toBeNull();
+    }
+  });
+
+  it("removes ALL volume for the empty edit (an edited-away cone is no longer a solid at all)", () => {
+    expect(structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles: [false, false, false, false] } })).toEqual([]);
+  });
+
+  // Capsule (r, total height) standing on the ground under a shell: exact
+  // segment-AABB test — a cuboid blocks iff its distance to the capsule's
+  // core segment is under r.
+  const capsuleBlocked = (cuboids: StructureCuboid[], x: number, z: number, height: number, r = 0.35) =>
+    cuboids.some((c) => {
+      const dx = Math.max(c.center.x - c.halfExtents.x - x, 0, x - (c.center.x + c.halfExtents.x));
+      const dz = Math.max(c.center.z - c.halfExtents.z - z, 0, z - (c.center.z + c.halfExtents.z));
+      const y0 = c.center.y - c.halfExtents.y, y1 = c.center.y + c.halfExtents.y;
+      const dy = y1 < r ? r - y1 : y0 > height - r ? y0 - (height - r) : 0;
+      return dx * dx + dz * dz + dy * dy < r * r;
+    });
+
+  it("gives an elevated cone a full standing attic (1.8 m capsule fits anywhere in the footprint)", () => {
+    const raised = structureCuboids({ buildType: "cone", grid: { x: 0, y: 1, z: 0 }, rotation: 0 });
+    // Honest clearance: the shell's lowest material is the layer base itself.
+    expect(Math.min(...raised.map((c) => c.center.y - c.halfExtents.y))).toBeGreaterThanOrEqual(lh - 1e-9);
+    for (const x of [0, 1.28, -1.28, 2.2, -2.2]) for (const z of [0, 1.28, -1.28, 2.2, -2.2]) {
+      expect(capsuleBlocked(raised, x, z, 1.8)).toBe(false);
+    }
+    // And a standing capsule can actually WALK the footprint at ground level.
+    const path = walk({ x: -cs / 2 - 1, z: 0 }, { x: 1, z: 0 }, 60, raised);
+    expect(path.at(-1)!.x).toBeGreaterThan(cs / 2 + RADIUS);
+    expect(Math.max(...path.map((p) => p.y))).toBe(0);
+  });
+
+  it("gives a ground cone a crouch-only attic under the apex (documented honest pitch)", () => {
+    // Crouched (1.2 m) fits under the upper shell at the apex — with room.
+    expect(capsuleBlocked(cone, 0, 0, 1.2)).toBe(false);
+    // Standing (1.8 m) under a 1.92 m PEAK minus a 0.24 m shell cannot fit:
+    // the peak is simply lower than a standing player. This is the honest
+    // physical consequence of the documented 3:4 roof pitch.
+    expect(capsuleBlocked(cone, 0, 0, 1.8)).toBe(true);
+    // Away from the apex even crouching is blocked by the shell sides — the
+    // attic is a real, small, readable space, not a phantom full room.
+    expect(capsuleBlocked(cone, cs / 4, 0, 1.2)).toBe(true);
   });
 });
 

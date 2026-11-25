@@ -84,7 +84,7 @@ describe("GameRuntime build-edit wiring", () => {
     // HUD emission.
     // (Feet are written into a reusable runtime temp — no per-frame Vector3.)
     expect(runtime).toContain(
-      "this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,buildPhaseOpen,route.buildPlacePressed);this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
+      "this.buildFeetInto(this._feetPos),this.isConnected,route.buildPlaceHeld,undefined,buildPhaseOpen,route.buildPlacePressed,this.predictionOrchestrator.getCrouched());this.updateBuildPresentation();this.updateBuildEditFrame(route);if(this.debugHudEnabled)",
     );
 
     const fnIdx = runtime.indexOf("private updateBuildEditFrame(route:PrimaryActionRoute):void");

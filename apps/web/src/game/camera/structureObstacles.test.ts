@@ -11,14 +11,15 @@
  *  - a ramp is its 16 thin step slabs — NOT a full one-tile column (the old
  *    bounding-box behaviour made walkable support a phantom solid volume and
  *    produced the reported sudden camera zoom);
- *  - a cone is its stepped pyramid levels, not a solid box;
+ *  - a cone is its thin stepped roof-shell bands, not a solid box and not a
+ *    filled pyramid — the hollow interior obstructs nothing;
  *  - edited builds obstruct by their RETAINED solids (an opened tile is an
  *    actual opening for the camera too);
  *  - elevated structures have the correct Y range;
  *  - an empty building state produces an empty array.
  */
 import { describe, expect, it } from "vitest";
-import { BUILD_GRID, RAMP_STEPS, CONE_LEVELS, CONE_PEAK_HEIGHT, structureCuboids } from "@buildshift/game-config";
+import { BUILD_GRID, RAMP_STEPS, CONE_PEAK_HEIGHT, structureCuboids } from "@buildshift/game-config";
 import { computeStructureObstacles } from "./structureObstacles";
 import type { BuildingState, StructureState } from "@buildshift/protocol";
 
@@ -96,9 +97,10 @@ describe("computeStructureObstacles", () => {
     expect(boxes.some((b) => contains(b, topStep))).toBe(true);
   });
 
-  it("a cone is a stepped pyramid, not a solid box", () => {
+  it("a cone is a thin stepped roof shell, not a solid box or filled pyramid", () => {
     const boxes = computeStructureObstacles(state(piece("c", "cone", { x: 0, y: 0, z: 0 }, 0)));
-    expect(boxes).toHaveLength(CONE_LEVELS); // unedited levels merge to one box each
+    // Exact parity with the canonical solids the renderer draws and shots hit.
+    expect(boxes).toHaveLength(structureCuboids({ buildType: "cone", grid: { x: 0, y: 0, z: 0 }, rotation: 0 }).length);
     // Cone height is DERIVED, not assumed: the canonical peak is
     // CONE_PEAK_HEIGHT (= lh/2, half a wall). Obstruction must follow that
     // canonical solid, never a full-layer column.
@@ -110,10 +112,16 @@ describe("computeStructureObstacles", () => {
     // Free air directly ABOVE the canonical peak obstructs nothing...
     const abovePeak: [number, number, number] = [0, CONE_PEAK_HEIGHT + 0.1, 0];
     expect(boxes.some((b) => contains(b, abovePeak))).toBe(false);
-    // ...while the mid-core BELOW the canonical peak still obstructs
-    // (derived from CONE_PEAK_HEIGHT, so it tracks the shared constant).
-    const corePoint: [number, number, number] = [0, CONE_PEAK_HEIGHT * 0.55, 0];
-    expect(boxes.some((b) => contains(b, corePoint))).toBe(true);
+    // ...the HOLLOW interior under the peak is real air (standing room
+    // under an elevated cone, crouch space under a ground cone) — no
+    // phantom fill obstructs the camera inside the roof.
+    const attic: [number, number, number] = [0, CONE_PEAK_HEIGHT * 0.55, 0];
+    expect(boxes.some((b) => contains(b, attic))).toBe(false);
+    // The shell material itself obstructs: the apex cap and the base skirt.
+    const capBand: [number, number, number] = [0, CONE_PEAK_HEIGHT - 0.05, 0];
+    expect(boxes.some((b) => contains(b, capBand))).toBe(true);
+    const skirt: [number, number, number] = [cs / 2 - 0.05, 0.05, 0];
+    expect(boxes.some((b) => contains(b, skirt))).toBe(true);
   });
 
   it("an elevated floor is a slab at its layer base", () => {

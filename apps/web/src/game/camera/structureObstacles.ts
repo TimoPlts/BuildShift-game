@@ -12,7 +12,8 @@
  *
  * Why cuboids and not the per-structure bounding box
  * (`build-feel-20261123`): a canonical ramp is 16 thin step slabs that are
- * open underneath, and a canonical cone is a 16-level stepped pyramid. Their
+ * open underneath, and a canonical cone is a thin stepped roof shell (hollow
+ * inside). Their
  * union bounding boxes are solid 5.12 × 3.84 × 5.12 m columns, so a camera
  * ray behind the eye "hit" thin air beside the walk surface and dollied the
  * camera to arm's length INSIDE the build — the reported sudden zoom with
@@ -37,7 +38,7 @@ export function computeStructureObstacles(
     // The canonical solids of the CURRENT edited geometry — the same boxes
     // the player collides with, the shot ray intersects and the renderer
     // draws. Edge walls stand on their edge; ramp steps are thin slabs open
-    // underneath; cones are stepped pyramids; removed edit tiles contribute
+    // underneath; cones are thin stepped roof shells with a hollow interior; removed edit tiles contribute
     // no volume (an actual opening, not an obstruction).
     for (const { center, halfExtents } of structureCuboids({
       buildType: structure.buildType,

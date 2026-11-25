@@ -43,7 +43,7 @@ export function wallEdgeCenter(grid: { x: number; y: number; z: number }, rotati
   return { x: (grid.x + dx) * cs, z: (grid.z + dz) * cs };
 }
 
-/** Stacked levels in a canonical cone: a 16-level stepped pyramid rising to
+/** Stacked levels in a canonical cone: a 16-level stepped ROOF SHELL rising to
  * {@link CONE_PEAK_HEIGHT}, each level equally tall and narrower toward the
  * apex. */
 export const CONE_LEVELS = 16;
@@ -66,9 +66,32 @@ export const CONE_LEVELS = 16;
  *    walkable from every side.
  *
  * Visual mesh, edit preview, hitscan and movement colliders all derive from
- * this one constant (via {@link structureCuboids}).
+ * this one constant (via {@link structureCuboids}, which emits the thin roof
+ * SHELL described there — not a filled pyramid).
  */
 export const CONE_PEAK_HEIGHT: number = (BUILD_GRID.cellSize / 2) * 0.75;
+
+/** Per-level rise of the canonical cone (metres): 1.92/16 = 0.12 m. */
+export const CONE_RISE = CONE_PEAK_HEIGHT / CONE_LEVELS;
+
+/**
+ * Vertical thickness of the canonical cone ROOF SHELL, in metres — exactly
+ * TWO level rises (2 × 0.12 = 0.24 m, the same slab class as
+ * {@link RAMP_SLAB_THICKNESS}).
+ *
+ * The cone is a ROOF, not a solid ziggurat: every level is a thin skirt
+ * band around the pyramid surface and everything under the surface is real
+ * air. The thickness is deliberately ≥ {@link CONE_RISE} so consecutive
+ * bands overlap vertically — the shell is watertight (no ray leaks through
+ * the step creases) while never filling the roof interior. Headroom is then
+ * the honest consequence of the documented pitch, asserted (not hidden) by
+ * the geometry tests: a standing 1.8 m capsule fits fully under an elevated
+ * cone (any cone whose layer base is above head height), the 1.2 m crouched
+ * capsule fits under the upper shell of a ground-level cone, and a ground
+ * cone's 1.92 m apex can NEVER provide standing headroom at its own layer
+ * (that is physics, not a bug to paper over).
+ */
+export const CONE_SHELL_THICKNESS = 2 * CONE_RISE;
 
 /** Upper bound on {@link structureCuboids} length per build type, for
  * consumers that pool one mesh per solid (e.g. the edit preview). */
@@ -76,9 +99,39 @@ export const MAX_STRUCTURE_CUBOIDS = {
   wall: 9,
   floor: 4,
   ramp: RAMP_STEPS,
-  // At most two merged rectangles per level (diagonal or L-shaped edits).
-  cone: CONE_LEVELS * 2,
+  // The roof shell decomposes into at most six merged rectangles per level
+  // (two outward Z bands + the four outward X strips of a full skirt).
+  cone: CONE_LEVELS * 6,
 } as const;
+
+/** Merge exactly-touching axis-aligned rectangles in one plane (used by the
+ * cone roof shell): repeatedly fuse any pair that shares a full edge line
+ * and forms a rectangle, until no merge is possible. Deterministic and
+ * volume-preserving. */
+function mergeRects(rects: { x0: number; x1: number; z0: number; z1: number }[]): { x0: number; x1: number; z0: number; z1: number }[] {
+  const out = [...rects];
+  for (;;) {
+    let merged = false;
+    for (let a = 0; a < out.length && !merged; a++) {
+      for (let b = a + 1; b < out.length; b++) {
+        const A = out[a]!, B = out[b]!;
+        let u: { x0: number; x1: number; z0: number; z1: number } | null = null;
+        if (A.x0 === B.x0 && A.x1 === B.x1 && (A.z1 === B.z0 || B.z1 === A.z0)) {
+          u = { x0: A.x0, x1: A.x1, z0: Math.min(A.z0, B.z0), z1: Math.max(A.z1, B.z1) };
+        } else if (A.z0 === B.z0 && A.z1 === B.z1 && (A.x1 === B.x0 || B.x1 === A.x0)) {
+          u = { x0: Math.min(A.x0, B.x0), x1: Math.max(A.x1, B.x1), z0: A.z0, z1: A.z1 };
+        }
+        if (u) {
+          out.splice(b, 1);
+          out[a] = u;
+          merged = true;
+          break;
+        }
+      }
+    }
+    if (!merged) return out;
+  }
+}
 
 function box(x: number, y: number, z: number, hx: number, hy: number, hz: number): StructureCuboid {
   return { center: { x, y, z }, halfExtents: { x: hx, y: hy, z: hz } };
@@ -139,30 +192,52 @@ export function structureCuboids(input: StructureGeometryInput): StructureCuboid
   }
 
   if (buildType === "cone") {
-    // Stepped pyramid: level j spans y ∈ [j, j+1]·PEAK/L with half-size
-    // (cs/2)·(L−j)/L, PEAK = CONE_PEAK_HEIGHT (a low roof, not a full-layer
-    // spire). An edit keeps only the retained quadrants of every level —
-    // each retained quadrant is exactly one quarter of the full pyramid,
-    // shrinking toward the cell-centre apex (tile i: column i%2 along X,
-    // row ⌊i/2⌋ along Z, low → high).
+    // Stepped ROOF SHELL (see {@link CONE_SHELL_THICKNESS}): level j is the
+    // thin skirt between the pyramid half-sizes s_j = (cs/2)(L−j)/L and
+    // s_{j+1}, spanning y ∈ [(j+1)·rise − T, (j+1)·rise] clamped to the layer
+    // base (PEAK = CONE_PEAK_HEIGHT, a low roof, not a full-layer spire).
+    // The shell TOP is exactly the top of the old stepped pyramid — the same
+    // walkable tread heights, peak and rotation behaviour — but everything
+    // below the surface is real air: shots, camera and sight pass through
+    // the roof interior, and an elevated cone is proper cover to walk under.
+    // An edit keeps only the retained quadrants; a removed quadrant is a
+    // true full-height opening at every level.
+    // (tile i: column i%2 along X, row ⌊i/2⌋ along Z, low → high).
+    //
+    // Per retained quadrant the skirt is an L of two rectangles: an outer
+    // band along the quadrant's outward Z edge (full quadrant X span) plus a
+    // side strip along its outward X edge inside the next level's Z span.
+    // Exactly-touching rectangles are merged, so a full four-quadrant skirt
+    // is four boxes per level, not eight.
     const tiles = editGrid?.kind === "floor_cone" && editGrid.tiles.length === 4
       ? editGrid.tiles : Array<boolean>(4).fill(true);
-    const rise = CONE_PEAK_HEIGHT / CONE_LEVELS;
+    const inset = (cs / 2) / CONE_LEVELS; // s_j − s_{j+1}, one lattice step
     for (let j = 0; j < CONE_LEVELS; j++) {
       const s = (cs / 2) * (CONE_LEVELS - j) / CONE_LEVELS;
-      const cy = y + (j + 0.5) * rise;
-      // X range retained in each Z row (row 0: z−s..z, row 1: z..z+s).
-      const rows = [0, 1].map((row) => {
-        const lo = tiles[row * 2], hi = tiles[row * 2 + 1];
-        return lo && hi ? [x - s, x + s] : lo ? [x - s, x] : hi ? [x, x + s] : null;
-      });
-      const [r0, r1] = rows;
-      if (r0 && r1 && r0[0] === r1[0] && r0[1] === r1[1]) {
-        result.push(box((r0[0]! + r0[1]!) / 2, cy, z, (r0[1]! - r0[0]!) / 2, rise / 2, s));
-        continue;
+      const si = s - inset; // = s_{j+1} on the same exact lattice
+      const bandTop = y + (j + 1) * CONE_RISE;
+      const bandBottom = Math.max(y, bandTop - CONE_SHELL_THICKNESS);
+      const cy = (bandTop + bandBottom) / 2;
+      const hy = (bandTop - bandBottom) / 2;
+      const rects: { x0: number; x1: number; z0: number; z1: number }[] = [];
+      for (let i = 0; i < 4; i++) {
+        if (!tiles[i]) continue;
+        const col = i % 2, row = Math.floor(i / 2);
+        const xo = col === 0 ? x - s : x + s; // quadrant's outer X face
+        const xi = col === 0 ? x - si : x + si; // next level's outer X face
+        const zo = row === 0 ? z - s : z + s; // quadrant's outer Z face
+        const zi = row === 0 ? z - si : z + si; // next level's outer Z face
+        // Outer band along the outward Z edge, full quadrant X span.
+        rects.push({ x0: Math.min(x, xo), x1: Math.max(x, xo), z0: Math.min(zo, zi), z1: Math.max(zo, zi) });
+        // Side strip along the outward X edge, inside the next level's Z span.
+        rects.push({ x0: Math.min(xo, xi), x1: Math.max(xo, xi), z0: Math.min(z, zi), z1: Math.max(z, zi) });
       }
-      if (r0) result.push(box((r0[0]! + r0[1]!) / 2, cy, z - s / 2, (r0[1]! - r0[0]!) / 2, rise / 2, s / 2));
-      if (r1) result.push(box((r1[0]! + r1[1]!) / 2, cy, z + s / 2, (r1[1]! - r1[0]!) / 2, rise / 2, s / 2));
+      // Drop degenerate slivers (the apex level's side strips vanish when
+      // s_{j+1} = 0) — never emit zero-extent solids.
+      const kept = rects.filter((r) => r.x1 > r.x0 && r.z1 > r.z0);
+      for (const r of mergeRects(kept)) {
+        result.push(box((r.x0 + r.x1) / 2, cy, (r.z0 + r.z1) / 2, (r.x1 - r.x0) / 2, hy, (r.z1 - r.z0) / 2));
+      }
     }
     return result;
   }

@@ -41,7 +41,7 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { readFileSync, existsSync, createWriteStream, mkdirSync } from "node:fs";
-import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, structureSlots, CONE_LEVELS, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
+import { BUILD_GRID, wallEdgeCenter, PLAYER_MOVEMENT, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, STRUCTURE_DURABILITY, VERTICAL_MOVEMENT, PLAYABLE_ARENA_BOUNDS, BUILD_BOUNDS, rayStructureIntersection, structureCuboids, structureSlots, CONE_LEVELS, CONE_PEAK_HEIGHT, type GeometryEditState, type StructureCuboid, type StructureGeometryInput } from "@buildshift/game-config";
 import { WIN_ROUNDS } from "@buildshift/game-config";
 
 /**
@@ -2921,14 +2921,15 @@ test.describe("Physical edited-geometry acceptance", () => {
       // Respect the authoritative placement rate limit by processed inputs.
       await waitPose(a, "p.sequence >= arg.s + 12", { s: onRamp.seq }, 20_000);
       const floorId = await placeStructure(a, b, 9202, "floor", floorGrid, 0);
-      await sendEdit(a, floorId, { action: "select", tileIndex: 0 });
-      await expectCanonicalGeometry([a, b], floorId, aId, { buildType: "floor", grid: floorGrid, rotation: 0, editGrid: openFloor }, "floor edit");
-      step(`floor ${floorId} quadrant 0 removed; replicated + rendered on both clients`);
-      if (phase === "C reset floor") {
-        await sendEdit(a, floorId, { action: "reset" });
-        await expectCanonicalGeometry([a, b], floorId, aId, { buildType: "floor", grid: floorGrid, rotation: 0, editGrid: fullFloor }, "floor reset");
-        step("floor reset replicated + rendered on both clients");
-      }
+      // The canonical quadrant edit is NOT sent from the mid-ramp pose: the
+      // server's edit gate (editAuthorityVerdict, occlusion lane) measures
+      // line-of-sight from the authoritative eye, and from mid-ramp the
+      // ramp's own high-end column occludes the far quadrants' every face
+      // (verified against the shipped gate: tiles 0/1 → "occluded" from
+      // (10.24, 1.68, −4.2)). That is correct canonical behaviour, so the
+      // edit is sent AFTER the real climb onto the slab, from the near half
+      // — the pose from which the gate legitimately sees tile 0 (verdict
+      // null at every settled stance z ∈ [−9.5, −8.0] on y = 3.99).
 
       // Keep walking W up the ramp and straight onto the next-layer floor
       // (crouched only for a short stopping distance). No jump key is used.
@@ -2948,6 +2949,18 @@ test.describe("Physical edited-geometry acceptance", () => {
       step(`on floor (walked, no jump) ${JSON.stringify(onFloor)}`);
       // Back on the near (solid) half, clear of the slab edge.
       if (onFloor.z > floorBox.center.z + 1.6) await hold("KeyW", "p.z <= arg.z", { z: floorBox.center.z + 1.6 }, "onto near half", true);
+
+      // Now authored from a legitimately SEEING pose: the server edit gate
+      // accepts this edit because the eye on the slab top sees tile 0's
+      // real faces through the edited geometry (no forged visibility).
+      await sendEdit(a, floorId, { action: "select", tileIndex: 0 });
+      await expectCanonicalGeometry([a, b], floorId, aId, { buildType: "floor", grid: floorGrid, rotation: 0, editGrid: openFloor }, "floor edit");
+      step(`floor ${floorId} quadrant 0 removed; replicated + rendered on both clients`);
+      if (phase === "C reset floor") {
+        await sendEdit(a, floorId, { action: "reset" });
+        await expectCanonicalGeometry([a, b], floorId, aId, { buildType: "floor", grid: floorGrid, rotation: 0, editGrid: fullFloor }, "floor reset");
+        step("floor reset replicated + rendered on both clients");
+      }
 
       /** Real lateral walk to a quadrant column (D: −X, A: +X at yaw 0). */
       const toColumn = async (x: number) => {
@@ -3092,8 +3105,9 @@ test.describe("Physical edited-geometry acceptance", () => {
       const fullCone: AcceptanceEditGrid = { kind: "floor_cone", tiles: [true, true, true, true] };
       const halfCone: AcceptanceEditGrid = { kind: "floor_cone", tiles: [false, true, false, true] };
       const fullCuboids = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: fullCone });
-      const base = fullCuboids[0]!;
-      const center = { x: base.center.x, z: base.center.z };
+      // The canonical apex axis is the CELL CENTRE (the shell's band boxes
+      // are offset skirts — never derive the axis from a band box center).
+      const center = { x: grid.x * cs, z: grid.z * cs };
       const bounds = { minX: center.x - cs / 2, maxX: center.x + cs / 2, minZ: center.z - cs / 2, maxZ: center.z + cs / 2 };
       const openLaneX = center.x - cs / 4, keptLaneX = center.x + cs / 4;
       // Cone-local lane placement. The shared toLaneX releases the walk key on
@@ -3119,7 +3133,9 @@ test.describe("Physical edited-geometry acceptance", () => {
       };
       const geometry = { grid, center, bounds, top: Math.max(...fullCuboids.map(c => c.center.y + c.halfExtents.y)), levels: fullCuboids.length };
       step(`geometry ${JSON.stringify(geometry)}`);
-      expect(geometry.top).toBeCloseTo(lh, 6);
+      // Derived, not assumed: the canonical cone is a LOW roof — its top is
+      // CONE_PEAK_HEIGHT (1.92 m = lh/2), never a full-layer column.
+      expect(geometry.top).toBeCloseTo(CONE_PEAK_HEIGHT, 6);
       expect(spawn.z).toBeGreaterThan(bounds.maxZ + radius + 1);
 
       const id = await placeStructure(a, b, 9301, "cone", grid, 0);
@@ -3167,7 +3183,7 @@ test.describe("Physical edited-geometry acceptance", () => {
       if (phase === "A full cone") {
         // Over the apex: climb the near side, cross the top, descend the far side.
         const over = await crossAlong(center.x, "climb over the full cone", fullCuboids, apexBand);
-        expect(over.expectedPeak).toBeCloseTo(lh, 6); // over the apex
+        expect(over.expectedPeak).toBeCloseTo(CONE_PEAK_HEIGHT, 6); // over the apex
         expect(Math.abs(over.peak.z - center.z)).toBeLessThan(1.0);
       } else if (phase === "B edited cone") {
         // The opened −X lane crosses at ground level (no invisible full cone)…
@@ -3178,21 +3194,27 @@ test.describe("Physical edited-geometry acceptance", () => {
         await holdKey(a, phase, "KeyS", "p.z >= arg.z", { z: bounds.maxZ + radius + 1.5 }, "back to the near side", false, waitInputPrediction);
         await settleInputs(a, 10);
         const kept = await crossAlong(keptLaneX, "climb the kept half", halfCuboids, laneBand);
-        // With the lane guaranteed inside its band, the weakest support is the
-        // band edge itself; bound the climb by that canonical peak (band edge
-        // ⇒ 5 levels ⇒ 1.2 m) instead of a free-standing constant.
-        const minKeptPeak = canonicalPeak(halfCuboids, keptLaneX + laneBand);
-        expect(minKeptPeak).toBeGreaterThan(1.0); // the band edge is still a real climb
-        expect(kept.expectedPeak).toBeGreaterThanOrEqual(minKeptPeak); // a real climb
+        // With the lane guaranteed inside its band, the weakest admissible
+        // support is the outer band edge (|x−keptLaneX| ≤ laneBand ⇒ at
+        // least levels 0..2 ⇒ ≥ 0.36 m). Derive the bound from the x we
+        // ACTUALLY climbed — the peak must match it exactly (the kept half
+        // is a true cone portion, no phantom quarter-solid).
+        const climbedKeptPeak = canonicalPeak(halfCuboids, kept.result.start.x);
+        expect(climbedKeptPeak).toBeGreaterThanOrEqual(canonicalPeak(halfCuboids, keptLaneX + laneBand));
+        expect(climbedKeptPeak).toBeGreaterThan(0.3); // the kept half is still a real climb
+        expect(kept.expectedPeak).toBeCloseTo(climbedKeptPeak, 9); // the climb follows the canonical shell
         // Without the edit this lane would have climbed the full cone's levels.
         expect(canonicalPeak(fullCuboids, kept.result.start.x)).toBeGreaterThanOrEqual(kept.expectedPeak);
       } else {
         // Reset: the formerly opened lane is a climbable cone side again.
         const reset = await crossAlong(openLaneX, "climb the reset cone side", fullCuboids, laneBand);
-        // Same derived bound on the far band edge (5 levels ⇒ 1.2 m).
-        const minResetPeak = canonicalPeak(fullCuboids, openLaneX - laneBand);
-        expect(minResetPeak).toBeGreaterThan(1.0); // the band edge is still a real climb
-        expect(reset.expectedPeak).toBeGreaterThanOrEqual(minResetPeak); // the opened lane climbs again
+        // Same honest bound, derived from the x actually climbed: the reset
+        // lane climbs the canonical full-shell profile again (the outer band
+        // edge alone already guarantees ≥ 0.36 m).
+        const climbedResetPeak = canonicalPeak(fullCuboids, reset.result.start.x);
+        expect(climbedResetPeak).toBeGreaterThanOrEqual(canonicalPeak(fullCuboids, openLaneX - laneBand));
+        expect(climbedResetPeak).toBeGreaterThan(0.3); // the band edge is still a real climb
+        expect(reset.expectedPeak).toBeCloseTo(climbedResetPeak, 9); // the opened lane climbs again
       }
     } finally { await context.close(); }
   }
@@ -4219,7 +4241,13 @@ test.describe("Physical edited-geometry acceptance", () => {
       await expectCanonicalGeometry([a, b], id, aId, { buildType: "wall", grid: { x: 1, y: 0, z: 0 }, rotation: 0, editGrid: doorway }, "doorway");
       step("doorway confirmed");
       // E → RMB: the draft shows the full wall at once, nothing is sent.
+      // Re-aim onto a STILL-SOLID tile first: the drag above ended riding tile 4,
+      // which the confirmed doorway now leaves open — entering edit with the
+      // crosshair in the hole selects no structure (correct behaviour; the old
+      // aim then found no HUD). Re-aiming is the same gesture the later
+      // segments already make.
       const sentBefore = (await editSends(a)).length;
+      await aim.at(wallTile(1, 0, 3));
       await pressKey(a, "KeyE");
       await expect(a.locator(".build-edit-hud__tiles")).toHaveText("Tiles open: 2/9", { timeout: 5_000 });
       await rmb();
@@ -4258,21 +4286,52 @@ test.describe("Physical edited-geometry acceptance", () => {
     } finally { await context.close(); }
   });
 
-  test("stack D — two-level box: 4 walls + roof, then 4 walls + roof on top, all coexisting (real input)", { timeout: 180_000 }, async () => {
-    test.setTimeout(180_000);
+  test("stack D — two-level box: 4 walls + roof, then 4 walls + roof on top, all coexisting (real input)", { timeout: 240_000 }, async () => {
+    // The walk-in setup (real crouched keys into canonical reach) plus two
+    // full build levels needs ~100 s at full host speed (browser-stackD-walkin4)
+    // but the bounded 2-CPU worker slice renders headless Chromium at ~2 FPS,
+    // stretching every input wait ~2×. Budget only — no assertion, geometry
+    // or input path changed.
+    test.setTimeout(240_000);
     const { context, a, aId, step } = await openFreshDuel("stack D", { width: 480, height: 270 });
     try {
       await installPoseTrace(a);
       await recordRejections(a);
       const aim = new CrosshairAim(a);
-      const T = { x: 1, z: -2 }; // the box tile; the player starts south of it at (5, 0, 0)
+      const T = { x: 1, z: -2 }; // the box tile; the player spawns at (10.24, 0, 0)
       const wallSlotOf = (y: number, r: number) => (s: Placed) => s.buildType === "wall" && structureSlots("wall", s.grid, s.rotation)[0] === structureSlots("wall", { x: T.x, y, z: T.z }, r)[0];
+      // Canonically in reach first: the raw spawn is 11.45 m from tile
+      // (1, 0, -2) — outside the approved 10.24 m placement reach (hypot of
+      // the spawn-column offset), so the whole box would be INVALID from
+      // birth. Real lateral + forward walk to (≈7.2, 0, ≈-4.4), which sits
+      // ~6 m from every layer-0 box slot; no reach change, no fake pose.
+      await aim.to(0, 0);
+      await toLaneX(a, "stack D", 7.2);
+      await holdKey(a, "stack D", "KeyW", "p.z <= arg.z", { z: -3.0 }, "into reach of the box tile", true);
+      await settleInputs(a, 10);
+      step(`walk-in pose ${JSON.stringify(await authPose(a))}`);
+      expect(await rejections(a)).toEqual([]); // the walk-in spends nothing
       // Layer 0: far (−Z) wall facing north; the X-edge walls with one R.
       await equipFacingThenPlace(a, aim, 0, "Mouse3", [], { x: CS, y: 0, z: -2 * CS - 1.8 }, wallSlotOf(0, 0), "L0 far wall");
       await equipFacingThenPlace(a, aim, 0, "Mouse3", ["KeyR"], { x: CS + 1.9, y: 0, z: -2 * CS }, wallSlotOf(0, 1), "L0 east wall");
       await equipFacingThenPlace(a, aim, 0, "Mouse3", ["KeyR"], { x: CS - 1.9, y: 0, z: -2 * CS }, wallSlotOf(0, 3), "L0 west wall");
       // The ramp up to the box (tile (1,-1), rising north to the box's near edge).
-      await placeRampReal(a, aim);
+      // The walk-ins above ended INSIDE the ramp tile with the camera facing a
+      // wall target (movement is camera-relative), so: reset yaw to due north
+      // (ramp rotation follows the equip facing — the old diagonal far-spawn aim
+      // quantised to a west-facing ramp), back off south of the ramp tile with a
+      // crouched (slow, early-stopping) real walk, then place the ramp onto its
+      // own tile with a shallow north aim — landing robust in tile (1,-1) for
+      // any stance z ∈ [+0.4, -3.1] the input-burst overshoot settles at.
+      await aim.to(0, 0);
+      await holdKey(a, "stack D", "KeyS", "p.z >= arg.z", { z: -2.0 }, "south of the ramp tile", true);
+      await settleInputs(a, 10);
+      step(`ramp stance ${JSON.stringify(await authPose(a))}`);
+      await aim.to(0, -0.55);
+      await pressKey(a, "Mouse4");
+      await sleep(120);
+      await fireWeapon(a);
+      await waitStructure(a, (s) => s.buildType === "ramp" && s.grid.x === 1 && s.grid.z === -1 && s.rotation === 3, "real-input ramp (north equip, shallow pitch)");
       // The near wall from the ramp's high end (that ramp tile's −Z edge = the box's +Z edge), then the roof past it.
       await buildFromSurface(a, aim, "Mouse3", { x: CS + 0.3, y: 0.92 * LH, z: -1.5 * CS + 0.35 }, wallSlotOf(0, 2), "L0 near wall from the ramp");
       await buildFromSurface(a, aim, "KeyQ", { x: CS + 0.3, y: 0.8 * LH, z: -1.5 * CS + 1.0 }, isPiece("floor", T.x, 1, T.z), "roof from the ramp's high end");

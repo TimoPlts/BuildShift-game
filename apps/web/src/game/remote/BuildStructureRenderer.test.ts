@@ -15,7 +15,7 @@ import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { BuildingState, StructureState, StructureDurabilityState, GridRotation } from "@buildshift/protocol";
-import { BUILD_GRID, CONE_PEAK_HEIGHT, structureBounds } from "@buildshift/game-config";
+import { BUILD_GRID, CONE_PEAK_HEIGHT, structureBounds, structureCuboids } from "@buildshift/game-config";
 import { BuildStructureRenderer } from "./BuildStructureRenderer";
 
 function structure(
@@ -625,23 +625,20 @@ describe("BuildStructureRenderer", () => {
         expect(covers, "a slab must not cover the removed quadrant").toBe(false);
       }
 
-      // Cone: one smooth quarter-pyramid per retained quadrant (tile 3
-      // removed → quadrants 0, 1 and 2 remain), each seated on its quadrant
-      // and rising only to the canonical low roof peak.
+      // Cone: one box per canonical roof-shell cuboid, none in the removed
+      // (+X, +Z) quadrant — a true see-through opening through the shell.
+      const coneCanonical = structureCuboids({
+        buildType: "cone", grid: { x: 0, y: 0, z: 0 }, rotation: 0,
+        editGrid: { kind: "floor_cone", tiles: [true, true, true, false] },
+      });
       const coneParts = (scene.getMeshByName("structure-cone") as Mesh).getChildMeshes(false) as Mesh[];
-      expect(coneParts).toHaveLength(3);
-      const centres = coneParts.map((part) => {
+      expect(coneParts).toHaveLength(coneCanonical.length);
+      for (const part of coneParts) {
         part.computeWorldMatrix(true);
-        const c = part.getBoundingInfo().boundingBox.centerWorld;
-        return { x: c.x, z: c.z, h: boxSize(part.getBoundingInfo().boundingBox).y };
-      }).sort((a, b) => (a.x - b.x) || (a.z - b.z));
-      expect(centres[0]!.x).toBeCloseTo(-CS / 4, 3);
-      expect(centres[0]!.z).toBeCloseTo(-CS / 4, 3);
-      expect(centres[1]!.x).toBeCloseTo(-CS / 4, 3);
-      expect(centres[1]!.z).toBeCloseTo(CS / 4, 3);
-      expect(centres[2]!.x).toBeCloseTo(CS / 4, 3);
-      expect(centres[2]!.z).toBeCloseTo(-CS / 4, 3);
-      for (const c of centres) expect(c.h).toBeCloseTo(CONE_PEAK_HEIGHT, 3);
+        const bb = part.getBoundingInfo().boundingBox;
+        // No box sits strictly inside the removed quadrant (x > 0, z > 0).
+        expect(bb.minimumWorld.x <= 1e-3 || bb.minimumWorld.z <= 1e-3).toBe(true);
+      }
     });
 
     it("keeps every decorative mesh non-pickable and non-colliding", () => {
@@ -686,7 +683,7 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
-  // ─── Ramp and cone model v2 (thin ramp + supports, pyramid cone) ────────
+  // ─── Ramp and cone model v2 (thin ramp + supports, stepped roof shell) ────────
 
   const CS = BUILD_GRID.cellSize;
   const LH = BUILD_GRID.layerHeight;
@@ -839,83 +836,70 @@ describe("BuildStructureRenderer", () => {
     });
   });
 
-  describe("cone model v2", () => {
-    it("renders a true four-sided pyramid matching the canonical bounds", () => {
+  describe("cone model v2 (thin stepped roof shell)", () => {
+    it("renders exactly the canonical roof-shell cuboids — one box each, matching the canonical bounds", () => {
       const grid = { x: 2, y: 0, z: 1 };
       renderer.syncStructures({ structures: { cone: { ...structure("cone", "cone"), grid } } });
       advance(300);
       const root = scene.getMeshByName("structure-cone") as Mesh;
-      const part = root.getChildMeshes(false)[0] as Mesh;
-      part.computeWorldMatrix(true);
-      const bb = part.getBoundingInfo().boundingBox;
+      const parts = root.getChildMeshes(false) as Mesh[];
+      const canonical = structureCuboids({ buildType: "cone", grid, rotation: 0 });
+      // Honesty rule: the visual IS the canonical solid — one box per
+      // collision cuboid, no smooth skin hiding a different volume.
+      expect(parts).toHaveLength(canonical.length);
+      const bbs = parts.map((part) => {
+        part.computeWorldMatrix(true);
+        return part.getBoundingInfo().boundingBox;
+      });
+      // Union matches the canonical bounds exactly.
       const expected = structureBounds({ buildType: "cone", grid, rotation: 0 });
-      expect(bb.minimumWorld.x).toBeCloseTo(expected.min[0]!, 3);
-      expect(bb.minimumWorld.y).toBeCloseTo(expected.min[1]!, 3);
-      expect(bb.minimumWorld.z).toBeCloseTo(expected.min[2]!, 3);
-      expect(bb.maximumWorld.x).toBeCloseTo(expected.max[0]!, 3);
-      expect(bb.maximumWorld.y).toBeCloseTo(expected.max[1]!, 3);
-      expect(bb.maximumWorld.z).toBeCloseTo(expected.max[2]!, 3);
-
-      // The pyramid has 4 triangular side faces + 1 quad base = 5 faces.
-      // Verify the geometry has the correct shape: apex at top centre, base at bottom.
-      const cx = (bb.minimumWorld.x + bb.maximumWorld.x) / 2;
-      const cz = (bb.maximumWorld.z + bb.minimumWorld.z) / 2;
-      const positions = part.getVerticesData("position") as number[];
-      // The mesh's world Y base = root.position.y + part.position.y.
-      const worldBaseY = (root.position.y) + part.position.y;
-      // Find the apex vertex (highest Y in world space).
-      let apexX = 0, apexY = -Infinity, apexZ = 0;
-      for (let i = 0; i < positions.length; i += 3) {
-        const wy = worldBaseY + positions[i + 1]!;
-        if (wy > apexY) {
-          apexY = wy;
-          apexX = (root.position.x + part.position.x) + positions[i]!;
-          apexZ = (root.position.z + part.position.z) + positions[i + 2]!;
-        }
-      }
-      // Apex should be at the centre of the base in XZ.
-      expect(apexX).toBeCloseTo(cx, 3);
-      expect(apexZ).toBeCloseTo(cz, 3);
-      expect(apexY).toBeCloseTo(grid.y * LH + CONE_PEAK_HEIGHT, 3);
-
+      expect(Math.min(...bbs.map((b) => b.minimumWorld.x))).toBeCloseTo(expected.min[0]!, 3);
+      expect(Math.min(...bbs.map((b) => b.minimumWorld.y))).toBeCloseTo(expected.min[1]!, 3);
+      expect(Math.min(...bbs.map((b) => b.minimumWorld.z))).toBeCloseTo(expected.min[2]!, 3);
+      expect(Math.max(...bbs.map((b) => b.maximumWorld.x))).toBeCloseTo(expected.max[0]!, 3);
+      expect(Math.max(...bbs.map((b) => b.maximumWorld.y))).toBeCloseTo(expected.max[1]!, 3);
+      expect(Math.max(...bbs.map((b) => b.maximumWorld.z))).toBeCloseTo(expected.max[2]!, 3);
+      // Exact two-way parity: every canonical cuboid is rendered by SOME
+      // box, and every rendered box IS a canonical cuboid.
+      const same = (b: { minimumWorld: { x: number; y: number; z: number }; maximumWorld: { x: number; y: number; z: number } }, c: (typeof canonical)[number]) =>
+        Math.abs(b.minimumWorld.x - (c.center.x - c.halfExtents.x)) < 1e-3
+        && Math.abs(b.maximumWorld.x - (c.center.x + c.halfExtents.x)) < 1e-3
+        && Math.abs(b.minimumWorld.y - (c.center.y - c.halfExtents.y)) < 1e-3
+        && Math.abs(b.maximumWorld.y - (c.center.y + c.halfExtents.y)) < 1e-3
+        && Math.abs(b.minimumWorld.z - (c.center.z - c.halfExtents.z)) < 1e-3
+        && Math.abs(b.maximumWorld.z - (c.center.z + c.halfExtents.z)) < 1e-3;
+      for (const c of canonical) expect(bbs.some((b) => same(b, c))).toBe(true);
+      for (const b of bbs) expect(canonical.some((c) => same(b, c))).toBe(true);
       renderer.syncStructures({ structures: {} });
       advance(300);
     });
 
-    it("renders one quarter-pyramid per retained quadrant when edited, all sharing the cell-centre apex", () => {
+    it("keeps retained quadrants' shell and leaves edited quadrants fully open when edited", () => {
       const grid = { x: 0, y: 0, z: 0 };
+      const tiles: [boolean, boolean, boolean, boolean] = [true, false, true, true];
       renderer.syncStructures({
-        structures: { cone: { ...structure("cone", "cone", "", grid), editGrid: { kind: "floor_cone", tiles: [true, false, true, true] } } },
+        structures: { cone: { ...structure("cone", "cone", "", grid), editGrid: { kind: "floor_cone", tiles } } },
       });
       advance(300);
       const root = scene.getMeshByName("structure-cone") as Mesh;
       const parts = root.getChildMeshes(false) as Mesh[];
-      expect(parts).toHaveLength(3);
-      // Each retained quadrant is exactly one quarter of the SAME low roof:
-      // CS/2-wide base on its quadrant, CONE_PEAK_HEIGHT tall, and its apex
-      // on the full cone's cell-centre axis (never an off-centre mini-spike
-      // — the old per-quadrant symmetric pyramid grew spires where the
-      // canonical shape has a smooth shared roofline).
+      const canonical = structureCuboids({ buildType: "cone", grid, rotation: 0, editGrid: { kind: "floor_cone", tiles } });
+      expect(parts).toHaveLength(canonical.length);
+      // Tile 1 (col 1 = +X, row 0 = −Z) removed: no rendered box sits
+      // strictly inside that quadrant — a full-height see-through opening,
+      // not a mini-spike or a phantom quarter-solid.
       for (const part of parts) {
         part.computeWorldMatrix(true);
         const bb = part.getBoundingInfo().boundingBox;
-        expect(bb.maximumWorld.x - bb.minimumWorld.x).toBeCloseTo(CS / 2, 3);
-        expect(bb.maximumWorld.y - bb.minimumWorld.y).toBeCloseTo(CONE_PEAK_HEIGHT, 3);
-        const positions = part.getVerticesData("position") as number[];
-        const worldBaseY = root.position.y + part.position.y;
-        let apexX = 0, apexY = -Infinity, apexZ = 0;
-        for (let i = 0; i < positions.length; i += 3) {
-          const wy = worldBaseY + positions[i + 1]!;
-          if (wy > apexY) {
-            apexY = wy;
-            apexX = root.position.x + part.position.x + positions[i]!;
-            apexZ = root.position.z + part.position.z + positions[i + 2]!;
-          }
-        }
-        expect(apexX).toBeCloseTo(grid.x * CS, 3);
-        expect(apexZ).toBeCloseTo(grid.z * CS, 3);
-        expect(apexY).toBeCloseTo(grid.y * LH + CONE_PEAK_HEIGHT, 3);
+        expect(bb.minimumWorld.x <= 1e-3 || bb.maximumWorld.z >= -1e-3).toBe(true);
       }
+      // Retained quadrants still climb to the canonical peak.
+      let maxY = -Infinity;
+      for (const part of parts) {
+        part.computeWorldMatrix(true);
+        maxY = Math.max(maxY, part.getBoundingInfo().boundingBox.maximumWorld.y);
+      }
+      expect(maxY).toBeCloseTo(grid.y * LH + CONE_PEAK_HEIGHT, 3);
       renderer.syncStructures({ structures: {} });
       advance(300);
     });

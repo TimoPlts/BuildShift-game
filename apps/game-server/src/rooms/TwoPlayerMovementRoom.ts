@@ -2,13 +2,14 @@ import { Room, type Client } from "@colyseus/core";
 import { t } from "@colyseus/schema";
 import { RoomStateSchema, PlayerStateSchema, RoundScoreSchema, WeaponAmmoStateSchema, type RoomStateSchemaInstance, PLAYER_NETWORK_INPUT_LIMITS as PIL, EVENTS, MatchPhase, BUILD_EVENTS, ENERGY_EVENTS, computeEnergyAfterRegeneration, applyStructureDamage, isStructureDestroyed, type WeaponState, type WeaponId, isWeaponId, validateEditActionRequest, applyEditAction, createDefaultEditState, getEditTileCount, serializeEditState } from "@buildshift/protocol";
 import { stepPlayerMovement, movementInputToWorld, fireGate, hitscan, computeShotgunSpread, type HitscanHit, type HitscanTarget } from "@buildshift/simulation";
-import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_RESET_DELAY_SECONDS as RRS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CHARACTER_CONTROLLER, shotEyeHeight, structureCuboids, rayStructureIntersection, resolveStructureMovement, clampToPlayableArena, BOX_FIGHT_PREPARATION, getPreparationZone, clampToPreparationZone, type PreparationSide, type GeometryEditState } from "@buildshift/game-config";
+import { PLAYER_MOVEMENT, VERTICAL_MOVEMENT, ASSAULT_RIFLE, SHOTGUN, MAX_HEALTH, MAX_SHIELD, ROUNDS_TO_WIN, ROUND_RESET_DELAY_SECONDS as RRS, REMATCH_WINDOW_SECONDS, getStructureConfig, ENERGY, SHOTGUN_WEAPON, PLAYER_COLLIDER, PLAYER_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CROUCH_COLLIDER, PLAYER_CROUCH_COLLIDER_HALF_TOTAL_HEIGHT, PLAYER_CHARACTER_CONTROLLER, shotEyeHeight, structureCuboids, rayStructureIntersection, resolveStructureMovement, clampToPlayableArena, BOX_FIGHT_PREPARATION, getPreparationZone, clampToPreparationZone, placementEyePoint, type PreparationSide, type GeometryEditState } from "@buildshift/game-config";
 import { BuildingStateSchema, StructureStateSchema, oc } from "../state/buildingState.js";
 import { ServerPhysicsWorld } from "../physics/serverPhysicsWorld.js";
 import { MATCH_EVENTS } from "../match/matchLifecycle.js";
 import { handleBuildPlacement } from "../match/buildPlacement.js";
 import { resolveTestPreparationSeconds } from "./testPreparationOverride.js";
 import { classifyFloorForm } from "../match/floorEditGeometry.js";
+import { editAuthorityVerdict, editGeometryInput } from "../match/editAuthority.js";
 import { createReconnectGraceManager, RECONNECT_GRACE_MS, type ReconnectGraceManager } from "./lifecycle/reconnectGrace.js";
 import { PlayerInputQueue } from "./lifecycle/playerInputQueue.js";
 export const TWO_PLAYER_MOVEMENT_ROOM = "two-player-movement";
@@ -323,6 +324,24 @@ export class TwoPlayerMovementRoom extends Room<{
                 return;
             }
         }
+        // Authority gate (occlusion lane, ownership already enforced above):
+        // an edit intent must come from within the CANONICAL edit range
+        // (shared BUILD_RANGE.maxPlacementDistance, measured from the
+        // authoritative shot-eye to the target region) AND have exact-
+        // geometry line of sight to at least one real face of the addressed
+        // tile through the current edited solids. Client-provided eyes or
+        // visibility claims are never consulted. A rejection here mutates
+        // nothing, spends no Energy and broadcasts nothing.
+        {
+            const eye = placementEyePoint(p.x, p.y, p.z, p.crouch === true);
+            const structures = [...this.bld.structures.values()].map((o) => editGeometryInput(o, editGeometryState(o)));
+            const tileAddr = (req.action === "select" || req.action === "deselect") && s.buildType !== "ramp" ? req.tileIndex ?? null : null;
+            const verdict = editAuthorityVerdict({ eye, target: editGeometryInput(s, currentState), tileIndex: tileAddr, structures });
+            if (verdict !== null) {
+                reject(verdict);
+                return;
+            }
+        }
         // Apply the action.
         const newState = applyEditAction(currentState, req, s.buildType);
         if (newState === null) {
@@ -334,6 +353,15 @@ export class TwoPlayerMovementRoom extends Room<{
         // rejected server-side (a floor cannot be edited to empty; it must
         // be destroyed instead).
         if (s.buildType === "floor" && newState.kind === "floor_cone" && classifyFloorForm(newState.tiles) === null) {
+            reject("invalid_form");
+            return;
+        }
+        // Cone authority (same non-empty-form intent as floors): an edit that
+        // removes ALL quadrant tiles leaves an occupied slot with no solids —
+        // an invisible ghost that collides with nothing yet blocks the slot.
+        // Rejected; the last valid state, colliders and Energy are preserved
+        // (single-corner cones stay valid, reset stays valid).
+        if (s.buildType === "cone" && newState.kind === "floor_cone" && !newState.tiles.some(Boolean)) {
             reject("invalid_form");
             return;
         }

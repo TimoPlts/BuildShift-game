@@ -191,6 +191,22 @@ describe("cones", () => {
   it("a floor against its side goes to the neighbouring tile on that side", () => {
     expect(aim([cone], { x: -9, y: 0.3, z: 0.2 }, { x: 0, y: 0.1, z: 0.2 }, "floor").grid).toEqual({ x: -1, y: 0, z: 0 });
   });
+  it("an aim at the shell's real underside places the build one layer BELOW the cone", () => {
+    // Canonical hollow shell (roof-geometry): the level-0 skirt near the −Z
+    // edge spans |z| ∈ [2.40, 2.56] with its bottom face exactly on the
+    // tile's bottom plane y = 0; everything under the roof is real air, so
+    // an upward aim genuinely strikes that underside surface.
+    const r = aim([cone], { x: 0, y: -2, z: -2.48 }, { x: 0, y: 0.5, z: -2.48 }, "floor");
+    expect(r.hit.normal).toEqual({ x: 0, y: -1, z: 0 });
+    expect(r.hit.point.y).toBeCloseTo(0, 9);
+    expect(r.grid).toEqual({ x: 0, y: -1, z: 0 });
+    expect(slotsConflict({ buildType: "floor", grid: r.grid, rotation: 0 }, cone)).toBe(false);
+    // A wall aims at the same underside takes the cone tile's −Z edge one
+    // layer down (a distinct slot from the cone itself).
+    const w = aim([cone], { x: 0, y: -2, z: -2.48 }, { x: 0, y: 0.5, z: -2.48 }, "wall");
+    expect([w.grid, w.rotation]).toEqual([{ x: 0, y: -1, z: 0 }, 0]);
+    expect(slotsConflict({ buildType: "wall", grid: w.grid, rotation: w.rotation }, cone)).toBe(false);
+  });
 });
 
 describe("edited pieces", () => {
