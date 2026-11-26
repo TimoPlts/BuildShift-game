@@ -102,9 +102,15 @@ function analyticScreenPos(
 }
 
 /**
- * Root-local +X maps to screen-LEFT at yaw 0 (the shared convention proven
- * in `playerBodyFacade.test.ts`): the visible body column sits at world
- * x = +localViewOffsetX and lands LEFT of the centred reticle.
+ * FEET ANCHOR (anchored-turn 20261126): the local view offset is 0, so the
+ * visible body column stands exactly on the anchor axis under the centred
+ * reticle at every yaw. The previous contract pinned the column at world
+ * x = +0.8 (root-local, i.e. UNDER the yaw rotation) ~92 px off-centre; that
+ * yaw-rotating translation swung the rendered feet around the collider feet
+ * during stationary mouse turns ("character floats off the platform"). With
+ * the camera pinned ON the centred shot line through the feet, a screen-side
+ * body offset and a world-anchored body cannot coexist; the user's
+ * feet-anchor requirement takes priority over the old off-axis framing pin.
  */
 const BODY_X = THIRD_PERSON_CAMERA.localViewOffsetX;
 
@@ -137,11 +143,12 @@ describe("framing measurements (level pitch, centred crosshair, 1280x720)", () =
       expect(Math.round(beforeWhole)).toBe(148);
       expect(wholePx).toBeGreaterThan(beforeWhole * 1.3);
 
-      // The body column is CLEAR of the centred crosshair (no sightline
-      // block): x=732 vs centre 640 — ~92 px (~7 %) screen-right; the
-      // camera-side shoulder convention (root +X -> screen-left basis).
-      expect(Math.round(head.x)).toBe(732);
-      expect(Math.abs(head.x - VIEW_W / 2)).toBeGreaterThan(0.05 * VIEW_W);
+      // FEET ANCHOR (anchored-turn 20261126): the body column is ON the
+      // anchor axis — x = centre exactly, at every yaw (see the BODY_X note
+      // above for why the old ~92 px off-centre shoulder pin is superseded).
+      expect(THIRD_PERSON_CAMERA.localViewOffsetX).toBe(0);
+      expect(Math.round(head.x)).toBe(VIEW_W / 2);
+      expect(Math.abs(head.x - VIEW_W / 2)).toBeLessThan(0.5);
     } finally {
       controller.dispose();
       engine.dispose();

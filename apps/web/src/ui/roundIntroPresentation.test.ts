@@ -74,7 +74,13 @@ describe("round-intro: authoritative input lock during COUNTDOWN", () => {
     expect(runtime).toContain(
       'const active=this.interactionMode.mode==="weapon"&&this.matchState.matchPhase===MatchPhase.IN_PROGRESS&&this.isConnected',
     );
-    expect(runtime).toContain("if(route.weaponFirePressed&&active){");
+    // Autofire task: firing presentation now runs from the sim tick, but it
+    // stays equally locked outside IN_PROGRESS — the held intent feeding the
+    // presentation gate is the routed weaponFireHeld leg, which renderFrame
+    // re-gates on inRound, and stepSimulationTick only presents through it.
+    expect(runtime).toContain("weaponFireHeld:routedAction.weaponFireHeld&&inRound");
+    expect(runtime).toContain("const fi=this.frameRoute.weaponFireHeld;");
+    expect(runtime).toContain("this.heldFireGate.allows({fireHeld:fi,");
   });
 
   it("zeroes movement, fire, and jump in the sim tick during COUNTDOWN — EXCEPT while authoritative preparation is active", () => {

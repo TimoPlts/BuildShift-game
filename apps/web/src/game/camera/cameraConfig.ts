@@ -35,15 +35,21 @@ export const THIRD_PERSON_CAMERA = {
    */
   recoilKickbackMetersPerRadian: 2.0,
   /**
-   * Local-view seam (the Fortnite-style shoulder read): the local VISUAL
-   * body root is shifted this far in root-local +X, which maps to world
-   * screen-left at every yaw (root-local +X = −camera-right under the shared
-   * yaw convention). Only the avatar the local player sees moves — logical
-   * root, physics, server state and spawns are untouched. Applied through the
-   * agreed facade API `presentation.setLocalViewOffset(x, z)` (owned by the
-   * character worker).
+   * Local-view seam (FEET ANCHOR, anchored-turn 20261126): must stay 0.
+   *
+   * This value is applied as a root-LOCAL translation on the rendered body
+   * (`presentation.setLocalViewOffset`), i.e. UNDER the body's yaw rotation.
+   * Any non-zero value makes the rendered body's world position
+   * `colliderFeet + Ryaw·(x, 0, z)`, so a yaw-only mouse sweep drags the
+   * rendered feet around a circle of radius √(x²+z²) (was 0.8 m) around the
+   * collider feet — the reported "stationary mouse turn swings the character
+   * through space / floating off the platform" drift. With the camera pinned
+   * ON the authoritative shot line that passes through the feet, a screen-
+   * side body offset and a world-anchored body are geometrically mutually
+   * exclusive; the user's feet-anchor requirement takes priority. Close
+   * third-person framing is carried by `distance` alone.
    */
-  localViewOffsetX: 0.8,
+  localViewOffsetX: 0,
   /** Root-local Z component of the local view offset (0 = no fore/aft shift). */
   localViewOffsetZ: 0,
   /** Base camera field of view in radians (≈ 80° — comfortable for 2 m build cells). */

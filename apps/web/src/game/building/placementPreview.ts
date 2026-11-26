@@ -40,8 +40,10 @@ import {
   normalizePlacementRotation,
   placementEyePoint,
   placementIsVisible,
+  placementIsSupported,
+  placementActorsBlockCandidate,
 } from "@buildshift/game-config";
-import type { StructureCuboid } from "@buildshift/game-config";
+import type { PlacementActorPose, StructureCuboid } from "@buildshift/game-config";
 import type {
   BuildType,
   GridPosition,
@@ -75,6 +77,21 @@ export type PlacementInvalidReason =
   | "out_of_bounds"
   /** The candidate footprint overlaps an existing (authoritative or pending) structure. */
   | "overlap"
+  /**
+   * The candidate's canonical solids intrude on a player capsule — the local
+   * player's own body or the opponent's (shared
+   * `placementActorsBlockCandidate`). The server applies the SAME rule with
+   * the same `"actor_overlap"` reason, so a piece is never created inside a
+   * body and the capsule never has to be shoved out of it.
+   */
+  | "actor_overlap"
+  /**
+   * The candidate has no structural load path to the arena build foundation
+   * (shared `placementIsSupported`): it touches no grounded piece's real
+   * geometry, so it would hang in the air. The server answers with the same
+   * `"unsupported"` reason.
+   */
+  | "unsupported"
   /**
    * Preparation is active and the candidate's anchor grid X is not the
    * local player's assigned prep row (shared `isGridAllowedDuringPreparation`
@@ -140,6 +157,14 @@ export interface PlacementPreviewInput {
    * Default `false` (standing eye).
    */
   crouched?: boolean;
+  /**
+   * Every actor that must stay out of the candidate's volume: the local
+   * player AND the known opponents, each at its current feet pose and stance
+   * (shared `PlacementActorPose`). The authoritative server independently
+   * recomputes this from replicated poses — a preview may only ever be more
+   * conservative than the server here, never less.
+   */
+  actors?: readonly PlacementActorPose[];
 }
 
 /** The result of one frame's placement-preview calculation. */
@@ -231,8 +256,9 @@ function candidateOverlapsOccupied(
  * Pure function: reads the shared `BUILD_GRID` / `BUILD_RANGE` values and the
  * structure footprints, never mutates its inputs, never touches the network.
  * The validation order is fixed (candidate → rotation → bounds → range →
- * occupancy → line-of-sight) so the same inputs always produce the same
- * `reason`.
+ * slot occupancy → actor occupancy → structural support → line-of-sight) so
+ * the same inputs always produce the same `reason`, and it is the exact order
+ * the authoritative server applies.
  */
 export function computePlacementPreview(
   input: PlacementPreviewInput,
@@ -245,6 +271,7 @@ export function computePlacementPreview(
     occupied,
     preparationSide = null,
     crouched = false,
+    actors,
   } = input;
   // Canonical rotation for this piece (shared with the server): rotatable
   // kinds keep the selected quarter turn, rotation-invariant kinds use 0.
@@ -274,7 +301,28 @@ export function computePlacementPreview(
   const hit = occupied.length
     ? raycastStructureSurface(aimOrigin, aimDirection, planeHit && !up ? Math.min(planeT, SURFACE_TARGET_DISTANCE) : SURFACE_TARGET_DISTANCE, surfaceGeometry(occupied))
     : null;
-  const surface = hit && (!up || !planeHit || hit.distance <= planeT ||
+  // ── The shared authoritative eye gates what counts as "aimed at" ──
+  // The runtime ray origin is the THIRD-PERSON CAMERA, which sits on the
+  // shot line a fixed distance BEHIND the eye (`placementEyePoint` — the
+  // same point the server's visibility check uses). Camera ray and eye ray
+  // are one LINE, but a candidate resolved from a ray parameter measured at
+  // the camera can land between camera and eye — spatially BEHIND the
+  // player — and read as a forward hit there (the ramp pose that ghosted a
+  // wall through the avatar: feet mid-slope, eye above the next layer's
+  // base plane, camera below it). A candidate must therefore lie at or in
+  // front of the eye: it is rejected only when the eye-to-candidate vector
+  // aims backwards along the shot BOTH horizontally and in full projection.
+  // The horizontal exemption keeps legitimate steep-aim reticle targets
+  // (e.g. a surface OVER THE HEAD while looking steeply down through a ramp
+  // opening, where the full projection is vertical-negative) working; a
+  // pure vertical aim has horizontal projection 0 and stays accepted.
+  const eye = placementEyePoint(playerPosition.x, playerPosition.y, playerPosition.z, crouched);
+  const aimedPastTheEye = (p: Vec3Like): boolean => {
+    const horizontal = (p.x - eye.x) * aimDirection.x + (p.z - eye.z) * aimDirection.z;
+    if (horizontal >= 0) return true;
+    return horizontal + (p.y - eye.y) * aimDirection.y >= 0;
+  };
+  const surface = hit && aimedPastTheEye(hit.point) && (!up || !planeHit || hit.distance <= planeT ||
     Math.hypot(hit.point.x - playerPosition.x, hit.point.y - playerPosition.y, hit.point.z - playerPosition.z) <= BUILD_RANGE.maxPlacementDistance + BUILD_GRID.cellSize)
     ? hit
     : null;
@@ -287,6 +335,18 @@ export function computePlacementPreview(
   } else if (planeHit) {
     const hitX = aimOrigin.x + aimDirection.x * planeT;
     const hitZ = aimOrigin.z + aimDirection.z * planeT;
+    // The plane crossing must also lie at or in front of the shared eye
+    // (same behind-the-player rejection as surface hits, above).
+    if (!aimedPastTheEye({ x: hitX, y: planeY, z: hitZ })) {
+      return {
+        present: true,
+        valid: false,
+        reason: "no_candidate",
+        grid: null,
+        rotation,
+        anchorWorld: null,
+      };
+    }
     // The tile whose canonical geometry contains the hit point.
     grid = buildCellAt(hitX, hitZ, layer) as GridPosition;
     if (buildType === "wall") {
@@ -373,6 +433,42 @@ export function computePlacementPreview(
     };
   }
 
+  // ── Actor occupancy: the piece must not be created inside a body (the
+  //    local player's capsule AND every known opponent's). Canonical solids
+  //    only, so a floor under the feet, a roof overhead, a wall beside the
+  //    capsule and the hollow under a cone all stay valid. ──
+  if (actors !== undefined && actors.length > 0 && placementActorsBlockCandidate({
+    candidate,
+    actors,
+  }).blocked) {
+    return {
+      present: true,
+      valid: false,
+      reason: "actor_overlap",
+      grid,
+      rotation,
+      anchorWorld,
+    };
+  }
+
+  // ── Structural support: the piece must attach to the arena foundation or
+  //    to a chain of existing/pending pieces that reaches it (shared rule —
+  //    an elevated piece with no real contact goes red exactly where the
+  //    server answers `unsupported`). ──
+  if (!placementIsSupported({
+    candidate: { buildType, grid, rotation },
+    structures: surfaceGeometry(occupied),
+  }).supported) {
+    return {
+      present: true,
+      valid: false,
+      reason: "unsupported",
+      grid,
+      rotation,
+      anchorWorld,
+    };
+  }
+
   // ── Line of sight: the SAME shared segment policy the authoritative
   //    server enforces with the same `"occluded"` reason (see game-config
   //    `placementVisibility`). The eye is the canonical shared shot origin
@@ -382,7 +478,7 @@ export function computePlacementPreview(
   //    far-side-of-a-closed-wall candidate goes red and a candidate seen
   //    through a real edited hole stays green. ──
   if (!placementIsVisible({
-    eye: placementEyePoint(playerPosition.x, playerPosition.y, playerPosition.z, crouched),
+    eye,
     candidate: { buildType, grid, rotation },
     structures: surfaceGeometry(occupied),
   }).visible) {

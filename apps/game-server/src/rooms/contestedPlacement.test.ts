@@ -95,10 +95,15 @@ describe("contested placement arbitration (authoritative processing order)", () 
     room.onJoin(a);
     room.onJoin(b);
     internal.br(); // COUNTDOWN → IN_PROGRESS
-    // Stand the players near the contested centre cells so every test
-    // placement is within BUILD_RANGE (prep-row spawns are up to 20 m apart).
-    Object.assign(internal.state.players.get("a")!, { x: -2, y: 0, z: 0 });
-    Object.assign(internal.state.players.get("b")!, { x: 2, y: 0, z: 0 });
+    // Stand the players over the contested centre cells so every test placement
+    // is within BUILD_RANGE (prep-row spawns are up to 20 m apart) AND above the
+    // layer-0 pieces: these tests arbitrate processing order and slot ownership,
+    // and a ramp fills its tile / a wall panel fills its edge, so bodies at ground
+    // level inside the contested tile would make the actor-occupancy gate — not
+    // the race — decide the outcome. Feet at 4 m is the pose of a body on top of
+    // the layer-0 box (wall tops and ramp crest are at 3.84 m).
+    Object.assign(internal.state.players.get("a")!, { x: -2, y: 4, z: 0 });
+    Object.assign(internal.state.players.get("b")!, { x: 2, y: 4, z: 0 });
   });
 
   afterEach(() => {

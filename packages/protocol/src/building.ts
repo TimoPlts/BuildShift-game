@@ -195,7 +195,17 @@ export type BuildRejectionReason =
   | "unaffordable"
   /** Placement anchor lies outside the player's assigned preparation row
    *  while the preparation (`COUNTDOWN`) phase is active. */
-  | "preparation_zone";
+  | "preparation_zone"
+  /** The candidate is hidden behind existing solid geometry, seen from the
+   *  canonical shared eye (shared `placementIsVisible`). Declared here so the
+   *  wire vocabulary is complete for the client's rejection parser. */
+  | "occluded"
+  /** The candidate's canonical solids intrude on a player capsule — the
+   *  placer's OR an opponent's (shared `placementActorsBlockCandidate`). */
+  | "actor_overlap"
+  /** The candidate has no structural load path to the arena build foundation
+   *  (shared `placementIsSupported`): a disconnected airborne island. */
+  | "unsupported";
 
 /** Payload for {@link BUILD_EVENTS.STRUCTURE_PLACED}. */
 export interface StructurePlacedEvent {

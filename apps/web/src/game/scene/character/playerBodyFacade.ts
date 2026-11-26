@@ -209,11 +209,19 @@ export class PlayerBodyFacade implements PlayerBodyPresentation {
    * character 0.8 units to the screen-left of the fixed centre crosshair.
    *
    * Stable contract: defaults to (0, 0) for every facade (remote avatars
-   * stay centred unless someone calls this on THAT facade), repeated calls
-   * with the same values are idempotent, non-finite inputs are clamped to
-   * 0, the offset persists across the async GLB adoption/fallback swap and
-   * every crouch/animation/material update, and calls after `dispose()`
-   * are safe no-ops.
+   * default to 0 and nothing forces it), the offset persists across the async
+   * GLB adoption/fallback swap and every crouch/animation/material update,
+   * and calls after `dispose()` are safe no-ops.
+   *
+   * FEET-ANCHOR WARNING (anchored-turn 20261126): because the offset lives
+   * UNDER the yaw-rotated root, a non-zero value translates the RENDERED
+   * body's world position by `R(yaw)·(x, 0, z)` — the rendered feet then
+   * orbit the collider feet as yaw changes (the reported stationary-mouse-turn
+   * "character swings through space" drift). With the camera pinned to the
+   * centred shot line through the feet there is no yaw-invariant lateral body
+   * offset: the production local wiring (THIRD_PERSON_CAMERA
+   * .localViewOffsetX/Z) is therefore 0 and must stay 0; this API stays for
+   * per-facade presentation experiments only (remotes default to 0).
    */
   public setLocalViewOffset(x: number, z: number = 0): void {
     if (this._disposed) return;

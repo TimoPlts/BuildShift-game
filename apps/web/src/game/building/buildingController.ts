@@ -43,7 +43,7 @@ import {
   type StructurePlacementIntent,
   type StructurePlacedEvent,
 } from "@buildshift/protocol";
-import { BUILD_RATE } from "@buildshift/game-config";
+import { BUILD_RATE, type PlacementActorPose } from "@buildshift/game-config";
 import type { BuildingInputController } from "./buildingInputController";
 import type { BuildingStateStore } from "./buildingStateStore";
 import {
@@ -134,6 +134,18 @@ export class BuildingController {
    */
   private preparationSide: PreparationSide | null = null;
   /**
+   * The known OPONENT capsules for the actor-occupancy preview (the local
+   * player's own capsule is appended per frame from the frame context). Set
+   * by the runtime from the interpolated remote pose — never from a build
+   * claim. Empty = no opponent pose known (the preview then only guards the
+   * local body, exactly as the server's own rule reads it).
+   */
+  private remoteActors: readonly PlacementActorPose[] = [];
+  /** Reusable preview actor list (index 0 is always the local player). */
+  private readonly previewActors: PlacementActorPose[] = [
+    { x: 0, y: 0, z: 0, crouched: false },
+  ];
+  /**
    * Set of placement sequences that have been accepted (via the
    * `structure_placed` event) but not yet resolved by a frame that sees
    * the structure in the mirror. Used to defer the
@@ -191,6 +203,17 @@ export class BuildingController {
     this.preparationSide = side;
   }
 
+  /**
+   * Assign the known opponent capsules used by the actor-occupancy preview
+   * (`PlacementPreviewInput.actors`). Driven only by the interpolated remote
+   * poses — the authoritative server independently recomputes the same rule
+   * from replicated poses, so this can only ever make the ghost more truthful,
+   * never grant a placement.
+   */
+  public setRemotePlacementActors(actors: readonly PlacementActorPose[] | null): void {
+    this.remoteActors = actors ?? [];
+  }
+
   /** The authoritative structure mirror as a plain `BuildingState`. */
   public getBuildingState(): BuildingState {
     return this.store.getBuildingState();
@@ -235,9 +258,34 @@ export class BuildingController {
       occupied: this.store.getOccupiedStructures(),
       preparationSide: this.preparationSide,
       crouched: context.crouched === true,
+      actors: this.previewActorPoses(context),
     });
     this.resolvePendingMeshes();
     return this.preview;
+  }
+
+  /**
+   * The preview's actor list: the local capsule first (the frame context's
+   * feet pose + crouch stance), then every known opponent. Reuses one array
+   * and its slots because the preview reads it synchronously and the 60 Hz
+   * frame driver must not allocate per frame.
+   */
+  private previewActorPoses(context: BuildingFrameContext): PlacementActorPose[] {
+    const local = this.previewActors[0]!;
+    local.x = context.playerPosition.x;
+    local.y = context.playerPosition.y;
+    local.z = context.playerPosition.z;
+    local.crouched = context.crouched === true;
+    for (let i = 0; i < this.remoteActors.length; i++) {
+      const remote = this.remoteActors[i]!;
+      const slot = this.previewActors[i + 1] ?? (this.previewActors[i + 1] = { x: 0, y: 0, z: 0, crouched: false });
+      slot.x = remote.x;
+      slot.y = remote.y;
+      slot.z = remote.z;
+      slot.crouched = remote.crouched;
+    }
+    this.previewActors.length = 1 + this.remoteActors.length;
+    return this.previewActors;
   }
 
   /**

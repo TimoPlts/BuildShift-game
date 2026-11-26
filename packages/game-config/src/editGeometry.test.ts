@@ -465,3 +465,86 @@ describe("cone roof shell: hollow, watertight, honest headroom", () => {
   });
 });
 
+// ─── Solid-wall embedment (video 2: climbing into a wall, walking through) ──
+
+describe("embedded in a solid wall: push out, never walk through", () => {
+  /** A capsule INSIDE a panel (self-built wall, or a window edited shut)
+   *  walking forward must come out flush at a face — the pre-fix resolver
+   *  had no directional clamp once BOTH horizontal axes overlapped, so the
+   *  capsule simply kept walking through the wall. */
+  it("a capsule embedded in a solid wall is pushed flush to the nearer face", () => {
+    const wall = structureCuboids({ buildType: "wall", grid, rotation: 1 });
+    const box = wall[0]!;
+    const flushLow = box.center.x - box.halfExtents.x - RADIUS;
+    const flushHigh = box.center.x + box.halfExtents.x + RADIUS;
+    // Invalid state: standing inside the panel, stepping +X through it.
+    const embedded = { x: box.center.x, y: 0, z: box.center.z, velocityY: 0, grounded: true };
+    const resolved = resolveStructureMovement(
+      embedded,
+      { x: embedded.x + 0.2, y: 0, z: box.center.z, velocityY: 0, grounded: true },
+      wall, RADIUS, HEIGHT,
+    );
+    const onAFace = Math.abs(resolved.x - flushLow) < 1e-9 || Math.abs(resolved.x - flushHigh) < 1e-9;
+    expect(onAFace, `resolved.x = ${resolved.x}`).toBe(true);
+    // Deterministic: the push is by geometry (the shallower face from the
+    // step's position), not by which way the player is walking.
+    expect(resolved.x).toBe(flushHigh);
+  });
+
+  it("several embedded steps walk OUT of the wall, never through it", () => {
+    const wall = structureCuboids({ buildType: "wall", grid, rotation: 1 });
+    const box = wall[0]!;
+    const flushHigh = box.center.x + box.halfExtents.x + RADIUS;
+    let pose = { x: box.center.x + 0.1, y: 0, z: box.center.z, velocityY: 0, grounded: true };
+    for (let i = 0; i < 5; i++) {
+      pose = resolveStructureMovement(
+        pose, { x: pose.x + 0.2, y: 0, z: box.center.z, velocityY: 0, grounded: true },
+        wall, RADIUS, HEIGHT,
+      );
+      // Never allowed to sit free INSIDE the panel band.
+      const inside = pose.x > box.center.x - box.halfExtents.x - RADIUS + 1e-9
+        && pose.x < box.center.x + box.halfExtents.x + RADIUS - 1e-9;
+      expect(inside, `tick ${i}: x = ${pose.x}`).toBe(false);
+    }
+    expect(pose.x).toBeGreaterThanOrEqual(flushHigh - 1e-9); // ejected +X, the faced direction
+  });
+
+  it("editing a wall window shut around a crouched player pushes them out", () => {
+    // Crouched player standing inside the 1.28 m window of a rot-0 wall…
+    const doorway = structureCuboids({ buildType: "wall", grid, rotation: 0,
+      editGrid: { kind: "wall", tiles: [true, true, true, true, true, true, true, false, true] } });
+    const inWindow = { x: 0, y: 0, z: PZ, velocityY: 0, grounded: true };
+    expect(resolveStructureMovement(inWindow, { ...inWindow, z: PZ + 0.2, velocityY: 0, grounded: true }, doorway, RADIUS, 1.2).z)
+      .toBe(PZ + 0.2); // the window is passable: no embedment, no push
+    // …then the window is edited shut. The panel now covers the whole capsule.
+    const shut = structureCuboids({ buildType: "wall", grid, rotation: 0 });
+    const resolved = resolveStructureMovement(inWindow, { ...inWindow, z: PZ + 0.2, velocityY: 0, grounded: true }, shut, RADIUS, 1.2);
+    const panel = shut[0]!;
+    const flushLow = panel.center.z - panel.halfExtents.z - RADIUS;
+    const flushHigh = panel.center.z + panel.halfExtents.z + RADIUS;
+    const onAFace = Math.abs(resolved.z - flushLow) < 1e-9 || Math.abs(resolved.z - flushHigh) < 1e-9;
+    expect(onAFace, `resolved.z = ${resolved.z}`).toBe(true);
+  });
+
+  it("walking into a wall from outside still stops flush at the near face (never embeds)", () => {
+    const wall = structureCuboids({ buildType: "wall", grid, rotation: 1 });
+    const limit = wall[0]!.center.x - wall[0]!.halfExtents.x - RADIUS;
+    for (const pose of walk({ x: PX - 2, z: 0 }, { x: 1, z: 0 }, 20, wall)) {
+      expect(pose.x, `x = ${pose.x}`).toBeLessThanOrEqual(limit + 1e-9);
+    }
+  });
+
+  it("climbing a ramp never triggers the embedment push (plates cannot cover the capsule)", () => {
+    const ramp = structureCuboids({ buildType: "ramp", grid, rotation: 0 });
+    const path = walk({ x: -cs / 2 + 0.4, z: 0 }, { x: 1, z: 0 }, 20, ramp);
+    // A real climb…
+    expect(path.at(-1)!.y).toBeGreaterThan(2.5);
+    // …and no teleport: every tick advances at most one movement step in X
+    // (a spurious push-out would jump the capsule by metres).
+    for (let i = 1; i < path.length; i++) {
+      expect(Math.abs(path[i]!.x - path[i - 1]!.x), `tick ${i}`).toBeLessThanOrEqual(0.2 + 1e-9);
+      expect(path[i]!.y, `tick ${i} downhill slip`).toBeGreaterThanOrEqual(path[i - 1]!.y - 0.07);
+    }
+  });
+});
+

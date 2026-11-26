@@ -362,7 +362,9 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     const rifleAmmo = fixture.weapon.currentAmmo;
     const plan: Array<[string, string, { origin: Vec3; dir: Vec3 }]> = [
       ["Mouse3", "wall", aimCell(-2, 0)],
-      ["Mouse4", "ramp", aimCell(0, 0)],
+      // Cell 1, not the player's own cell 0: a ramp fills its tile, so the
+      // bounded ghost refuses one created around the body standing in it.
+      ["Mouse4", "ramp", aimCell(1, 0)],
       ["KeyQ", "floor", aimCell(-1, 1)],
       // (2, 1) is 11.44 m out — beyond the canonical 10.24 m (two-cell)
       // reach; aim the last piece at a cell the bounded ghost accepts.
@@ -388,8 +390,9 @@ describe("competitive mode transitions (shared coordinator, default binds)", () 
     fixture.press("Mouse3");
     fixture.frame({ firePressed: true, fireHeld: true, aim: aimCell(-2, 0), now: 0 });
     fixture.press("Mouse4");
-    fixture.frame({ fireHeld: true, aim: aimCell(0, 0), now: PLACEMENT_REQUEST_INTERVAL_MS });
-    fixture.frame({ fireHeld: false, aim: aimCell(0, 0), now: 2 * PLACEMENT_REQUEST_INTERVAL_MS });
+    // Cell 1 (see above): a ramp may not be created inside the placer's capsule.
+    fixture.frame({ fireHeld: true, aim: aimCell(1, 0), now: PLACEMENT_REQUEST_INTERVAL_MS });
+    fixture.frame({ fireHeld: false, aim: aimCell(1, 0), now: 2 * PLACEMENT_REQUEST_INTERVAL_MS });
     expect(placements()).toBe(2);
 
     // Edit the owned wall: drag a doorway (centre → bottom-centre).

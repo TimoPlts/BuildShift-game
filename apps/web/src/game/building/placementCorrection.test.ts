@@ -207,23 +207,24 @@ describe("placement preview correction on server rejection", () => {
     // Select ramp (E). A ramp occupies one tile's ramp slot.
     fixture.selectPiece("Mouse4");
 
-    // Place a ramp at cell 0.
-    fixture.frame(0, true, { gridX: 0 });
+    // Place a ramp at cell 1 — not the player's own cell 0, where a ramp would
+    // be created inside the placer's capsule (`actor_overlap`).
+    fixture.frame(0, true, { gridX: 1 });
     expect(fixture.store.pendingCount).toBe(1);
 
     // While pending, the pending ramp is already a build surface: aiming at
     // it continues it one layer up (its own tile's ramp slot is taken).
-    fixture.frame(50, false, { gridX: 0 });
+    fixture.frame(50, false, { gridX: 1 });
     expect(fixture.controller.getPreview().grid?.y).toBe(1);
-    fixture.frame(60, false, { gridX: 1 });
+    fixture.frame(60, false, { gridX: 2 });
     expect(fixture.controller.getPreview().valid).toBe(true);
 
     // Server rejects the ramp: the surface is gone and its ground slot is free again.
     fixture.reject(0, "overlap");
     expect(fixture.store.pendingCount).toBe(0);
-    fixture.frame(100, false, { gridX: 0 });
+    fixture.frame(100, false, { gridX: 1 });
     expect(fixture.controller.getPreview().valid).toBe(true);
-    expect(fixture.controller.getPreview().grid).toEqual({ x: 0, y: 0, z: 0 });
+    expect(fixture.controller.getPreview().grid).toEqual({ x: 1, y: 0, z: 0 });
 
     fixture.dispose();
   });

@@ -31,10 +31,11 @@ describe("GameRuntime audio wiring", () => {
   });
 
   it("plays fire audio on an accepted local shot", () => {
-    // The fire path calls audio.playFire with the weapon type.
-    expect(runtime).toContain("this.audio.playFire(r.request.weaponType)");
+    // The shot path calls audio.playFire with the weapon type (once per
+    // locally-accepted round, including held automatic-fire ticks).
+    expect(runtime).toContain("this.audio.playFire(wt)");
     // It is on the same path as the existing combat feedback and recoil.
-    const fireIdx = runtime.indexOf("this.audio.playFire(r.request.weaponType)");
+    const fireIdx = runtime.indexOf("this.audio.playFire(wt)");
     const playShotIdx = runtime.indexOf("this.combatFeedback.playShot");
     expect(fireIdx).toBeGreaterThan(-1);
     expect(playShotIdx).toBeGreaterThan(-1);

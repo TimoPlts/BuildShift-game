@@ -40,31 +40,43 @@ describe("GameRuntime combat presentation wiring", () => {
     expect(canvas).toContain("GameRuntime.create(canvas)");
   });
 
-  it("plays a muzzle flash + tracer and kicks recoil on an accepted local shot", () => {
-    // The fire path uses the reviewed playShot (muzzle + tracer), ...
+  it("plays a muzzle flash + tracer and kicks recoil once per locally-accepted round, including held automatic fire", () => {
+    // The shot path uses the reviewed playShot (muzzle + tracer), ...
     // The shot origin is the weapon model's own muzzle (barrel tip) in
     // world space — the established presentation seam — not a fixed
     // offset from the player.
     expect(runtime).toContain(
       "this.weaponModel.getMuzzlePosition(this._muzzlePos)",
     );
-    // The tracer converges muzzle→resolved-shot-point: the fire path resolves
-    // the authoritative aim point LIVE at fire time (never a stale cached
-    // reticle point after a fast turn+fire) and passes it to playShot.
+    // The tracer converges muzzle→resolved-shot-point: the shot path resolves
+    // the authoritative aim point LIVE at presentation time (never a stale
+    // cached reticle point after a fast turn+fire) and passes it to playShot.
     expect(runtime).toContain(
-      "const liveAim=this.resolveLiveAimPoint();this.combatFeedback.playShot(r.request.weaponType,this._muzzlePos,d,liveAim?this._tracerTarget.set(liveAim.point.x,liveAim.point.y,liveAim.point.z):undefined)",
+      "const liveAim=this.resolveLiveAimPoint();this.combatFeedback.playShot(wt,this._muzzlePos,d,liveAim?this._tracerTarget.set(liveAim.point.x,liveAim.point.y,liveAim.point.z):undefined)",
     );
-    // Pure aim is refreshed from the CURRENT raw yaw/pitch at the top of
-    // handleWeaponInput (applied look lands in the same frame's shot).
+    // CRITICAL (autofire task): there is exactly ONE playShot call site and
+    // it is driven per simulation tick from the held-fire intent, so every
+    // accepted automatic round gets the same tracer as a single click — and
+    // no click-edge-only fire path can silence held fire again.
+    expect((runtime.match(/combatFeedback\.playShot/g) ?? []).length).toBe(1);
+    expect(runtime).toContain("private presentLocalAcceptedShot():void{");
+    expect(runtime).toContain(
+      "if(this.heldFireGate.allows({fireHeld:fi,sequence:seq,fireIntervalTicks:this.weaponController.activeWeapon===\"shotgun\"?SHOTGUN.fireIntervalTicks:ASSAULT_RIFLE.fireIntervalTicks,ammo:ammoBeforeFire,reloading:this.weaponController.isReloading,eliminated:this.predictionOrchestrator.isEliminated}))this.presentLocalAcceptedShot();",
+    );
+    // The old click-edge-only fire path is gone.
+    expect(runtime).not.toContain("if(route.weaponFirePressed&&active){");
+    // Pure aim is still refreshed from the CURRENT raw yaw/pitch at the top
+    // of handleWeaponInput, which runs before the sim ticks in the same
+    // render frame (applied look lands in the same frame's shot).
     const hwi = runtime.indexOf(
-      "private handleWeaponInput(route:PrimaryActionRoute):void{",
+      "private handleWeaponInput(_route:PrimaryActionRoute):void{",
     );
     expect(hwi).toBeGreaterThan(-1);
     expect(runtime.slice(hwi, hwi + 140)).toContain(
       "this.cameraController.getAimDirection(this.currentAimDirection);",
     );
     // ...and registers a per-weapon camera-recoil kick.
-    expect(runtime).toContain("this.cameraRecoil.kick(r.request.weaponType)");
+    expect(runtime).toContain("this.cameraRecoil.kick(wt)");
     // The legacy flash-only shim is no longer on the fire path.
     expect(runtime).not.toContain("this.combatFeedback.triggerMuzzleFlash");
   });
@@ -145,7 +157,12 @@ describe("GameRuntime combat presentation wiring", () => {
     // dispose removes the structure-damage subscription.
     expect(runtime).toContain("this.unsubscribeStructureDamageEvent?.()");
     // The recoil is reset on (re)connect and on match reset.
-    expect(runtime.match(/this.cameraRecoil\.reset\(\)/g)?.length).toBeGreaterThanOrEqual(
+    expect(runtime.match(/this\.cameraRecoil\.reset\(\)/g)?.length).toBeGreaterThanOrEqual(
+      2,
+    );
+    // The held-fire presentation gate is reset alongside the recoil on both
+    // (re)connect and match reset, so a new round re-arms the first shot.
+    expect(runtime.match(/this\.heldFireGate\.reset\(\)/g)?.length).toBeGreaterThanOrEqual(
       2,
     );
   });

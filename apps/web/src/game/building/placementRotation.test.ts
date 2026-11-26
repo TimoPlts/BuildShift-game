@@ -190,12 +190,14 @@ describe("rotation binds, turbo and piece switching", () => {
   it("turbo keeps placing while rotating, each ramp request carrying the current rotation", () => {
     const f = createFixture();
     f.key("Mouse4"); // ramp (walls take their rotation from the aimed edge instead)
-    const cells = [-2, -1, 0, 1, 2];
+    // Not the player's own tile: a ramp fills its tile, so the preview (and the
+    // server) refuse one created inside the body standing there — `actor_overlap`.
+    const cells = [-2, -1, 1, 2];
     for (const [i, x] of cells.entries()) {
       if (i > 0) f.key("KeyR");
       f.frame(x, 0, true);
     }
-    expect(f.sent.map(r => r.rotation)).toEqual([0, 1, 2, 3, 0]);
+    expect(f.sent.map(r => r.rotation)).toEqual([0, 1, 2, 3]);
     expect(f.sent.map(r => (r.grid as { x: number }).x)).toEqual(cells);
     f.dispose();
   });
@@ -203,7 +205,7 @@ describe("rotation binds, turbo and piece switching", () => {
   it("switching wall → floor → ramp → cone after rotating sends the canonical rotation for each piece", () => {
     const f = createFixture();
     f.key("KeyR"); // rotation 1 selected
-    const plan: Array<[string, BuildType, number]> = [["Mouse3", "wall", -2], ["KeyQ", "floor", -1], ["Mouse4", "ramp", 0], ["KeyF", "cone", 2]];
+    const plan: Array<[string, BuildType, number]> = [["Mouse3", "wall", -2], ["KeyQ", "floor", -1], ["Mouse4", "ramp", 1], ["KeyF", "cone", 2]];
     for (const [code, , x] of plan) { f.key(code); f.frame(x, 0, true); }
     // The wall follows the crosshair: aiming at the tile centre (exactly on
     // the −Z/+X diagonal) deterministically picks the −Z edge (0); the ramp
@@ -325,7 +327,7 @@ describe("equip-facing orientation (the piece starts where the player looks, the
     f.look(H);
     f.key("Mouse4"); // ramp facing east → 0
     f.look(-H);
-    f.frame(0, 0, true);
+    f.frame(1, 0, true); // not the player's own tile: a ramp cannot be built around the body in it
     expect(f.sent.map((r) => [r.buildType, r.rotation])).toEqual([["ramp", 0]]);
     f.dispose();
   });
@@ -338,7 +340,16 @@ describe("aiming up with no structure in the way targets the next layer (the cei
   });
   it("from the ground: a floor above the player's tile on layer 1 (a box roof)", () => {
     const p = up("floor", 0);
-    expect([p.valid, p.grid]).toEqual([true, { x: 0, y: 1, z: 0 }]);
+    // Aiming up still resolves the cell above the player. Over an EMPTY tile
+    // that roof has nothing to stand on, so the shared support gate now refuses
+    // it — this floating roof is exactly the bug the gate exists for.
+    expect([p.valid, p.reason, p.grid]).toEqual([false, "unsupported", { x: 0, y: 1, z: 0 }]);
+    // On top of a box the same aim is the same cell, and it is placeable.
+    const onBox = up("floor", 0, [
+      { buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 0 },
+      { buildType: "wall", grid: { x: 0, y: 0, z: 0 }, rotation: 2 },
+    ]);
+    expect([onBox.valid, onBox.grid]).toEqual([true, { x: 0, y: 1, z: 0 }]);
   });
   it("from a layer-1 floor: the next roof on layer 2; a wall there follows the crosshair's edge", () => {
     expect(up("floor", BUILD_GRID.layerHeight + 0.15).grid).toEqual({ x: 0, y: 2, z: 0 });

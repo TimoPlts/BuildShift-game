@@ -54,15 +54,19 @@ describe("GameRuntime primary-action routing", () => {
     // `handleWeaponInput` runs unconditionally each frame (the slot/reload
     // latches are drained in every phase, so nothing stale can fire on a
     // phase change) ...
-    expect(runtime).toContain("private handleWeaponInput(route:PrimaryActionRoute):void");
+    expect(runtime).toContain("private handleWeaponInput(_route:PrimaryActionRoute):void");
     // ... while every weapon action is gated on the coordinator's effective
     // weapon mode, an active round, a live connection, and not being
     // eliminated (mirrors the server's IN_PROGRESS authority gates).
     expect(runtime).toContain(
       'const active=this.interactionMode.mode==="weapon"&&this.matchState.matchPhase===MatchPhase.IN_PROGRESS&&this.isConnected&&!this.predictionOrchestrator.getCombatState().isEliminated',
     );
-    // The fired shot uses the routed press edge under the same gate.
-    expect(runtime).toContain("if(route.weaponFirePressed&&active){");
+    // Autofire task: local shot PRESENTATION no longer runs off the routed
+    // press edge (that silenced held automatic fire). It runs once per
+    // accepted simulation tick from the held route leg; the press edge stays
+    // owned by build placement only.
+    expect(runtime).not.toContain("if(route.weaponFirePressed&&active){");
+    expect(runtime).toContain("this.heldFireGate.allows({fireHeld:fi,");
   });
 
   it("routes the held AND pressed primary into the building frame with the in-round gate", () => {

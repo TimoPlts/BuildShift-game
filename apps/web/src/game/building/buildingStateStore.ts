@@ -42,6 +42,9 @@ const REJECTION_REASONS: readonly BuildRejectionReason[] = [
   "rate_limited",
   "unaffordable",
   "preparation_zone",
+  "occluded",
+  "actor_overlap",
+  "unsupported",
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {

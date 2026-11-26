@@ -56,9 +56,7 @@ describe("canonical build slots (authoritative)", () => {
     room.onJoin(a);
     room.onJoin(b);
     internal.br();
-    // Stand A at the ramp tile so every test placement is in range.
-    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 1 }); // half a cell toward the build stack: every anchor stays inside the 2-cell canonical reach
-    Object.assign(internal.state.players.get("b")!, { x: 0, y: 0, z: 2 });
+    standIn(); // see `park` below: both bodies on top of the build stack
   });
 
   afterEach(() => {
@@ -67,10 +65,28 @@ describe("canonical build slots (authoritative)", () => {
     vi.restoreAllMocks();
   });
 
-  /** Re-stand the players at the ramp tile (round resets re-spawn them). */
+  /**
+   * Put a body in the tile an anchor belongs to, at the height of a body that
+   * has climbed on top of the layer-0 box (its wall tops and ramp crest are at
+   * 3.84 m, so feet at 4.0 m stand just above them — the auto-step window
+   * treats everything below as the plate the body is on).
+   *
+   * These tests arbitrate canonical SLOTS, Energy and collider bookkeeping, so
+   * the bodies are parked where the two authoritative geometry gates
+   * (actor-occupancy and structural support, pinned by `placementValidity`
+   * `.test.ts`) have nothing to say: no piece is created inside a capsule, and
+   * every piece here is grounded or stacked on the piece below it. Being in the
+   * tile also keeps every anchor inside the 2-cell reach and gives the natural
+   * sight line into the box, exactly as before.
+   */
+  const park = (who: "a" | "b", grid: { x: number; z: number }, feetY = 4) => {
+    Object.assign(internal.state.players.get(who)!, { x: grid.x * 5.12, y: feetY, z: grid.z * 5.12 });
+  };
+
+  /** Re-stand the players on the build stack (round resets re-spawn them). */
   const standIn = () => {
-    Object.assign(internal.state.players.get("a")!, { x: 0, y: 0, z: 1 }); // half a cell toward the build stack: every anchor stays inside the 2-cell canonical reach
-    Object.assign(internal.state.players.get("b")!, { x: 0, y: 0, z: 2 });
+    park("a", { x: 0, z: 0 });
+    park("b", { x: 0, z: 0.9 });
   };
 
   /** A ramp at (0,0,0) with walls on all four of its edges and a floor at its top layer. */
@@ -94,6 +110,7 @@ describe("canonical build slots (authoritative)", () => {
   });
 
   it("air floors extend side by side at the next layer; the same floor slot is rejected without Energy", async () => {
+    park("a", { x: 0, z: 0.5 }); // the third floor is two tiles out: keep all three anchors in reach
     await place(a, "ramp", { x: 0, y: 0, z: 0 }, 1);
     // Above the ramp's tile, then two more tiles out into the air.
     for (const z of [0, 1, 2]) expect((await place(a, "floor", { x: 0, y: 1, z })).reason).toBeNull();
@@ -193,6 +210,9 @@ describe("canonical build slots (authoritative)", () => {
     expect(internal.occ.has("wall-z:0,0,0")).toBe(true);
     expect(internal.occ.has("wall-z:0,1,0")).toBe(false);
     expectOccupancyMatchesStructures();
+    // The freed upper slot, seen from on top of the finished box: the upper
+    // walls enclose the tile, so a sight line into it comes from above.
+    park("b", { x: 0, z: 0 }, 8);
     expect((await place(b, "wall", { x: 0, y: 1, z: 0 }, 0)).reason).toBeNull(); // the freed upper slot
     expect((await place(b, "wall", { x: 0, y: 0, z: 0 }, 0)).reason).toBe("overlap"); // the lower one stays taken
   });
@@ -212,7 +232,13 @@ describe("canonical build slots (authoritative)", () => {
     expect([internal.bld.structures.size, internal.occ.size]).toEqual([0, 0]);
     expectOccupancyMatchesStructures();
     internal.br();
-    const again = await boxLevel(1); // the upper layer is placeable again
-    expect([...again.walls, again.roof].every((r) => r.reason === null)).toBe(true);
+    // Every slot is placeable again — and placeable now includes support: the
+    // rematch wiped the whole stack, so the upper layer is rebuilt on the layer
+    // beneath it.
+    const lower = await boxLevel(0);
+    const upper = await boxLevel(1);
+    expect([...lower.walls, lower.roof, ...upper.walls, upper.roof].map((r) => r.reason)).toEqual([
+      null, null, null, null, null, null, null, null, null, null,
+    ]);
   });
 });

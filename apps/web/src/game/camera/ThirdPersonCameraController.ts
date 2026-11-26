@@ -72,9 +72,17 @@ export interface ObstacleAABB {
  *   bounded below by `minimumCameraDistance`, so the camera never leaves the
  *   line and never clips below the floor.
  *
- * The over-shoulder feel comes from the local VISUAL body being shifted
- * screen-left (`cameraConfig.localViewOffsetX` via
- * `presentation.setLocalViewOffset`) — never from an offset camera pivot.
+ * The over-shoulder *close* feel comes from the short tracking `distance`
+ * alone. The rendered body stays exactly ON the anchor axis: the local view
+ * offset (`cameraConfig.localViewOffsetX` via
+ * `presentation.setLocalViewOffset`) is 0 (feet anchor, anchored-turn
+ * 20261126) because it is applied under the body's yaw rotation — any
+ * non-zero root-local translation orbits the rendered feet around the
+ * collider feet as yaw changes, which is precisely the "character swings
+ * through space while stationary" report. Under a camera pinned to the
+ * centred shot line there is no yaw-invariant lateral body offset: facing
+ * rotates about the feet, the camera orbits the anchor, and the world (not
+ * the anchor) is what sweeps on screen.
  */
 export class ThirdPersonCameraController {
   private readonly camera: UniversalCamera;

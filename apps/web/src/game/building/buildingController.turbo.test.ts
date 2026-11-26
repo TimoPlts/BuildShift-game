@@ -357,13 +357,13 @@ describe("turbo building: piece switch", () => {
     const fixture = createFixture();
     fixture.setBuildMode(true);
 
-    // Start with ramp selected (Digit3). Ramp footprint [2,1,1] occupies
-    // cells (0,0,0) and (1,0,0).
+    // Start with ramp selected (Digit3). A ramp fills its whole tile, so it is
+    // aimed at cell 1 — the player's own cell would be refused as `actor_overlap`.
     fixture.selectPiece("Mouse4");
-    fixture.frame(0, true, { gridX: 0 });
+    fixture.frame(0, true, { gridX: 1 });
     expect(fixture.placedRequests()).toHaveLength(1);
     expect(fixture.placedRequests()[0].buildType).toBe("ramp");
-    fixture.confirm(0, 0, "ramp");
+    fixture.confirm(1, 0, "ramp");
 
     // Switch to floor mid-hold: cell 2 is free (ramp occupies 0 and 1).
     fixture.selectPiece("KeyQ");

@@ -30,6 +30,27 @@ export { raycastStructureSurface, resolveSurfacePlacement, rampHighDirection, WA
 export type { StructureSurfaceHit, SurfacePlacement } from "./surfacePlacement.js";
 export { PLACEMENT_VISIBILITY, placementEyePoint, placementVisibilitySamples, placementIsVisible, ARENA_VISIBILITY_BLOCKERS } from "./placementVisibility.js";
 export type { PlacementVisibilityVec, PlacementVisibilityInput, PlacementVisibilityResult } from "./placementVisibility.js";
+export {
+  PLACEMENT_SUPPORT,
+  ARENA_FOUNDATION_SUPPORTS,
+  solidsAttach,
+  solidRestsOnFoundation,
+  placementIsSupported,
+} from "./placementSupport.js";
+export type { PlacementSupportInput, PlacementSupportResult } from "./placementSupport.js";
+export {
+  PLACEMENT_OCCUPANCY,
+  placementActorCapsule,
+  capsuleSolidGapMeters,
+  capsuleBlockageDepth,
+  placementActorsBlockCandidate,
+} from "./placementOccupancy.js";
+export type {
+  PlacementActorPose,
+  PlacementActorCapsule,
+  PlacementOccupancyInput,
+  PlacementOccupancyResult,
+} from "./placementOccupancy.js";
 
 export {
   SHOTGUN,

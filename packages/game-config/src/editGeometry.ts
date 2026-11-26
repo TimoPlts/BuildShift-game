@@ -387,6 +387,52 @@ export function resolveStructureMovement<T extends StructureMovementPose>(
     }
   }
 
+  // ── Depenetration: recover a capsule VERTICALLY INSIDE a taller solid ──
+  // The directional block below only clamps when the PREVIOUS pose was
+  // outside the face, so a capsule already INSIDE a solid's XZ span (with no
+  // outside previous axis) walks straight through it. That happens for real:
+  // a wall placed on the player's own pose (exactly the mid-ramp aim that
+  // ghosts a panel through the avatar), or a climb/jump whose vertical
+  // window opens with the centre already past the face. When a box's
+  // vertical span covers the capsule's ENTIRE height (walls, stacks — never
+  // plates the capsule stands on or passes under: floors, ramp treads, cone
+  // bands) and the capsule overlaps its XZ span, push the capsule to the
+  // shallowest flush face along one horizontal axis. Deterministic and
+  // order-independent (single global shallowest push, centre-order tie
+  // break), so client prediction and the server converge on the same pose;
+  // flush contact (push distance 0 boundary) never triggers, so standing
+  // against a wall or walking its face stays stable.
+  const DEPENETRATE_TOL = 0.02;
+  let push: { depth: number; axis: 0 | 1; value: number; center: { x: number; z: number } } | null = null;
+  const betterPush = (depth: number, center: { x: number; z: number }): boolean =>
+    push === null
+      || depth < push.depth - 1e-9
+      || (depth <= push.depth + 1e-9
+        && (center.x < push.center.x - 1e-9
+          || (Math.abs(center.x - push.center.x) <= 1e-9 && center.z < push.center.z - 1e-9)));
+  for (const c of cuboids) {
+    if (c.center.y - c.halfExtents.y > out.y + DEPENETRATE_TOL) continue; // starts above the capsule's feet
+    if (c.center.y + c.halfExtents.y < out.y + height - DEPENETRATE_TOL) continue; // ends below the capsule's head
+    const minPenX = c.center.x - c.halfExtents.x - radius;
+    const maxPenX = c.center.x + c.halfExtents.x + radius;
+    const minPenZ = c.center.z - c.halfExtents.z - radius;
+    const maxPenZ = c.center.z + c.halfExtents.z + radius;
+    if (out.x <= minPenX || out.x >= maxPenX || out.z <= minPenZ || out.z >= maxPenZ) continue; // XZ clear (flush is fine)
+    const faceCenter = { x: c.center.x, z: c.center.z };
+    for (const cand of [
+      { depth: out.x - minPenX, axis: 0 as const, value: minPenX },
+      { depth: maxPenX - out.x, axis: 0 as const, value: maxPenX },
+      { depth: out.z - minPenZ, axis: 1 as const, value: minPenZ },
+      { depth: maxPenZ - out.z, axis: 1 as const, value: maxPenZ },
+    ]) {
+      if (betterPush(cand.depth, faceCenter)) push = { ...cand, center: faceCenter };
+    }
+  }
+  if (push !== null) {
+    if (push.axis === 0) out.x = push.value;
+    else out.z = push.value;
+  }
+
   // Horizontal capsule approximation against the same boxes. Resolving each
   // axis separately permits natural sliding along the remaining solid tiles.
   for (const c of cuboids) {
